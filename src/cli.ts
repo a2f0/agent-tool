@@ -6,7 +6,7 @@ import { doctor } from "./doctor";
 import { review } from "./harnesses";
 import { runAgentToolAction } from "./runAgentToolAction";
 import { BUNDLED_SKILLS } from "./skills/bundled";
-import { installSkills } from "./skills/install";
+import { checkSkills, installSkills } from "./skills/install";
 import { bumpVersions, checkVersions, planVersions } from "./version/bumpVersions";
 import { resolveVersionConflicts } from "./version/resolveVersionConflicts";
 import { openPr } from "./pr/openPr";
@@ -24,6 +24,7 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   versions resolve-conflicts
   skills list
   skills install [--harness <all|claude|codex|opencode>] [--apply]
+  skills check [--harness <all|claude|codex|opencode>]
   init                                  Create agent-tool.json without overwriting
   config show
   doctor                                JSON versions and supported review flags
@@ -70,13 +71,18 @@ export function main(argv = process.argv.slice(2)): number {
   if (command === "skills") {
     const action = args.shift();
     if (action === "list") { usage(args.length === 0, "Usage: agent-tool skills list"); output(Object.keys(BUNDLED_SKILLS)); return 0; }
-    usage(action === "install", "Usage: agent-tool skills <list|install>");
+    usage(action === "install" || action === "check", "Usage: agent-tool skills <list|install|check>");
     let target = "all", apply = false;
     while (args.length) {
       const flag = args.shift();
-      if (flag === "--apply") { usage(!apply, "Duplicate --apply."); apply = true; }
+      if (flag === "--apply") { usage(action === "install", "skills check is read-only; --apply is not allowed."); usage(!apply, "Duplicate --apply."); apply = true; }
       else if (flag === "--harness") { const value = args.shift(); usage(!!value, "--harness requires a name."); target = value!; }
-      else throw new Error(`Unknown skills install argument '${flag}'.`);
+      else throw new Error(`Unknown skills ${action} argument '${flag}'.`);
+    }
+    if (action === "check") {
+      const changes = checkSkills(process.cwd(), target);
+      const ok = changes.every(change => change.status === "unchanged");
+      output({ ok, changes }); return ok ? 0 : 1;
     }
     output({ applied: apply, changes: installSkills(process.cwd(), target, apply) }); return 0;
   }

@@ -118,6 +118,7 @@ test("uses gh's latest paginated checks and then verifies the head", () => {
         ? JSON.stringify(coreChecks())
         : JSON.stringify({ headRefOid: "reviewed" });
     },
+    { requireChecks: true, requiredChecks: coreChecks().map(({ name, workflow }) => ({ name, workflow })) },
   );
   expect(calls).toEqual([
     [

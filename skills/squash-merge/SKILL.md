@@ -7,6 +7,8 @@ Use the installed `agent-tool` and repository merge policy. Merge only within
 the user's authorized scope. Have the exact reviewed HEAD, base commit, and base
 branch available, and read the verdict and unresolved findings. BLOCKER or MAJOR
 findings require repair and a new review before merging.
+Follow the repository's review-bot policy and require all actionable blocking
+review feedback to be addressed before merging.
 
 Wait for required checks using `gh pr checks --watch --fail-fast`. Refresh the
 PR and live base from the repository that owns the PR. Confirm local HEAD and PR

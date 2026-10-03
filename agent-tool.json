@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "merge": {
+    "requiredChecks": [
+      {"name": "verify (ubuntu-latest)", "workflow": "CI"},
+      {"name": "verify (macos-latest)", "workflow": "CI"}
+    ]
+  }
+}
