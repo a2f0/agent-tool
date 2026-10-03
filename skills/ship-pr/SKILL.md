@@ -3,6 +3,8 @@ name: ship-pr
 description: Complete an authorized commit, independent review, repair, PR, CI, and squash-merge workflow for a GitHub repository.
 ---
 
+# Ship PR
+
 Use the installed `agent-tool`. Read repository guidance and policy first;
 validation, versioning, package management, and hook installation remain project
 concerns. Shipping authorizes this workflow within the user's stated scope.

@@ -20,6 +20,7 @@ jobs:
       - run: bun test
       - run: bun scripts/smoke-package.ts
       - run: bun run build
+      - run: git diff --exit-code -- src/skills/bundled.ts
       - run: bun scripts/smoke.ts dist/agent-tool
       - if: runner.os == 'Linux'
         run: scripts/package-deb.sh dist/agent-tool amd64

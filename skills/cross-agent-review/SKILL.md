@@ -3,6 +3,8 @@ name: cross-agent-review
 description: Review committed branch changes with an independent Claude Code, Codex, or OpenCode reviewer, and repair actionable findings when requested.
 ---
 
+# Cross-Agent Review
+
 Use the installed `agent-tool` executable. Read the repository's development and
 review policy and `agent-tool.json` when present. Keep project validation commands
 and release rules in the repository; do not assume Bun, a workspace layout, or
