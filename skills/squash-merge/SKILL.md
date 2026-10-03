@@ -3,6 +3,8 @@ name: squash-merge
 description: Squash-merge a reviewed GitHub pull request while binding the mutation to the reviewed commit and checking CI.
 ---
 
+# Squash Merge
+
 Use the installed `agent-tool` and repository merge policy. Merge only within
 the user's authorized scope. Have the exact reviewed HEAD, base commit, and base
 branch available, and read the verdict and unresolved findings. BLOCKER or MAJOR

@@ -3,6 +3,8 @@ name: open-pr
 description: Open a GitHub pull request for the current feature branch with a validated title and a reviewable description.
 ---
 
+# Open PR
+
 Use the installed `agent-tool`. Follow repository policy for validation, commits,
 and branch naming. Resolve the repository and default branch with Git and `gh`;
 do not assume the branch is named main. Preserve unrelated work and finish

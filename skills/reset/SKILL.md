@@ -3,6 +3,8 @@ name: reset
 description: Return a clean checkout to its updated default branch after confirmed shipping or an explicit checkout cleanup request.
 ---
 
+# Reset
+
 This is checkout cleanup, not a destructive Git reset. Read repository guidance
 for setup and hooks. Determine the default branch through the repository's
 remote metadata rather than assuming main.
