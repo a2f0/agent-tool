@@ -35,17 +35,20 @@ function atomicWrite(file: string, contents: string): void {
 
 export interface SkillChange { path: string; status: "create" | "update" | "unchanged" }
 
+function readManifest(root: string): Record<string, string> {
+  const file = safeDestination(root, MANIFEST);
+  if (!existsSync(file)) return {};
+  const value = JSON.parse(readFileSync(file, "utf8"));
+  if (value.schemaVersion !== 1 || !value.files || typeof value.files !== "object" || Array.isArray(value.files) || Object.values(value.files).some(item => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item))) throw new Error("Invalid managed skill manifest.");
+  return value.files;
+}
+
 export function installSkills(rootDir: string, target: string, apply = false): SkillChange[] {
   const root = realpathSync(rootDir);
   // OpenCode discovers both of these directories; avoid a third duplicate.
   const directories = target === "all" ? [".agents/skills", ".claude/skills"] : [harnessNamed(target).skillDirectory];
   const manifestFile = safeDestination(root, MANIFEST);
-  let previous: Record<string, string> = {};
-  if (existsSync(manifestFile)) {
-    const value = JSON.parse(readFileSync(manifestFile, "utf8"));
-    if (value.schemaVersion !== 1 || !value.files || typeof value.files !== "object" || Array.isArray(value.files) || Object.values(value.files).some(item => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item))) throw new Error("Invalid managed skill manifest.");
-    previous = value.files;
-  }
+  const previous = readManifest(root);
   const pending: { file: string; relative: string; source: string; change: SkillChange }[] = [];
   for (const directory of directories) {
     for (const [name, source] of Object.entries(BUNDLED_SKILLS)) {
@@ -70,4 +73,20 @@ export function installSkills(rootDir: string, target: string, apply = false): S
     atomicWrite(manifestFile, `${JSON.stringify({ schemaVersion: 1, files }, null, 2)}\n`);
   }
   return pending.map(item => item.change);
+}
+
+export interface SkillCheck { path: string; status: "missing" | "outdated" | "unmanaged" | "unchanged" }
+
+/** Read-only CI gate: require current bundled bytes and their ownership records. */
+export function checkSkills(rootDir: string, target: string): SkillCheck[] {
+  const root = realpathSync(rootDir);
+  const changes = installSkills(root, target);
+  const previous = readManifest(root);
+  return changes.map(change => {
+    if (change.status === "create") return { path: change.path, status: "missing" };
+    if (change.status === "update") return { path: change.path, status: "outdated" };
+    if (!previous[change.path]) return { path: change.path, status: "unmanaged" };
+    if (previous[change.path] !== hash(readFileSync(safeDestination(root, change.path), "utf8"))) return { path: change.path, status: "outdated" };
+    return { path: change.path, status: "unchanged" };
+  });
 }

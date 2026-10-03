@@ -71,6 +71,7 @@ binary described above remains available for use without Bun.
 | `versions resolve-conflicts` | Resolve only version-field conflicts in configured manifests |
 | `skills list` | List embedded portable skills |
 | `skills install [--harness all\|claude\|codex\|opencode] [--apply]` | Preview by default; install or update managed skills |
+| `skills check [--harness all\|claude\|codex\|opencode]` | Read-only CI check for current managed skills |
 | `init` / `config show` | Create or inspect data-only project policy |
 | `doctor` | Inspect local versions and required CLI flags without running a model |
 
@@ -153,6 +154,16 @@ migration rather than overwriting them. Project validation and setup commands
 stay in repository guidance; the shared skills make no package-manager or
 application-layout assumptions. The installer is project-scoped; it does not
 modify global harness settings, MCP configuration, or authentication.
+
+To normalize consumers, install the bundled skills and keep project validation,
+review-bot rules, and deployment checks in `AGENTS.md`. Put title and required CI
+settings in `agent-tool.json` instead of copying the shipping workflow. After a
+dependency update, run `agent-tool skills install --apply` and commit the updated
+skills with `.agent-tool-skills.json`. Run `agent-tool skills check` in hooks and
+CI: it fails for missing, outdated, unmanaged, or locally edited skills without
+writing anything. Use the same `--harness` when installing and checking a single
+harness. Existing unmanaged skills must be preserved or deliberately migrated
+before installation; there is no force-overwrite mode.
 
 ## Review guarantees and limits
 

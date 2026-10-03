@@ -22,11 +22,18 @@ only, report-only review, or keeping the feature branch.
 3. Push the reviewed HEAD through normal hooks, then verify the pushed SHA still
    equals the reviewed SHA. If a hook changed content or HEAD, review that result.
    Open the PR using the open-pr skill, or update the existing PR as needed.
-4. Wait for CI, recheck the live base, PR base branch, and local and remote heads.
+4. Allow any configured review bots time to respond, then fetch unresolved PR
+   review threads. Follow repository policy for feedback: fix valid findings,
+   reply in the original threads, and resolve only fully addressed comments.
+   Validate, commit, push, and independently review every feedback or CI repair.
+   Wait for CI, recheck the live base, PR base branch, and local and remote heads.
    A changed base requires integration, validation, and another review. Use the
    squash-merge skill to merge the exact reviewed HEAD.
 5. After confirmed MERGED, honor keep-branch; otherwise use the reset skill to
    return to the updated default branch and apply any documented project setup.
+6. When the project deploys the merged branch, verify the deployment for the
+   merge commit and run its documented live checks. Report deployment failures
+   separately from a successful merge; follow project policy for repairs.
 
 Never infer a clean review from process success alone or carry a review across
 content changes. Do not weaken configured CI policy to get a merge through.
