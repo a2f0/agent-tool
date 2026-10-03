@@ -66,15 +66,15 @@ export function openPr(rootDir: string, titleArg: string | undefined): number {
       "create",
       "--title",
       title,
-      "--body",
-      body,
+      "--body-file",
+      "-",
       "--head",
       branch,
       ...baseArgs,
       "-R",
       repo,
     ],
-    { stdio: ["ignore", "inherit", "inherit"] },
+    { input: body, stdio: ["pipe", "inherit", "inherit"] },
   );
   return spawnExitCode("gh pr create", result);
 }

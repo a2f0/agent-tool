@@ -123,9 +123,9 @@ function resolvePullRequestMergeTarget(
     "graphql",
     "-f",
     `query=${PULL_REQUEST_MERGE_TARGET_QUERY}`,
-    "-F",
+    "-f",
     `owner=${owner}`,
-    "-F",
+    "-f",
     `name=${name}`,
     "-F",
     `number=${pr.prNumber}`,
@@ -185,7 +185,7 @@ export function squashMerge(
 
   // Validate the human-authored subject without the PR-number suffix: GitHub's
   // native squash appends `(#<n>)` server-side, past the commit-msg hook, so the
-  // repo's existing history carries suffixes over the 50-char header limit. Keep
+  // repo's existing history carries suffixes over its configured header limit. Keep
   // the suffix "free" here too by validating the base, then append it ourselves —
   // a custom GraphQL commit headline otherwise drops GitHub's automatic reference.
   const baseSubject = stripPrNumberSuffix(subject);

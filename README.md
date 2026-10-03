@@ -36,6 +36,30 @@ bun run build
 The same binary works when copied outside this repository. No sibling project
 has to retain `packages/agent-tool` once its callers are migrated.
 
+### Use as a GitHub dependency
+
+Bun projects can install the source CLI directly from GitHub without an npm
+release. Pin a full commit SHA in `package.json` for repeatable installs:
+
+```json
+{
+  "devDependencies": {
+    "agent-tool": "github:a2f0/agent-tool#<full-commit-sha>"
+  },
+  "scripts": {
+    "agent-tool": "bun node_modules/agent-tool/src/index.ts"
+  }
+}
+```
+
+Run `bun install`, then `bun run agent-tool --help`. The package also exposes
+`node_modules/.bin/agent-tool`; invoke it directly for commands containing an
+empty positional argument, such as
+`node_modules/.bin/agent-tool pr merge '' "$REVIEWED_SHA" "$REVIEW_BASE_REF"`.
+The source package includes the CLI and embedded skills, requires Bun at
+runtime, and needs no dependency install scripts or compile step. The standalone
+binary described above remains available for use without Bun.
+
 ## Commands
 
 | Command | Behavior |
@@ -163,6 +187,7 @@ same-repository branches.
 ```sh
 bun run typecheck
 bun test
+bun scripts/smoke-package.ts
 bun run build
 bun scripts/smoke.ts dist/agent-tool
 
