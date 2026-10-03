@@ -1,0 +1,26 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+      - run: bun run build
+      - run: bun scripts/smoke.ts dist/agent-tool
+      - if: runner.os == 'Linux'
+        run: scripts/package-deb.sh dist/agent-tool amd64
+      - if: runner.os == 'Linux'
+        run: dpkg-deb --info dist/*.deb && dpkg-deb --contents dist/*.deb

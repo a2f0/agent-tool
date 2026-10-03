@@ -1,0 +1,25 @@
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
+import path from "node:path";
+import type { ReviewerEnv } from "./runReview";
+
+function within(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+/** Never launch a reviewer binary supplied by the repository being reviewed. */
+export function reviewExecutable(name: string, env: ReviewerEnv, repositoryRoot = process.cwd()): string | undefined {
+  const root = realpathSync(repositoryRoot);
+  for (const directory of (env.PATH ?? "").split(path.delimiter)) {
+    if (!path.isAbsolute(directory)) continue;
+    const candidate = path.join(directory, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      const resolved = realpathSync(candidate);
+      if (!statSync(resolved).isFile() || within(root, candidate) || within(root, resolved)) continue;
+      return resolved;
+    } catch { /* Continue searching outside the repository. */ }
+  }
+  // Never fall back to a predictable path or PATH resolution after rejection.
+  return undefined;
+}
