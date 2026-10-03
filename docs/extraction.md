@@ -28,6 +28,22 @@ The source of truth was the checked-out source, with its commit and content
 hashes recorded, rather than an assumption that similarly named checkouts were
 identical. Variants should be compared before future migrations.
 
+### a2f0.net consumer migration
+
+The follow-up comparison of `a2f0.net/packages/agent-tool` retained its existing
+review snapshots, reviewer arguments, and synchronous squash behavior. It also
+ported stdin-based PR body delivery (`--body-file -`) and the PR CLI integration
+suite, adapting the fixtures to Bun, project JSON policy, pushed-branch checks,
+and required CI checks. GraphQL owner and repository names remain string fields
+(`-f`), while the PR number uses typed input (`-F`).
+
+The standalone package now exposes a Bun source executable for direct,
+commit-pinned GitHub dependencies. `a2f0.net` supplies its 100-character title
+limit, required `build` check from workflow `CI`, and branding policy through
+`agent-tool.json`. Commit hooks continue to enforce its complete commitlint
+configuration; the portable CLI validates the configured conventional title
+syntax, types, and length without executing repository JavaScript.
+
 ## Extracted behavior
 
 The initial portable core retains pinned Git review inputs, raw tracked-file

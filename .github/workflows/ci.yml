@@ -18,6 +18,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test
+      - run: bun scripts/smoke-package.ts
       - run: bun run build
       - run: bun scripts/smoke.ts dist/agent-tool
       - if: runner.os == 'Linux'
