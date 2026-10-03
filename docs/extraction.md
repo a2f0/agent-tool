@@ -1,13 +1,13 @@
 # Extraction record
 
-The read-only inventory examined 27 top-level project directories under
-`~/github`, found 12 repository-local `packages/agent-tool` implementations,
-and found the older `tearleads.old/scripts/agents/tooling/agentTool.ts` lineage.
-[inventory.json](inventory.json) records source/skill hashes, checked-out commit
-IDs, and tooling working-tree status. Rerun it with:
+The source inventory records selected repository-local `packages/agent-tool`
+implementations and the older `tearleads.old/scripts/agents/tooling/agentTool.ts`
+lineage. [inventory.json](inventory.json) records source/skill hashes,
+checked-out commit IDs, and tooling working-tree status. To create a new local
+report for a collection of projects:
 
 ```sh
-python3 scripts/inventory.py ~/github --output docs/inventory.json
+python3 scripts/inventory.py ~/github --output /tmp/agent-tool-inventory.json
 ```
 
 The inventory reads known tooling/skill locations and skips dependency, build,
@@ -19,7 +19,7 @@ and secret directories. The extraction did not modify sibling projects.
 | `tearleads`, `tearleads3`, `tearleads6`, `tearleads7` | Three-reviewer review/PR core and coordinating workflows |
 | `tearleads4`, `tearleads5` | Related version-helper variants |
 | `commandsnippets` | OpenCode default-deny permissions including MCP tools; different required CI policy |
-| `a2f0.net`, `devopsrockstars` | Two-reviewer variants and differing title/CI conventions |
+| `devopsrockstars` | Two-reviewer variant and differing title/CI conventions |
 | `stealth`, `stealth2` | More extensive executable/credential trust and macOS sandbox/preflight work; reviewed base/head merge policy |
 | `skyline` | Existing shared `.agents` skills with Claude links; project-independent setup assumptions |
 | `rn-sandbox`, `tearleads.old` | Additional maintenance and legacy workflows, retained as inventory evidence |
@@ -27,22 +27,6 @@ and secret directories. The extraction did not modify sibling projects.
 The source of truth was the checked-out source, with its commit and content
 hashes recorded, rather than an assumption that similarly named checkouts were
 identical. Variants should be compared before future migrations.
-
-### a2f0.net consumer migration
-
-The follow-up comparison of `a2f0.net/packages/agent-tool` retained its existing
-review snapshots, reviewer arguments, and synchronous squash behavior. It also
-ported stdin-based PR body delivery (`--body-file -`) and the PR CLI integration
-suite, adapting the fixtures to Bun, project JSON policy, pushed-branch checks,
-and required CI checks. GraphQL owner and repository names remain string fields
-(`-f`), while the PR number uses typed input (`-F`).
-
-The standalone package now exposes a Bun source executable for direct,
-commit-pinned GitHub dependencies. `a2f0.net` supplies its 100-character title
-limit, required `build` check from workflow `CI`, and branding policy through
-`agent-tool.json`. Commit hooks continue to enforce its complete commitlint
-configuration; the portable CLI validates the configured conventional title
-syntax, types, and length without executing repository JavaScript.
 
 ## Extracted behavior
 
