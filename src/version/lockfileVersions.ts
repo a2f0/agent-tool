@@ -23,17 +23,17 @@ export function staleBunLockWorkspaces(
  * Bun before 1.4 rewrites bun.lock without refreshing workspace versions, and
  * its frozen-lockfile check accepts the stale entries. Verify the result.
  */
-export function assertBunLockVersions(rootDir: string): void {
+export function assertBunLockVersions(
+  rootDir: string,
+  lockSource = readFileSync(path.join(rootDir, "bun.lock"), "utf8"),
+): void {
   const manifests = new Map(
     workspacePackages(rootDir).map((directory) => [
       directory,
       readVersion(readFileSync(path.join(rootDir, manifestPath(directory)), "utf8")),
     ]),
   );
-  const stale = staleBunLockWorkspaces(
-    readFileSync(path.join(rootDir, "bun.lock"), "utf8"),
-    manifests,
-  );
+  const stale = staleBunLockWorkspaces(lockSource, manifests);
   if (stale.length) {
     throw new Error(
       `bun.lock does not record the manifest versions of ${stale.join(", ")}; refresh it with Bun 1.4 or newer.`,

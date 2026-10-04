@@ -18,10 +18,13 @@ function commitPreparedVersions(
   rootDir: string,
   startHead: string,
   allowed: readonly string[],
+  lockfile: string | null,
   validate: readonly (readonly string[])[],
   message: string,
 ): void {
   git(rootDir, ["add", "--", ...allowed]);
+  // A clean filter can make the staged blob differ from the checked file.
+  if (lockfile) assertBunLockVersions(rootDir, git(rootDir, ["show", `:${lockfile}`]));
   const preparedTree = git(rootDir, ["write-tree"]);
   for (const command of validate) runProjectCommand(rootDir, command);
   assertHead(rootDir, startHead);
@@ -79,7 +82,7 @@ export function prepareVersions(rootDir: string, baseOid?: string): number {
     const changed = changedPaths(rootDir);
     lockfileChanged = lockfile !== null && changed.includes(lockfile);
     if (changed.length) {
-      commitPreparedVersions(rootDir, startHead, allowed, validate, commitMessage);
+      commitPreparedVersions(rootDir, startHead, allowed, lockfile, validate, commitMessage);
       committed = true;
     }
     if (checkVersions(rootDir, baseCommit) !== 0) {

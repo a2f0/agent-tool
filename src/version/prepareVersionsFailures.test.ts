@@ -183,6 +183,23 @@ describe("prepareVersions lockfile verification", () => {
     }
   });
 
+  test("verifies the staged lockfile when a clean filter rewrites it", () => {
+    const fixture = versionPreparationFixture();
+    const { rootDir } = fixture;
+    write(rootDir, ".gitattributes", "bun.lock filter=stale\n");
+    commitAll(rootDir, "chore: add lockfile filter");
+    git(rootDir, ["branch", "-f", "main", "HEAD"]);
+    git(rootDir, ["config", "filter.stale.clean", "sed s/0.7.102/0.7.101/"]);
+    write(rootDir, "packages/windowing/src/app.ts", "export const a = 1;\n");
+    const start = commitAll(rootDir, "feat: change frontend");
+    const result = fixture.prepare(mainOid(rootDir));
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("bun.lock does not record the manifest versions of packages/windowing");
+    expect(result.stderr).toContain("Restored version manifests");
+    expect(git(rootDir, ["rev-parse", "HEAD"])).toBe(start);
+    expect(git(rootDir, ["status", "--porcelain"])).toBe("");
+  });
+
   test("reports only workspaces whose lockfile version differs", () => {
     const lock = `{
   "lockfileVersion": 1,
