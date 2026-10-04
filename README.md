@@ -14,7 +14,9 @@ Brew or Debian packaging. See [the design](docs/design.md) and
 
 ## Try it
 
-Development requires Bun 1.3.11. Runtime requires Git; GitHub commands also require
+Development and CI use Bun 1.4.2. The source CLI runs on Bun 1.3.11 or newer,
+but `versions prepare` needs Bun 1.4 or newer on PATH to refresh workspace
+versions in `bun.lock`. Runtime requires Git; GitHub commands also require
 authenticated `gh`. Review requires an authenticated CLI for the chosen agent.
 
 ```sh
@@ -68,6 +70,7 @@ binary described above remains available for use without Bun.
 | `pr open [title]` | Open a same-repository PR; body from stdin; branch already pushed |
 | `pr merge <subject-or-empty> <head-oid> <base-branch>` | Check CI and synchronously squash the reviewed HEAD |
 | `versions plan\|bump\|check <base-oid>` | Plan, rewrite, or check package versions against an exact base |
+| `versions prepare <base-oid>` | Bump, refresh `bun.lock`, validate, and commit versions; print a JSON receipt |
 | `versions resolve-conflicts` | Resolve only version-field conflicts in configured manifests |
 | `skills list` | List embedded portable skills |
 | `skills install [--harness all\|claude\|codex\|opencode] [--apply]` | Preview by default; install or update managed skills |
@@ -98,7 +101,8 @@ when reviewing a feature checkout with policy supplied from a trusted source.
   "schemaVersion": 1,
   "subject": { "conventional": true, "maxLength": 50 },
   "merge": {
-    "requiredChecks": [{ "name": "CI gate", "workflow": "CI" }]
+    "requiredChecks": [{ "name": "CI gate", "workflow": "CI" }],
+    "requireStrictBaseFreshness": true
   },
   "review": {
     "claudeModel": null,
@@ -107,7 +111,12 @@ when reviewing a feature checkout with policy supplied from a trusted source.
     "opencodeVariants": { "xhigh": "max" },
     "timeoutMs": 600000
   },
-  "versions": { "packages": ["packages/api", "packages/client"] },
+  "versions": {
+    "packages": ["packages/api", "packages/client"],
+    "lockfile": "bun.lock",
+    "validate": [["bun", "run", "lint", "--", "--staged"]],
+    "commitMessage": "chore: bump package versions"
+  },
   "pr": { "rejectClaudeBranding": true }
 }
 ```
@@ -126,7 +135,23 @@ and Codex use their CLI defaults unless a model is configured.
 Version helpers discover committed `package.json` workspaces when
 `versions.packages` is null, or use the configured relative package directories.
 They preserve deliberate major/minor releases and bump changed packages one
-patch past the base. They do not regenerate lockfiles or commit changes.
+patch past the base. `plan`, `bump`, and `check` do not regenerate lockfiles or
+commit changes.
+
+`versions prepare` owns the whole sequence before a review snapshot. It needs a
+clean worktree on an attached branch with the exact base already merged. It
+rewrites versions and, when `versions.lockfile` is `"bun.lock"` (the default),
+runs `bun install --lockfile-only --ignore-scripts`. It then verifies that
+`bun.lock` records every workspace version, because Bun before 1.4 exits
+successfully without refreshing them. Each `versions.validate` command runs
+without a shell against the staged result; commands resolve on PATH outside
+the repository. The commit uses `versions.commitMessage` and runs the project's
+commit hooks, and must reproduce the prepared tree. Set `versions.lockfile` to
+null for projects without a Bun lockfile. On success it prints a JSON receipt
+with `baseOid`, `startHead`, `headOid`, `committed`, `lockfileChanged`, and the
+rewritten `versions`. A failure before the commit restores the manifests,
+lockfile, and index unless HEAD or other paths changed; otherwise it preserves
+that state for inspection. Repeating against the same base creates no commit.
 
 ## Portable skills
 
@@ -189,7 +214,12 @@ is a completion marker, not proof that a model's findings are correct.
 
 GitHub atomically enforces expected HEAD during merging, but this mutation has
 no atomic expected-base precondition. Skills recheck base freshness; repository
-protection must enforce stricter concurrent-update requirements. Fork reviews
+protection must enforce stricter concurrent-update requirements. With
+`merge.requireStrictBaseFreshness`, `pr merge` refuses unless the base's
+effective rules include an active repository ruleset requiring strict status
+checks that the authenticated actor can never bypass. GitHub then rejects a
+head that no longer contains the latest base. Classic branch protection is not
+inspected. Fork reviews
 can resolve upstream PR bases; the PR-opening helper initially supports
 same-repository branches.
 

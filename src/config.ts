@@ -9,9 +9,9 @@ export interface RequiredCheck {
 export interface AgentToolConfig {
   schemaVersion: 1;
   subject: { conventional: boolean; maxLength: number; types: string[] };
-  merge: { requireChecks: boolean; requiredChecks: RequiredCheck[] };
+  merge: { requireChecks: boolean; requiredChecks: RequiredCheck[]; requireStrictBaseFreshness: boolean };
   review: { claudeModel: string | null; codexModel: string | null; opencodeModel: string; opencodeVariants: Record<string, string>; timeoutMs: number };
-  versions: { packages: string[] | null };
+  versions: { packages: string[] | null; lockfile: "bun.lock" | null; validate: string[][]; commitMessage: string };
   pr: { rejectClaudeBranding: boolean };
 }
 
@@ -22,9 +22,9 @@ export const DEFAULT_CONFIG: AgentToolConfig = {
     maxLength: 72,
     types: ["feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert"],
   },
-  merge: { requireChecks: true, requiredChecks: [] },
+  merge: { requireChecks: true, requiredChecks: [], requireStrictBaseFreshness: false },
   review: { claudeModel: null, codexModel: null, opencodeModel: "deepseek/deepseek-v4-pro", opencodeVariants: { low: "low", medium: "medium", high: "high", xhigh: "max", max: "max" }, timeoutMs: 600_000 },
-  versions: { packages: null },
+  versions: { packages: null, lockfile: "bun.lock", validate: [], commitMessage: "chore: bump package versions" },
   pr: { rejectClaudeBranding: false },
 };
 
@@ -63,6 +63,7 @@ export function parseConfig(source: string): AgentToolConfig {
   if (!strings(result.subject.types) || result.subject.types.length === 0 || result.subject.types.some(type => !/^[a-z]+$/.test(type))) invalid("subject.types");
   if (typeof result.merge.requireChecks !== "boolean") invalid("merge.requireChecks");
   if (!Array.isArray(result.merge.requiredChecks)) invalid("merge.requiredChecks");
+  if (typeof result.merge.requireStrictBaseFreshness !== "boolean") invalid("merge.requireStrictBaseFreshness");
   for (const check of result.merge.requiredChecks) {
     const entry = object(check, "merge.requiredChecks entry");
     keys(entry, ["name", "workflow"], "merge.requiredChecks entry");
@@ -79,6 +80,10 @@ export function parseConfig(source: string): AgentToolConfig {
   if (result.versions.packages !== null) {
     if (!strings(result.versions.packages) || result.versions.packages.some(dir => path.isAbsolute(dir) || dir.includes("\\") || dir.split("/").some(part => !part || part === "." || part === ".."))) invalid("versions.packages");
   }
+  if (result.versions.lockfile !== null && result.versions.lockfile !== "bun.lock") invalid("versions.lockfile");
+  // Commands are argv arrays resolved on PATH outside the repository; no shell.
+  if (!Array.isArray(result.versions.validate) || result.versions.validate.some(command => !strings(command) || command.length === 0 || !/^[\w.+-]+$/.test(command[0]!))) invalid("versions.validate");
+  if (typeof result.versions.commitMessage !== "string" || !result.versions.commitMessage.trim() || /[\r\n]/.test(result.versions.commitMessage)) invalid("versions.commitMessage");
   if (typeof result.pr.rejectClaudeBranding !== "boolean") invalid("pr.rejectClaudeBranding");
   return result;
 }

@@ -1,13 +1,15 @@
 import { run } from "../git/prContext";
 import { loadConfig, type AgentToolConfig } from "../config";
 
+type CheckPolicy = Pick<AgentToolConfig["merge"], "requireChecks" | "requiredChecks">;
+
 function field(value: unknown, key: string): unknown {
   return typeof value === "object" && value !== null
     ? Reflect.get(value, key)
     : undefined;
 }
 
-export function assertMergeChecks(source: string, expectedHead: string, policy: AgentToolConfig["merge"] = loadConfig().merge): void {
+export function assertMergeChecks(source: string, expectedHead: string, policy: CheckPolicy = loadConfig().merge): void {
   const payload: unknown = JSON.parse(source);
   if (field(payload, "headRefOid") !== expectedHead) {
     throw new Error(
@@ -42,7 +44,7 @@ export function requirePassingMergeChecks(
   pr: { readonly prNumber: string; readonly repo: string },
   expectedHead: string,
   read: typeof run = run,
-  policy: AgentToolConfig["merge"] = loadConfig().merge,
+  policy: CheckPolicy = loadConfig().merge,
 ): void {
   // gh pr checks paginates and selects the latest run per workflow/job/event.
   // Raw statusCheckRollup can retain failures from superseded runs. JSON mode

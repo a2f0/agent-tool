@@ -8,6 +8,7 @@ import { runAgentToolAction } from "./runAgentToolAction";
 import { BUNDLED_SKILLS } from "./skills/bundled";
 import { checkSkills, installSkills } from "./skills/install";
 import { bumpVersions, checkVersions, planVersions } from "./version/bumpVersions";
+import { prepareVersions } from "./version/prepareVersions";
 import { resolveVersionConflicts } from "./version/resolveVersionConflicts";
 import { openPr } from "./pr/openPr";
 import { squashMerge } from "./pr/squashMerge";
@@ -20,7 +21,7 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   review <claude|codex|opencode> [effort] [--base <local-ref>]
   pr open [title]                       Body from stdin; branch already pushed
   pr merge <subject-or-empty> <head-oid> <base-branch>
-  versions <plan|bump|check> <base-oid>
+  versions <plan|bump|check|prepare> <base-oid>
   versions resolve-conflicts
   skills list
   skills install [--harness <all|claude|codex|opencode>] [--apply]
@@ -109,10 +110,11 @@ export function main(argv = process.argv.slice(2)): number {
   if (command === "versions") {
     const action = args.shift();
     if (action === "resolve-conflicts") { usage(args.length === 0, "resolve-conflicts takes no arguments."); return resolveVersionConflicts(root); }
-    usage(args.length === 1, "Usage: agent-tool versions <plan|bump|check> <base-oid>");
+    usage(args.length === 1, "Usage: agent-tool versions <plan|bump|check|prepare> <base-oid>");
     if (action === "plan") { output(planVersions(root, args[0])); return 0; }
     if (action === "bump") return bumpVersions(root, args[0]);
     if (action === "check") return checkVersions(root, args[0]);
+    if (action === "prepare") return prepareVersions(root, args[0]);
     throw new Error(`Unknown version action '${action}'.`);
   }
   return runAgentToolAction(root, [command, ...args]);

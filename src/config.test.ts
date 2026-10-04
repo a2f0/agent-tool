@@ -20,7 +20,25 @@ describe("portable project policy", () => {
       { schemaVersion: 1, review: { timeoutMs: 0 } },
       { schemaVersion: 1, versions: { packages: ["../outside"] } },
       { schemaVersion: 1, versions: { packages: ["/etc"] } },
+      { schemaVersion: 1, merge: { requireStrictBaseFreshness: "true" } },
+      { schemaVersion: 1, versions: { lockfile: "package-lock.json" } },
+      { schemaVersion: 1, versions: { validate: ["bun run lint"] } },
+      { schemaVersion: 1, versions: { validate: [[]] } },
+      { schemaVersion: 1, versions: { validate: [["./scripts/lint.sh"]] } },
+      { schemaVersion: 1, versions: { commitMessage: "chore: one\nchore: two" } },
     ]) expect(() => parseConfig(JSON.stringify(input))).toThrow();
+  });
+  test("accepts version preparation and base freshness policy", () => {
+    const config = parseConfig(JSON.stringify({
+      schemaVersion: 1,
+      merge: { requireStrictBaseFreshness: true },
+      versions: { lockfile: null, validate: [["bun", "run", "lint:source-shape", "--", "--staged"]], commitMessage: "build: bump versions" },
+    }));
+    expect(config.merge.requireStrictBaseFreshness).toBe(true);
+    expect(config.merge.requireChecks).toBe(true);
+    expect(config.versions).toEqual({ packages: null, lockfile: null, validate: [["bun", "run", "lint:source-shape", "--", "--staged"]], commitMessage: "build: bump versions" });
+    expect(DEFAULT_CONFIG.versions.lockfile).toBe("bun.lock");
+    expect(DEFAULT_CONFIG.merge.requireStrictBaseFreshness).toBe(false);
   });
   test("checks arbitrary required workflows without carrying tearleads jobs", () => {
     const policy = { requireChecks: true, requiredChecks: [{ name: "unit", workflow: "verify" }] };

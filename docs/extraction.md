@@ -50,13 +50,12 @@ validation and setup in repository guidance.
 
 ## Deliberately deferred behavior
 
-`prepareVersions` in `tearleads2` and `tearleads4` invokes a Bun install,
-repository-specific `lint:source-shape`, and commits version/lockfile changes.
-Its initial extracted suite failed five cases under the available Bun 1.3.11
-because workspace version bumps did not refresh existing lockfile entries.
-This auto-committing helper is not exported here. The non-committing version
-helpers are included; callers own package-manager-specific lockfile updates and
-validation.
+`prepareVersions` from the tearleads checkouts was deferred at first: its
+suite failed five cases under Bun 1.3.11, which does not refresh existing
+workspace versions in `bun.lock`. It is now `versions prepare`. The source's
+hard-coded `lint:source-shape` call became the `versions.validate` policy, and
+the lockfile became `versions.lockfile`. A post-refresh check rejects a stale
+`bun.lock` instead of committing one. CI runs Bun 1.4.2.
 
 `stealth`'s credential-free preflight, full reviewer credential/environment
 allowlisting, and stricter GitHub protection-policy interpretation are not
