@@ -62,6 +62,15 @@ The source package includes the CLI and embedded skills, requires Bun at
 runtime, and needs no dependency install scripts or compile step. The standalone
 binary described above remains available for use without Bun.
 
+npm projects can pin the same dependency with
+`npm install --save-dev --save-exact github:a2f0/agent-tool#<full-commit-sha>`
+and call the executable from a script such as `"agent-tool": "agent-tool"`.
+The executable is TypeScript run by Bun, so Bun must still be on `PATH`
+wherever it runs, including CI; without it, the shell reports
+`env: bun: No such file or directory`. npm records the dependency in
+`package-lock.json` as a `git+ssh` URL, but `npm ci` installs this public
+repository without SSH credentials.
+
 ## Commands
 
 | Command | Behavior |
