@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 
+import { loadConfig } from "../config";
 import { prState, resolvePr, run, spawnExitCode } from "../git/prContext";
+import { assertStrictBaseFreshness } from "./baseFreshness";
 import { requirePassingMergeChecks } from "./mergeChecks";
 import {
   appendPrNumberSuffix,
@@ -172,7 +174,8 @@ export function buildSquashMergeArgs(
  * data-only subject policy before the merge runs. When `expectedHeadSha` is supplied the
  * merge is bound to that commit through GraphQL's `expectedHeadOid` input. An
  * expected base ref is checked immediately before the mutation, but GitHub has
- * no corresponding atomic merge precondition for the target branch.
+ * no corresponding atomic merge precondition for the target branch; policy can
+ * require a non-bypassable strict status rule that makes GitHub enforce it.
  */
 export function squashMerge(
   rootDir: string,
@@ -192,6 +195,9 @@ export function squashMerge(
   validateCommitSubject(rootDir, baseSubject);
   const finalSubject = appendPrNumberSuffix(baseSubject, pr.prNumber);
   const mergeTarget = resolvePullRequestMergeTarget(pr, expectedBaseRef);
+  if (loadConfig(rootDir).merge.requireStrictBaseFreshness) {
+    assertStrictBaseFreshness(pr.repo, mergeTarget.baseRefName);
+  }
   requirePassingMergeChecks(pr, expectedHeadSha || mergeTarget.headOid);
 
   const result = spawnSync(

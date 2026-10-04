@@ -76,6 +76,10 @@ if (args[0] === "repo" && args[1] === "view") {
   } else {
     reply({number:12, state:"OPEN", title:"feat: example", baseRefName:"production", url:"https://github.com/owner/repo/pull/12"});
   }
+} else if (args[0] === "api" && args[1] === "--paginate" && args[2] === "repos/owner/repo/rules/branches/production") {
+  console.log(JSON.stringify({type:"required_status_checks", ruleset_id:7, parameters:{strict_required_status_checks_policy:true, required_status_checks:[{context:"build"}]}}));
+} else if (args[0] === "api" && args[1] === "repos/owner/repo/rulesets/7") {
+  reply({enforcement:"active", current_user_can_bypass:scenario === "bypassable" ? "always" : "never", rules:[{type:"required_status_checks", parameters:{strict_required_status_checks_policy:true, required_status_checks:[{context:"build"}]}}]});
 } else if (args[0] === "api" && args[1] === "graphql") {
   if (args.some(arg => arg.includes("mutation("))) {
     writeFileSync("mutation.json", JSON.stringify(args));
@@ -93,13 +97,13 @@ if (args[0] === "repo" && args[1] === "view") {
 
 afterEach(() => rmSync(temporary, { recursive: true, force: true }));
 
-function invoke(scenario: string, args: string[], body = "") {
+function invoke(scenario: string, args: string[], body = "", config?: string) {
   return spawnSync(process.execPath, [entry, ...args], {
     cwd: fixture,
     env: {
       ...process.env,
       PATH: `${path.join(temporary, "tools")}${path.delimiter}${process.env.PATH}`,
-      AGENT_TOOL_CONFIG: undefined,
+      AGENT_TOOL_CONFIG: config,
       PR_SCENARIO: scenario,
       PR_HEAD: head,
     },
@@ -133,6 +137,18 @@ describe("PR CLI flows ported from a2f0.net", () => {
       expect(existsSync(path.join(fixture, "mutation.json"))).toBe(false);
     },
   );
+
+  test.each([["never", 0], ["bypassable", 1]])("strict base freshness policy with %s bypass exits %d", (scenario, status) => {
+    const config = path.join(temporary, "strict.json");
+    writeFileSync(config, JSON.stringify({
+      schemaVersion: 1,
+      merge: { requiredChecks: [{ name: "build", workflow: "CI" }], requireStrictBaseFreshness: true },
+    }));
+    const result = invoke(scenario, ["pr", "merge", "", head, "production"], "", config);
+    expect(result.status).toBe(status);
+    expect(existsSync(path.join(fixture, "mutation.json"))).toBe(status === 0);
+    if (status) expect(result.stderr).toContain("can bypass strict base freshness for owner/repo:production");
+  });
 
   test("does not report success if GitHub still reports OPEN after mutation", () => {
     const result = invoke("unmerged", ["pr", "merge", "", head, "production"]);

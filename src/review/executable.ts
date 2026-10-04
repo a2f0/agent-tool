@@ -7,8 +7,12 @@ function within(root: string, candidate: string): boolean {
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
 }
 
-/** Never launch a reviewer binary supplied by the repository being reviewed. */
-export function reviewExecutable(name: string, env: ReviewerEnv, repositoryRoot = process.cwd()): string | undefined {
+/**
+ * Find a PATH executable whose entry and target both lie outside the
+ * repository. `candidate` keeps the PATH entry, which multi-call binaries such
+ * as `bunx` need; `resolved` is its real file.
+ */
+export function outsideExecutable(name: string, env: ReviewerEnv, repositoryRoot = process.cwd()): { candidate: string; resolved: string } | undefined {
   const root = realpathSync(repositoryRoot);
   for (const directory of (env.PATH ?? "").split(path.delimiter)) {
     if (!path.isAbsolute(directory)) continue;
@@ -17,9 +21,14 @@ export function reviewExecutable(name: string, env: ReviewerEnv, repositoryRoot 
       accessSync(candidate, constants.X_OK);
       const resolved = realpathSync(candidate);
       if (!statSync(resolved).isFile() || within(root, candidate) || within(root, resolved)) continue;
-      return resolved;
+      return { candidate, resolved };
     } catch { /* Continue searching outside the repository. */ }
   }
   // Never fall back to a predictable path or PATH resolution after rejection.
   return undefined;
+}
+
+/** Never launch a reviewer binary supplied by the repository being reviewed. */
+export function reviewExecutable(name: string, env: ReviewerEnv, repositoryRoot = process.cwd()): string | undefined {
+  return outsideExecutable(name, env, repositoryRoot)?.resolved;
 }
