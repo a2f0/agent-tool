@@ -1,46 +1,20 @@
 # agent-tool
 
-A standalone CLI for independent agent reviews, GitHub PR operations, package
-version helpers, and portable skills for Claude Code, Codex, and OpenCode.
-Extracted from the agent tooling in the projects under `~/github`.
+A CLI for independent agent code reviews, guarded GitHub PR operations, package
+version management, and portable skills for Claude Code, Codex, and OpenCode.
 
-The first implementation retains TypeScript and the existing regression suite.
-Bun compiles the code and skill text into one executable, so installed users do
-not need Node, Bun, TypeScript, or repository-local npm dependencies. The current
-macOS ARM64 executable is approximately 58 MiB because it includes its runtime.
-Rust remains a reasonable later implementation choice; it is not required for
-Brew or Debian packaging. See [the design](docs/design.md) and
-[extraction record](docs/extraction.md).
+- **Review** a committed branch with a different agent than the one that wrote
+  it, using a pinned, read-only snapshot.
+- **Ship** pull requests: open them, check CI, and squash-merge only the exact
+  reviewed commit.
+- **Version** packages: bump changed packages against an exact base and keep
+  `bun.lock` in sync.
+- **Share skills**: install the same workflow instructions where each harness
+  discovers them, and check them in CI.
 
-## Try it
+## Install
 
-Development and CI use Bun 1.4.2. The source CLI runs on Bun 1.3.11 or newer,
-but `versions prepare` needs Bun 1.4 or newer on PATH to refresh workspace
-versions in `bun.lock`. Runtime requires Git; GitHub commands also require
-authenticated `gh`. Review requires an authenticated CLI for the chosen agent.
-
-```sh
-bun install --frozen-lockfile
-bun run build
-./dist/agent-tool --help
-./dist/agent-tool doctor
-
-# Point the installed tool at an existing project:
-./dist/agent-tool --repo ../some-project review codex
-# Review against an explicit local base without GitHub:
-./dist/agent-tool --repo ../some-project review opencode high --base main
-
-# Preview shared skills, then install them when ready:
-./dist/agent-tool --repo ../some-project skills install
-./dist/agent-tool --repo ../some-project skills install --apply
-```
-
-The same binary works when copied outside this repository. No sibling project
-has to retain `packages/agent-tool` once its callers are migrated.
-
-### Use as a package dependency
-
-Projects can install the source CLI from npm as `@a2f0/agent-tool`:
+### From npm
 
 ```sh
 bun add --dev --exact @a2f0/agent-tool
@@ -48,18 +22,17 @@ bun add --dev --exact @a2f0/agent-tool
 npm install --save-dev --save-exact @a2f0/agent-tool
 ```
 
-Run `bun run agent-tool --help` after adding a script such as
-`"agent-tool": "agent-tool"`. The package exposes
-`node_modules/.bin/agent-tool`; invoke it directly for commands containing an
-empty positional argument, such as
-`node_modules/.bin/agent-tool pr merge '' "$REVIEWED_SHA" "$REVIEW_BASE_REF"`.
-The source package includes the CLI and embedded skills and needs no dependency
-install scripts or compile step. The executable is TypeScript run by Bun, so Bun
-must be on `PATH` wherever it runs, including npm projects and CI; without it,
-the shell reports `env: bun: No such file or directory`. The standalone binary
-described above remains available for use without Bun.
+The package ships the TypeScript source and embedded skills, with no install
+scripts or build step. Bun runs the executable, so Bun must be on `PATH`
+wherever it runs, including npm projects and CI; without it, the shell reports
+`env: bun: No such file or directory`.
 
-To use an unreleased commit, pin a full commit SHA from GitHub instead:
+Add a script such as `"agent-tool": "agent-tool"` and run
+`bun run agent-tool --help`. For a command with an empty positional argument,
+invoke `node_modules/.bin/agent-tool` directly, for example
+`node_modules/.bin/agent-tool pr merge '' "$REVIEWED_SHA" "$REVIEW_BASE_REF"`.
+
+To use an unreleased commit, pin its full SHA from GitHub:
 
 ```json
 {
@@ -71,6 +44,52 @@ To use an unreleased commit, pin a full commit SHA from GitHub instead:
 
 npm records a GitHub dependency in `package-lock.json` as a `git+ssh` URL, but
 `npm ci` installs this public repository without SSH credentials.
+
+### Standalone executable
+
+Bun compiles the CLI and its skills into one executable that needs no Node, Bun,
+or npm dependencies at runtime:
+
+```sh
+bun install --frozen-lockfile
+bun run build
+./dist/agent-tool --help
+```
+
+The executable works when copied anywhere. See [Releases](#releases) for
+platform archives, a Homebrew formula, and Debian packages.
+
+### Requirements
+
+- Git.
+- An authenticated GitHub CLI (`gh`) for `pr` commands. `pr merge` needs a
+  `gh` whose `pr checks` supports `--json`; gh 2.45, still shipped by some
+  distributions, fails with `unknown flag: --json`.
+- An authenticated CLI for each agent you review with: `claude`, `codex`, or
+  `opencode`.
+- Bun 1.3.11 or newer to run the npm package.
+- Bun 1.4 or newer on `PATH` for `versions prepare`, with either install,
+  because it refreshes workspace versions in `bun.lock`.
+
+Run `agent-tool doctor` to report installed versions and supported review flags
+without calling a model.
+
+## Quick start
+
+These examples call `agent-tool` from `PATH`. With the npm package, use
+`bun run agent-tool` or `node_modules/.bin/agent-tool` instead.
+
+```sh
+# Review the current branch with an independent agent:
+agent-tool review codex
+# Review another checkout against a local base, without GitHub:
+agent-tool --repo ../some-project review opencode high --base main
+
+# Create project policy, then preview and install the shared skills:
+agent-tool init
+agent-tool skills install
+agent-tool skills install --apply
+```
 
 ## Commands
 
@@ -88,23 +107,24 @@ npm records a GitHub dependency in `package-lock.json` as a `git+ssh` URL, but
 | `init` / `config show` | Create or inspect data-only project policy |
 | `doctor` | Inspect local versions and required CLI flags without running a model |
 
-Effort accepts `low`, `medium`, `high`, `xhigh`, and `max`. Defaults are `xhigh`
-for Claude and `high` for Codex and OpenCode. Older camelCase action names remain
-available; run `--help` for the compatibility list. The modern merge command
-requires reviewed HEAD and base branch; legacy `squashMerge` also retains its
-manual, unguarded form.
+Global options are `--repo <directory>` and `--config <file>`. Effort accepts
+`low`, `medium`, `high`, `xhigh`, and `max`; the default is `xhigh` for Claude
+and `high` for Codex and OpenCode. Legacy camelCase action names, listed in
+`--help`, remain available. Legacy `squashMerge` also accepts a manual form
+without a reviewed HEAD; prefer `pr merge`.
 
-A successful review exit means a complete review was returned, including a
-`VERDICT:` line. BLOCKER or MAJOR findings still require action. The review CLI
-does not repair, push, or merge; the coordinating skills orchestrate that work.
+A successful review exit means a complete review was returned, ending in a
+`VERDICT:` line. BLOCKER or MAJOR findings still require action. The review
+command does not repair, push, or merge; the shipping skills coordinate that
+work.
 
-## Project configuration
+## Configuration
 
-Run `agent-tool init` in a project to create `agent-tool.json`. Existing policy
-files are never overwritten. Missing settings use defaults; misspelled keys,
-invalid types, and unknown schema versions fail before work begins. Global
-`--config <file>` or `AGENT_TOOL_CONFIG` selects an explicit policy file, useful
-when reviewing a feature checkout with policy supplied from a trusted source.
+`agent-tool init` creates `agent-tool.json` and never overwrites an existing
+file. Missing settings use defaults; misspelled keys, invalid types, and unknown
+schema versions fail before any work begins. `--config <file>` or
+`AGENT_TOOL_CONFIG` selects an explicit policy file, for example to review a
+feature checkout with policy from a trusted source.
 
 ```json
 {
@@ -131,44 +151,51 @@ when reviewing a feature checkout with policy supplied from a trusted source.
 }
 ```
 
-The default title policy uses conventional commits and a 72-character limit.
-No commitlint binary or JavaScript config is executed. Required CI names are
-project settings; default policy requires reported checks, rejects unsuccessful
-checks, and allows intentionally skipped optional jobs. A named required check
-must succeed. Configure explicit required names for shipping.
+The policy is data only: no commitlint binary or JavaScript config runs.
 
-The OpenCode model default preserves the source projects' fallback provider; set
-it to a model your account supports. `opencodeVariants` overrides mappings for
-the supplied levels, with unspecified entries passed through unchanged. Claude
-and Codex use their CLI defaults unless a model is configured.
+- **`subject`**: commit and PR titles default to conventional commits with a
+  72-character limit.
+- **`merge`**: by default a PR must report at least one check, and every check
+  must succeed or be skipped. Named required checks must succeed; configure
+  them before shipping.
+- **`review`**: Claude and Codex use their CLI defaults unless a model is set.
+  Set `opencodeModel` to a model your account supports. `opencodeVariants`
+  replaces the default effort-to-variant map (`xhigh` to `max`); an effort
+  level missing from the map is passed to OpenCode unchanged.
 
-Version helpers discover committed `package.json` workspaces when
-`versions.packages` is null, or use the configured relative package directories;
-`.` names the repository's root package, which then changes with any file,
-including files in other configured packages.
-They preserve deliberate major/minor releases and bump changed packages one
-patch past the base. `plan`, `bump`, and `check` do not regenerate lockfiles or
-commit changes.
+### Versions
 
-`versions prepare` owns the whole sequence before a review snapshot. It needs a
-clean worktree on an attached branch with the exact base already merged. It
-rewrites versions and, when `versions.lockfile` is `"bun.lock"` (the default),
-runs `bun install --lockfile-only --ignore-scripts`. It then verifies that
-`bun.lock` records every workspace version, because Bun before 1.4 exits
-successfully without refreshing them. Each `versions.validate` command runs
-without a shell against the staged result; commands resolve on PATH outside
-the repository. The commit uses `versions.commitMessage` and runs the project's
-commit hooks, and must reproduce the prepared tree. Set `versions.lockfile` to
-null for projects without a Bun lockfile. On success it prints a JSON receipt
-with `baseOid`, `startHead`, `headOid`, `committed`, `lockfileChanged`, and the
-rewritten `versions`. A failure before the commit restores the manifests,
-lockfile, and index unless HEAD or other paths changed; otherwise it preserves
-that state for inspection. Repeating against the same base creates no commit.
+Version helpers use the configured package directories, or discover committed
+`package.json` workspaces when `versions.packages` is null. `.` names the
+repository's root package, which then counts as changed when any file changes,
+including files in other configured packages. A changed package moves one patch
+past the base; a deliberate major or minor bump is kept. `plan`, `bump`, and
+`check` neither regenerate lockfiles nor commit.
+
+`versions prepare` runs the whole sequence before a review snapshot:
+
+1. It requires a clean worktree on an attached branch with the exact base
+   already merged.
+2. It rewrites versions and, when `versions.lockfile` is `"bun.lock"` (the
+   default), runs `bun install --lockfile-only --ignore-scripts`. It then
+   verifies that `bun.lock` records every workspace version, because Bun before
+   1.4 exits successfully without refreshing them. Set `versions.lockfile` to
+   null for projects without a Bun lockfile.
+3. Each `versions.validate` command runs without a shell against the staged
+   result. Commands resolve on `PATH` outside the repository.
+4. It commits with `versions.commitMessage`, running the project's commit hooks,
+   and requires the commit to reproduce the prepared tree.
+
+On success it prints a JSON receipt with `baseOid`, `startHead`, `headOid`,
+`committed`, `lockfileChanged`, and the rewritten `versions`. A failure before
+the commit restores the manifests, lockfile, and index, unless HEAD or other
+paths changed, in which case it leaves that state for inspection. Repeating
+against the same base creates no commit.
 
 ## Portable skills
 
-Canonical instructions live once in `skills/`. The build embeds them, and the
-installer places the same bytes where each harness discovers them:
+Canonical skills live in `skills/`. The build embeds them, and the installer
+writes the same bytes where each harness discovers them:
 
 | Target | Project discovery directory |
 | --- | --- |
@@ -177,112 +204,121 @@ installer places the same bytes where each harness discovers them:
 | OpenCode alone | `.opencode/skills` |
 | All three | `.agents/skills` and `.claude/skills`; OpenCode discovers both |
 
-Discovery paths follow the official [Codex](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills),
+Discovery paths follow the [Codex](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills),
 [Claude Code](https://code.claude.com/docs/en/skills), and
 [OpenCode](https://opencode.ai/docs/skills/) documentation. Restart the harness
-if new skills do not appear. OpenCode may see identical names through both
-compatibility paths; the installed instructions are identical.
+if new skills do not appear. OpenCode may list identical skills from both
+paths.
 
-The bundle provides `cross-agent-review`, `open-pr`, `squash-merge`, `ship-pr`, and
-`reset`. The installer tracks ownership with `.agent-tool-skills.json`, previews
-changes without writing, and rejects unmanaged or locally edited files and
-symlink destinations. Preserve existing project-specific skills before
-migration rather than overwriting them. Project validation and setup commands
-stay in repository guidance; the shared skills make no package-manager or
-application-layout assumptions. The installer is project-scoped; it does not
-modify global harness settings, MCP configuration, or authentication.
+The bundle provides `cross-agent-review`, `open-pr`, `squash-merge`, `ship-pr`,
+and `reset`. They make no package-manager or project-layout assumptions:
 
-To normalize consumers, install the bundled skills and keep project validation,
-review-bot rules, and deployment checks in `AGENTS.md`. Put title and required CI
-settings in `agent-tool.json` instead of copying the shipping workflow. After a
-dependency update, run `agent-tool skills install --apply` and commit the updated
-skills with `.agent-tool-skills.json`. Run `agent-tool skills check` in hooks and
-CI: it fails for missing, outdated, unmanaged, or locally edited skills without
-writing anything. Use the same `--harness` when installing and checking a single
-harness. Existing unmanaged skills must be preserved or deliberately migrated
-before installation; there is no force-overwrite mode.
+- Keep validation commands, review-bot rules, and deployment checks in the
+  project's `AGENTS.md`.
+- Keep title and required-check policy in `agent-tool.json`.
+
+The installer is project-scoped and does not touch global harness settings, MCP
+configuration, or authentication. It records ownership in
+`.agent-tool-skills.json`, previews changes unless `--apply` is given, and
+refuses to overwrite unmanaged files, locally edited skills, or symlinks; there
+is no force mode. After updating the dependency, run
+`agent-tool skills install --apply` and commit the skills with
+`.agent-tool-skills.json`. Run `agent-tool skills check` in hooks and CI; it
+fails for missing, outdated, unmanaged, or edited skills without writing
+anything. Use the same `--harness` for install and check.
 
 ## Review guarantees and limits
 
-The extraction retains exact base/head snapshots, base-commit review policy,
-raw Git blob materialization, collision/path validation, text diffs without
-external drivers, snapshot cleanup, verdict gating, and one retry for incomplete
-successful output. Git hooks and replace objects are disabled for helper Git
-operations. Reviewer executables must resolve outside the project, and reviews
-have configurable timeouts. Modern review rejects HEAD drift before returning.
+Reviews run against exact base and head snapshots. Review policy comes from the
+base commit. Files are materialized from raw Git blobs with collision and path
+validation, and diffs are text-only without external drivers. Snapshots are
+cleaned up, output must end in a verdict, and an incomplete but successful run
+is retried once. Helper Git operations disable hooks and replace objects.
+Reviewer executables must resolve outside the project, reviews time out, and a
+review is rejected if HEAD moves before it returns.
 
-Claude uses safe mode and read-only tools. Codex uses an ephemeral session,
-snapshot-scoped filesystem permissions, no model-command environment
-inheritance, disabled hosted web search, and final-message capture. OpenCode uses
-a neutral directory, pure mode, inline permissions denying every tool by default,
-and specific read-only allowances. Unknown/unsupported CLI flags fail the run;
-there is no fallback that silently removes those protections.
+Each harness runs with its own read-only protections:
 
-These are different harness protections, not a uniform OS isolation guarantee.
-Claude and OpenCode rely on their tool permission implementations. The launcher
-still uses local authentication and a host environment; the stronger
-credential-stripped macOS preflight from `stealth` has not been ported. A verdict
-is a completion marker, not proof that a model's findings are correct.
+- **Claude**: safe mode and read-only tools.
+- **Codex**: an ephemeral session, snapshot-scoped filesystem permissions, no
+  inherited environment for model commands, hosted web search disabled, and
+  final-message capture.
+- **OpenCode**: a neutral directory, pure mode, and inline permissions that
+  deny every tool except specific read-only ones.
 
-GitHub atomically enforces expected HEAD during merging, but this mutation has
-no atomic expected-base precondition. Skills recheck base freshness; repository
-protection must enforce stricter concurrent-update requirements. With
-`merge.requireStrictBaseFreshness`, `pr merge` refuses unless the base's
-effective rules include an active repository ruleset requiring strict status
-checks that the authenticated actor can never bypass. GitHub then rejects a
-head that no longer contains the latest base. Classic branch protection is not
-inspected. Fork reviews
-can resolve upstream PR bases; the PR-opening helper initially supports
-same-repository branches.
+Unknown or unsupported CLI flags fail the run instead of silently dropping a
+protection. These are harness-level protections, not uniform OS isolation:
+Claude and OpenCode rely on their own permission implementations, and every
+reviewer runs with local authentication in the host environment. A verdict
+shows that a review completed, not that its findings are correct.
 
-## Packages and verification
+`pr merge` binds the squash to the reviewed HEAD through GitHub's atomic
+expected-HEAD check. GitHub has no equivalent expected-base check, so the skills
+recheck the base, and repository protection must enforce stricter freshness.
+With `merge.requireStrictBaseFreshness`, `pr merge` refuses unless an active
+repository ruleset that the authenticated actor cannot bypass requires strict
+status checks on the base. Classic branch protection is not inspected. Reviews
+can resolve fork PR bases; `pr open` supports same-repository branches.
+
+## Development
+
+Development and the CI workflow use Bun 1.4.2.
 
 ```sh
+bun install --frozen-lockfile
 bun run typecheck
 bun test
 bun scripts/smoke-package.ts
 bun run build
 bun scripts/smoke.ts dist/agent-tool
-
-# Build macOS/Linux ARM64/x64 archives and a formula with real SHA-256 values:
-bun scripts/release.ts a2f0/agent-tool
-
-# On Linux with dpkg-deb; substitute your release version:
-scripts/package-deb.sh dist/agent-tool-0.1.0-linux-x64/bin/agent-tool amd64
-# Install a produced Debian package:
-sudo apt install ./dist/agent-tool_0.1.0_amd64.deb
 ```
 
-Release scripts create local artifacts; they do not publish anything. Put the
-archives at the generated release URLs and the generated `agent-tool.rb` in a
-Homebrew tap to support `brew install <owner>/<tap>/agent-tool`. A downloadable
-`.deb` supports `apt install ./file.deb`; `apt install agent-tool` by name also
-requires hosting a signed APT repository and configuring that source. Neither a
-tap nor an APT repository is live yet. The GitHub release workflow builds and
-uploads CI artifacts only.
+`bun run build` regenerates `src/skills/bundled.ts` from `skills/*/SKILL.md`;
+commit it with skill changes. The package smoke test installs the packed npm
+tarball into a temporary project. The compiled smoke test drives all three
+review adapters through local stubs with Bun and Node absent from `PATH`, and
+makes no model calls. CI runs these checks on Linux and macOS and builds a
+Debian package on Linux.
 
-### npm releases
+## Releases
 
-ship-pr bumps the root `package.json` patch version on every merge, and the
+### npm
+
+`ship-pr` bumps the root `package.json` patch version on each merge, and the
 [publish workflow](.github/workflows/npm-publish.yml) publishes each version
-newer than npm's `latest` with
-[trusted publishing](https://docs.npmjs.com/trusted-publishers) and provenance.
-No npm token is stored. The job runs in the `npm` environment, which only
-`main` can deploy to, and npm's trusted publisher names that environment and
-`npm-publish.yml`. A deliberate major or minor bump in a PR is kept. Runs never
-overlap, and when merges land together only the newest pending run starts, so
-intermediate versions can be skipped on npm.
+newer than npm's `latest` using
+[trusted publishing](https://docs.npmjs.com/trusted-publishers), with
+provenance and no stored npm token. The publish job runs in the `npm`
+environment, which only `main` can deploy to; npm's trusted publisher names
+that environment and `npm-publish.yml`. Runs never overlap, and when merges land
+together only the newest pending run starts, so intermediate versions may never
+reach npm. npm adds a trusted publisher only to an existing package, so the
+first version was published by hand; the workflow fails with that instruction
+when the package is missing from npm.
 
-npm adds a trusted publisher only to a package that already exists, so the
-first version was published by hand with `npm publish --ignore-scripts`. Until
-a package exists, the workflow fails with that instruction rather than
-attempting a publish npm would reject.
+### Standalone archives and packages
 
-Standalone builds use [Bun's executable support](https://bun.sh/docs/bundler/executables).
-The compiled smoke test invokes all three adapters through local stubs with Bun
-and Node absent from PATH; it makes no paid model calls. CI checks source tests,
-type checking, compiled smoke tests, and Debian packaging on Linux, plus source
-and compiled checks on macOS.
+```sh
+# macOS and Linux ARM64/x64 archives, and a Homebrew formula with SHA-256 values:
+bun scripts/release.ts a2f0/agent-tool
 
-See [the validation record](docs/validation.md) for observed results and the
-limits of the local tests.
+# A Debian package (Linux with dpkg-deb); substitute the release version:
+scripts/package-deb.sh dist/agent-tool-<version>-linux-x64/bin/agent-tool amd64
+sudo apt install ./dist/agent-tool_<version>_amd64.deb
+```
+
+These scripts only create local artifacts. The manually triggered
+`Release artifacts` workflow runs them and uploads the archives, the formula,
+and amd64 and arm64 Debian packages as workflow artifacts. To offer
+`brew install <owner>/<tap>/agent-tool`, host the archives at the formula's
+URLs and publish `agent-tool.rb` in a tap. `apt install agent-tool` by name also
+requires a signed APT repository. Neither a tap nor an APT repository exists
+yet.
+
+## Further reading
+
+- [Design](docs/design.md): component boundaries and implementation choices.
+- [Validation record](docs/validation.md): observed test results and their
+  limits.
+- [Extraction record](docs/extraction.md): the projects this tool was extracted
+  from.
