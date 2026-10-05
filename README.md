@@ -154,12 +154,13 @@ The policy is data only: no commitlint binary or JavaScript config runs.
 
 - **`subject`**: commit and PR titles default to conventional commits with a
   72-character limit.
-- **`merge`**: by default every reported check must succeed, and intentionally
-  skipped optional jobs are allowed. Named required checks must succeed;
-  configure them before shipping.
+- **`merge`**: by default a PR must report at least one check, and every check
+  must succeed or be skipped. Named required checks must succeed; configure
+  them before shipping.
 - **`review`**: Claude and Codex use their CLI defaults unless a model is set.
   Set `opencodeModel` to a model your account supports. `opencodeVariants`
-  overrides the variant for the listed effort levels only.
+  replaces the default effort-to-variant map (`xhigh` to `max`); an effort
+  level missing from the map is passed to OpenCode unchanged.
 
 ### Versions
 
