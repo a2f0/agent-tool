@@ -38,38 +38,39 @@ bun run build
 The same binary works when copied outside this repository. No sibling project
 has to retain `packages/agent-tool` once its callers are migrated.
 
-### Use as a GitHub dependency
+### Use as a package dependency
 
-Bun projects can install the source CLI directly from GitHub without an npm
-release. Pin a full commit SHA in `package.json` for repeatable installs:
+Projects can install the source CLI from npm as `@a2f0/agent-tool`:
+
+```sh
+bun add --dev --exact @a2f0/agent-tool
+# or
+npm install --save-dev --save-exact @a2f0/agent-tool
+```
+
+Run `bun run agent-tool --help` after adding a script such as
+`"agent-tool": "agent-tool"`. The package exposes
+`node_modules/.bin/agent-tool`; invoke it directly for commands containing an
+empty positional argument, such as
+`node_modules/.bin/agent-tool pr merge '' "$REVIEWED_SHA" "$REVIEW_BASE_REF"`.
+The source package includes the CLI and embedded skills and needs no dependency
+install scripts or compile step. The executable is TypeScript run by Bun, so Bun
+must be on `PATH` wherever it runs, including npm projects and CI; without it,
+the shell reports `env: bun: No such file or directory`. The standalone binary
+described above remains available for use without Bun.
+
+To use an unreleased commit, pin a full commit SHA from GitHub instead:
 
 ```json
 {
   "devDependencies": {
-    "agent-tool": "github:a2f0/agent-tool#<full-commit-sha>"
-  },
-  "scripts": {
-    "agent-tool": "bun node_modules/agent-tool/src/index.ts"
+    "@a2f0/agent-tool": "github:a2f0/agent-tool#<full-commit-sha>"
   }
 }
 ```
 
-Run `bun install`, then `bun run agent-tool --help`. The package also exposes
-`node_modules/.bin/agent-tool`; invoke it directly for commands containing an
-empty positional argument, such as
-`node_modules/.bin/agent-tool pr merge '' "$REVIEWED_SHA" "$REVIEW_BASE_REF"`.
-The source package includes the CLI and embedded skills, requires Bun at
-runtime, and needs no dependency install scripts or compile step. The standalone
-binary described above remains available for use without Bun.
-
-npm projects can pin the same dependency with
-`npm install --save-dev --save-exact github:a2f0/agent-tool#<full-commit-sha>`
-and call the executable from a script such as `"agent-tool": "agent-tool"`.
-The executable is TypeScript run by Bun, so Bun must still be on `PATH`
-wherever it runs, including CI; without it, the shell reports
-`env: bun: No such file or directory`. npm records the dependency in
-`package-lock.json` as a `git+ssh` URL, but `npm ci` installs this public
-repository without SSH credentials.
+npm records a GitHub dependency in `package-lock.json` as a `git+ssh` URL, but
+`npm ci` installs this public repository without SSH credentials.
 
 ## Commands
 
@@ -142,7 +143,9 @@ the supplied levels, with unspecified entries passed through unchanged. Claude
 and Codex use their CLI defaults unless a model is configured.
 
 Version helpers discover committed `package.json` workspaces when
-`versions.packages` is null, or use the configured relative package directories.
+`versions.packages` is null, or use the configured relative package directories;
+`.` names the repository's root package, which then changes with any file,
+including files in other configured packages.
 They preserve deliberate major/minor releases and bump changed packages one
 patch past the base. `plan`, `bump`, and `check` do not regenerate lockfiles or
 commit changes.
@@ -257,6 +260,23 @@ Homebrew tap to support `brew install <owner>/<tap>/agent-tool`. A downloadable
 requires hosting a signed APT repository and configuring that source. Neither a
 tap nor an APT repository is live yet. The GitHub release workflow builds and
 uploads CI artifacts only.
+
+### npm releases
+
+ship-pr bumps the root `package.json` patch version on every merge, and the
+[publish workflow](.github/workflows/npm-publish.yml) publishes each version
+newer than npm's `latest` with
+[trusted publishing](https://docs.npmjs.com/trusted-publishers) and provenance.
+No npm token is stored. The job runs in the `npm` environment, which only
+`main` can deploy to, and npm's trusted publisher names that environment and
+`npm-publish.yml`. A deliberate major or minor bump in a PR is kept. Runs never
+overlap, and when merges land together only the newest pending run starts, so
+intermediate versions can be skipped on npm.
+
+npm adds a trusted publisher only to a package that already exists, so the
+first version was published by hand with `npm publish --ignore-scripts`. Until
+a package exists, the workflow fails with that instruction rather than
+attempting a publish npm would reject.
 
 Standalone builds use [Bun's executable support](https://bun.sh/docs/bundler/executables).
 The compiled smoke test invokes all three adapters through local stubs with Bun

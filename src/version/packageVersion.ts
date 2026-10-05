@@ -34,8 +34,9 @@ export function workspacePackages(rootDir: string): string[] {
     .sort();
 }
 
+/** `.` names the repository's root package. */
 export function manifestPath(packageDir: string): string {
-  return `${packageDir}/package.json`;
+  return packageDir === "." ? "package.json" : `${packageDir}/package.json`;
 }
 
 export function isVersionedManifest(

@@ -199,4 +199,35 @@ describe("prepareVersions CLI", () => {
     expect(git(rootDir, ["rev-parse", "HEAD"])).toBe(head);
     expect(git(rootDir, ["status", "--porcelain"])).toBe("");
   });
+
+  test("versions the root package, which bun.lock records without a version", () => {
+    const fixture = versionPreparationFixture();
+    const { rootDir } = fixture;
+    write(
+      rootDir,
+      "agent-tool.json",
+      `${JSON.stringify({ schemaVersion: 1, versions: { packages: ["."] } })}\n`,
+    );
+    const rootManifest = read(rootDir, "package.json").replace(
+      '"private": true,',
+      '"version": "1.0.0",\n  "private": true,',
+    );
+    write(rootDir, "package.json", rootManifest);
+    const base = commitAll(rootDir, "chore: version the root package");
+    write(rootDir, "scripts/lint.ts", "export {};\n");
+    commitAll(rootDir, "feat: change the root package");
+
+    const result = fixture.prepare(base);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      committed: true,
+      versions: [{ manifest: "package.json", from: "1.0.0", to: "1.0.1" }],
+    });
+    expect(read(rootDir, "package.json")).toBe(
+      rootManifest.replace('"version": "1.0.0"', '"version": "1.0.1"'),
+    );
+    expect(read(rootDir, FRONTEND)).toBe(manifest("frontend", "0.7.101"));
+    expect(git(rootDir, ["status", "--porcelain"])).toBe("");
+    expect(fixture.check(base).code).toBe(0);
+  });
 });
