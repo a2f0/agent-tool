@@ -62,8 +62,9 @@ platform archives, a Homebrew formula, and Debian packages.
 ### Requirements
 
 - Git.
-- An authenticated GitHub CLI (`gh`) for `pr` commands. `pr merge` uses
-  `gh pr checks --json`, which older distribution packages such as gh 2.45 lack.
+- An authenticated GitHub CLI (`gh`) for `pr` commands. `pr merge` needs a
+  `gh` whose `pr checks` supports `--json`; gh 2.45, still shipped by some
+  distributions, fails with `unknown flag: --json`.
 - An authenticated CLI for each agent you review with: `claude`, `codex`, or
   `opencode`.
 - Bun 1.3.11 or newer for the npm package. `versions prepare` needs Bun 1.4 or
@@ -73,6 +74,9 @@ Run `agent-tool doctor` to report installed versions and supported review flags
 without calling a model.
 
 ## Quick start
+
+These examples call `agent-tool` from `PATH`. With the npm package, use
+`bun run agent-tool` or `node_modules/.bin/agent-tool` instead.
 
 ```sh
 # Review the current branch with an independent agent:
@@ -278,7 +282,7 @@ Debian package on Linux.
 
 ### npm
 
-Every merge bumps the root `package.json` patch version, and the
+`ship-pr` bumps the root `package.json` patch version on each merge, and the
 [publish workflow](.github/workflows/npm-publish.yml) publishes each version
 newer than npm's `latest` using
 [trusted publishing](https://docs.npmjs.com/trusted-publishers), with
@@ -286,7 +290,9 @@ provenance and no stored npm token. The publish job runs in the `npm`
 environment, which only `main` can deploy to; npm's trusted publisher names
 that environment and `npm-publish.yml`. Runs never overlap, and when merges land
 together only the newest pending run starts, so intermediate versions may never
-reach npm.
+reach npm. npm adds a trusted publisher only to an existing package, so the
+first version was published by hand; the workflow fails with that instruction
+when the package is missing from npm.
 
 ### Standalone archives and packages
 
