@@ -3,6 +3,7 @@
   "version": "0.1.2",
   "type": "module",
   "description": "Portable cross-agent review, PR workflows, and shared skills",
+  "license": "UNLICENSED",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/a2f0/agent-tool.git"
