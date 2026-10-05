@@ -12,6 +12,9 @@ const archive = path.join(temporary, "agent-tool.tgz");
 const env = { ...process.env, AGENT_TOOL_CONFIG: undefined };
 try {
   execFileSync(process.execPath, ["pm", "pack", "--ignore-scripts", "--quiet", "--filename", archive], { cwd: root, env });
+  const packed = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" }).split("\n");
+  assert.ok(packed.includes("package/src/index.ts"), "the package ships the CLI source");
+  assert.deepEqual(packed.filter(file => /\.test(?:Utils)?\.ts$/.test(file)), [], "tests stay out of the package");
   mkdirSync(consumer);
   writeFileSync(path.join(consumer, "package.json"), JSON.stringify({
     name: "agent-tool-consumer-smoke",

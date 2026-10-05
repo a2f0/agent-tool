@@ -269,7 +269,9 @@ newer than npm's `latest` with
 [trusted publishing](https://docs.npmjs.com/trusted-publishers) and provenance.
 No npm token is stored. The job runs in the `npm` environment, which only
 `main` can deploy to, and npm's trusted publisher names that environment and
-`npm-publish.yml`. A deliberate major or minor bump in a PR is kept.
+`npm-publish.yml`. A deliberate major or minor bump in a PR is kept. Runs never
+overlap, and when merges land together only the newest pending run starts, so
+intermediate versions can be skipped on npm.
 
 npm adds a trusted publisher only to a package that already exists, so the
 first version was published by hand with `npm publish --ignore-scripts`. Until
