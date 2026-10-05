@@ -27,8 +27,9 @@ export function assertBunLockVersions(
   rootDir: string,
   lockSource = readFileSync(path.join(rootDir, "bun.lock"), "utf8"),
 ): void {
+  // Bun does not record the root package's version in bun.lock.
   const manifests = new Map(
-    workspacePackages(rootDir).map((directory) => [
+    workspacePackages(rootDir).filter((directory) => directory !== ".").map((directory) => [
       directory,
       readVersion(readFileSync(path.join(rootDir, manifestPath(directory)), "utf8")),
     ]),

@@ -78,7 +78,7 @@ export function parseConfig(source: string): AgentToolConfig {
   if (typeof result.review.opencodeModel !== "string" || !/^[^\s/]+\/[^\s]+$/.test(result.review.opencodeModel)) invalid("review.opencodeModel");
   if (!Number.isSafeInteger(result.review.timeoutMs) || result.review.timeoutMs < 1000 || result.review.timeoutMs > 3_600_000) invalid("review.timeoutMs");
   if (result.versions.packages !== null) {
-    if (!strings(result.versions.packages) || result.versions.packages.some(dir => path.isAbsolute(dir) || dir.includes("\\") || dir.split("/").some(part => !part || part === "." || part === ".."))) invalid("versions.packages");
+    if (!strings(result.versions.packages) || result.versions.packages.some(dir => dir !== "." && (path.isAbsolute(dir) || dir.includes("\\") || dir.split("/").some(part => !part || part === "." || part === "..")))) invalid("versions.packages");
   }
   if (result.versions.lockfile !== null && result.versions.lockfile !== "bun.lock") invalid("versions.lockfile");
   // Commands are argv arrays resolved on PATH outside the repository; no shell.

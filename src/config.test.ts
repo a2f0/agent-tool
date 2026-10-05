@@ -38,6 +38,8 @@ describe("portable project policy", () => {
     expect(config.merge.requireChecks).toBe(true);
     expect(config.versions).toEqual({ packages: null, lockfile: null, validate: [["bun", "run", "lint:source-shape", "--", "--staged"]], commitMessage: "build: bump versions" });
     expect(DEFAULT_CONFIG.versions.lockfile).toBe("bun.lock");
+    expect(parseConfig('{"schemaVersion":1,"versions":{"packages":["."]}}').versions.packages).toEqual(["."]);
+    for (const dir of ["./packages/a", "packages/."]) expect(() => parseConfig(JSON.stringify({ schemaVersion: 1, versions: { packages: [dir] } }))).toThrow();
     expect(DEFAULT_CONFIG.merge.requireStrictBaseFreshness).toBe(false);
   });
   test("checks arbitrary required workflows without carrying tearleads jobs", () => {

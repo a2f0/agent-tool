@@ -1,9 +1,15 @@
 {
-  "name": "agent-tool",
+  "name": "@a2f0/agent-tool",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "Portable cross-agent review, PR workflows, and shared skills",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/a2f0/agent-tool.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "agent-tool": "src/index.ts"
   },
@@ -16,7 +22,7 @@
   },
   "scripts": {
     "start": "bun src/index.ts",
-    "test": "bun test src",
+    "test": "bun test src scripts",
     "typecheck": "tsc --noEmit",
     "generate": "bun scripts/bundle-skills.ts",
     "build": "bun run generate && bun build --compile --minify src/index.ts --outfile dist/agent-tool"

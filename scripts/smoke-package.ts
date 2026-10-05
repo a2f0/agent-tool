@@ -16,8 +16,8 @@ try {
   writeFileSync(path.join(consumer, "package.json"), JSON.stringify({
     name: "agent-tool-consumer-smoke",
     private: true,
-    dependencies: { "agent-tool": `file:${archive}` },
-    scripts: { "agent-tool": "bun node_modules/agent-tool/src/index.ts" },
+    dependencies: { [metadata.name]: `file:${archive}` },
+    scripts: { "agent-tool": `bun node_modules/${metadata.name}/src/index.ts` },
   }));
   execFileSync(process.execPath, ["install", "--ignore-scripts"], { cwd: consumer, env, stdio: "pipe" });
   const executable = path.join(consumer, "node_modules/.bin/agent-tool");
