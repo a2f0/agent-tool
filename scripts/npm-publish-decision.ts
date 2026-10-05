@@ -15,8 +15,8 @@ export interface PublishDecision {
   reason: string;
 }
 
-// npm publishes only full versions; Bun's comparator also accepts "1.0".
-const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+// npm publishes only full semver versions; Bun's comparator also accepts "1.0".
+const versionPattern = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 /**
  * CI publishes only a version newer than npm's latest. A merge that keeps the

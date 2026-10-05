@@ -144,7 +144,8 @@ and Codex use their CLI defaults unless a model is configured.
 
 Version helpers discover committed `package.json` workspaces when
 `versions.packages` is null, or use the configured relative package directories;
-`.` names the repository's root package, which then changes with any file.
+`.` names the repository's root package, which then changes with any file,
+including files in other configured packages.
 They preserve deliberate major/minor releases and bump changed packages one
 patch past the base. `plan`, `bump`, and `check` do not regenerate lockfiles or
 commit changes.
@@ -269,6 +270,11 @@ newer than npm's `latest` with
 No npm token is stored. The job runs in the `npm` environment, which only
 `main` can deploy to, and npm's trusted publisher names that environment and
 `npm-publish.yml`. A deliberate major or minor bump in a PR is kept.
+
+npm adds a trusted publisher only to a package that already exists, so the
+first version was published by hand with `npm publish --ignore-scripts`. Until
+a package exists, the workflow fails with that instruction rather than
+attempting a publish npm would reject.
 
 Standalone builds use [Bun's executable support](https://bun.sh/docs/bundler/executables).
 The compiled smoke test invokes all three adapters through local stubs with Bun
