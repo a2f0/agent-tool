@@ -50,6 +50,9 @@ jobs:
         run: bun install --frozen-lockfile
       - if: steps.decide.outputs.publish == 'true'
         run: bun run typecheck && bun test && bun scripts/smoke-package.ts
+      # The package ships src/skills/bundled.ts, so it must match skills/.
+      - if: steps.decide.outputs.publish == 'true'
+        run: bun run generate && git diff --exit-code -- src/skills/bundled.ts
 
   publish:
     name: Publish @a2f0/agent-tool

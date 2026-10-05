@@ -15,8 +15,9 @@ export interface PublishDecision {
   reason: string;
 }
 
-// npm publishes only full semver versions; Bun's comparator also accepts "1.0".
-const versionPattern = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+// Plain major.minor.patch, as the version tooling bumps; a prerelease published
+// without a dist-tag would become npm's latest. Bun also accepts "1.0".
+const versionPattern = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 
 /**
  * CI publishes only a version newer than npm's latest. A merge that keeps the

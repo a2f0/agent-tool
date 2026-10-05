@@ -8,7 +8,7 @@ import {
   withVersion,
   workspacePackages,
 } from "./packageVersion";
-import { commitAll, repository, write } from "./version.testUtils";
+import { commitAll, FRONTEND, repository, write } from "./version.testUtils";
 
 const manifest = `{
   "name": "demo",
@@ -84,5 +84,14 @@ describe("packageVersion", () => {
       isVersionedManifest(root, "packages/windowing/fixtures/package.json"),
     ).toBe(false);
     expect(isVersionedManifest(root, "package.json")).toBe(false);
+  });
+
+  test("configures the root package as `.`", () => {
+    const root = repository();
+    write(root, "agent-tool.json", '{"schemaVersion":1,"versions":{"packages":["."]}}');
+    commitAll(root, "chore: version the root package");
+    expect(workspacePackages(root)).toEqual(["."]);
+    expect(isVersionedManifest(root, "package.json")).toBe(true);
+    expect(isVersionedManifest(root, FRONTEND)).toBe(false);
   });
 });

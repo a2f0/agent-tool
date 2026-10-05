@@ -16,7 +16,7 @@ describe("npm publish decision", () => {
   });
 
   test("rejects versions npm cannot publish", () => {
-    for (const version of ["1.0", "v1.0.0", "", "1.0.0.0", "01.0.0"]) expect(() => decidePublish(version, state)).toThrow("invalid package version");
+    for (const version of ["1.0", "v1.0.0", "", "1.0.0.0", "01.0.0", "1.0.0-rc.1", "1.0.0+build"]) expect(() => decidePublish(version, state)).toThrow("invalid package version");
   });
 
   test("reads npm view output, including a single version printed as a string", () => {
