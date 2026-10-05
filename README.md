@@ -67,8 +67,9 @@ platform archives, a Homebrew formula, and Debian packages.
   distributions, fails with `unknown flag: --json`.
 - An authenticated CLI for each agent you review with: `claude`, `codex`, or
   `opencode`.
-- Bun 1.3.11 or newer for the npm package. `versions prepare` needs Bun 1.4 or
-  newer to refresh workspace versions in `bun.lock`.
+- Bun 1.3.11 or newer to run the npm package.
+- Bun 1.4 or newer on `PATH` for `versions prepare`, with either install,
+  because it refreshes workspace versions in `bun.lock`.
 
 Run `agent-tool doctor` to report installed versions and supported review flags
 without calling a model.
@@ -261,7 +262,7 @@ can resolve fork PR bases; `pr open` supports same-repository branches.
 
 ## Development
 
-Development and CI use Bun 1.4.2.
+Development and the CI workflow use Bun 1.4.2.
 
 ```sh
 bun install --frozen-lockfile
@@ -307,7 +308,8 @@ sudo apt install ./dist/agent-tool_<version>_amd64.deb
 ```
 
 These scripts only create local artifacts. The manually triggered
-`Release artifacts` workflow builds the same files as CI artifacts. To offer
+`Release artifacts` workflow runs them and uploads the archives, the formula,
+and amd64 and arm64 Debian packages as workflow artifacts. To offer
 `brew install <owner>/<tap>/agent-tool`, host the archives at the formula's
 URLs and publish `agent-tool.rb` in a tap. `apt install agent-tool` by name also
 requires a signed APT repository. Neither a tap nor an APT repository exists
