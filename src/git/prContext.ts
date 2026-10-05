@@ -370,8 +370,13 @@ export function assertPinnedReviewBaseRef(
 ): void {
   const expected = pinnedBaseRefName?.trim() ?? "";
   if (expected.length > 0 && expected !== actualBaseRefName) {
+    // A remote-tracking or full ref such as origin/main is a common mistake for
+    // the branch name; say so instead of reporting a retargeted PR.
+    const hint = expected.endsWith(`/${actualBaseRefName}`)
+      ? ` AGENT_TOOL_REVIEW_BASE_REF takes the base branch name; use '${actualBaseRefName}', not '${expected}'.`
+      : "";
     throw new Error(
-      `Review base changed from pinned branch '${expected}' to '${actualBaseRefName}'.`,
+      `Review base changed from pinned branch '${expected}' to '${actualBaseRefName}'.${hint}`,
     );
   }
 }
