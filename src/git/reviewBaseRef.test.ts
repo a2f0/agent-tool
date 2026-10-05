@@ -40,6 +40,17 @@ test("pinned review base rejects a retargeted PR", () => {
   expect(() => assertPinnedReviewBaseRef(undefined, "release")).not.toThrow();
 });
 
+test("pinned review base explains a remote-tracking ref given as the branch", () => {
+  for (const pinned of ["origin/main", "refs/heads/main"]) {
+    expect(() => assertPinnedReviewBaseRef(pinned, "main")).toThrow(
+      `takes the base branch name; use 'main', not '${pinned}'`,
+    );
+  }
+  expect(() => assertPinnedReviewBaseRef("origin/release", "main")).toThrow(
+    /^Review base changed from pinned branch 'origin\/release' to 'main'\.$/,
+  );
+});
+
 describe("resolvePinnedReviewBase", () => {
   test("leaves ordinary review resolution unchanged when unset", () => {
     expect(resolvePinnedReviewBase(undefined)).toBeUndefined();
