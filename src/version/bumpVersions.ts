@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { lstatSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+import { bundledPackages } from "./bundledPackages";
 import {
   bumpPatch,
   isReleaseBump,
@@ -100,8 +101,9 @@ function packageChanged(
 
 /**
  * The version each package should carry at HEAD to merge onto `baseCommit`:
- * one patch past the base when the branch changes the package, the base's own
- * version when it does not, and a deliberate major or minor bump left alone.
+ * one patch past the base when the branch changes the package or a package it
+ * bundles, the base's own version when it does not, and a deliberate major or
+ * minor bump left alone.
  */
 export function planVersions(
   rootDir: string,
@@ -109,6 +111,19 @@ export function planVersions(
 ): VersionPlan[] {
   const baseCommit = resolveBaseCommit(rootDir, baseOid);
   const mergeBase = git(rootDir, ["merge-base", baseCommit, "HEAD"]).trim();
+  const bundles = bundledPackages(rootDir);
+  const changes = new Map<string, boolean>();
+  const changed = (packageDir: string): boolean => {
+    let result = changes.get(packageDir);
+    if (result === undefined) {
+      const manifest = showFile(rootDir, "HEAD", manifestPath(packageDir));
+      result =
+        manifest !== null &&
+        packageChanged(rootDir, mergeBase, packageDir, manifest);
+      changes.set(packageDir, result);
+    }
+    return result;
+  };
   const plans: VersionPlan[] = [];
   for (const packageDir of workspacePackages(rootDir)) {
     const manifest = manifestPath(packageDir);
@@ -127,7 +142,10 @@ export function planVersions(
     let targetVersion = baseVersion;
     if (isReleaseBump(headVersion, baseVersion)) {
       targetVersion = headVersion;
-    } else if (packageChanged(rootDir, mergeBase, packageDir, headManifest)) {
+    } else if (
+      changed(packageDir) ||
+      (bundles.get(packageDir) ?? []).some(changed)
+    ) {
       targetVersion = bumpPatch(baseVersion);
     }
     plans.push({ manifest, baseVersion, headVersion, targetVersion });

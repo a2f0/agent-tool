@@ -143,6 +143,7 @@ feature checkout with policy from a trusted source.
   },
   "versions": {
     "packages": ["packages/api", "packages/client"],
+    "bundles": ["packages/client"],
     "lockfile": "bun.lock",
     "validate": [["bun", "run", "lint", "--", "--staged"]],
     "commitMessage": "chore: bump package versions"
@@ -171,6 +172,13 @@ repository's root package, which then counts as changed when any file changes,
 including files in other configured packages. A changed package moves one patch
 past the base; a deliberate major or minor bump is kept. `plan`, `bump`, and
 `check` neither regenerate lockfiles nor commit.
+
+`versions.bundles` names versioned packages whose published artifact includes
+the workspace packages they depend on. Such a package also counts as changed
+when any workspace package it reaches through `workspace:` ranges in
+`dependencies` changes, directly or transitively; `devDependencies` and
+`peerDependencies` do not count. A bundled package whose only change is its
+version does not move the bundle.
 
 `versions prepare` runs the whole sequence before a review snapshot:
 

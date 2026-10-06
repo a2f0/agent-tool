@@ -11,7 +11,7 @@ export interface AgentToolConfig {
   subject: { conventional: boolean; maxLength: number; types: string[] };
   merge: { requireChecks: boolean; requiredChecks: RequiredCheck[]; requireStrictBaseFreshness: boolean };
   review: { claudeModel: string | null; codexModel: string | null; opencodeModel: string; opencodeVariants: Record<string, string>; timeoutMs: number };
-  versions: { packages: string[] | null; lockfile: "bun.lock" | null; validate: string[][]; commitMessage: string };
+  versions: { packages: string[] | null; bundles: string[]; lockfile: "bun.lock" | null; validate: string[][]; commitMessage: string };
   pr: { rejectClaudeBranding: boolean };
 }
 
@@ -24,7 +24,7 @@ export const DEFAULT_CONFIG: AgentToolConfig = {
   },
   merge: { requireChecks: true, requiredChecks: [], requireStrictBaseFreshness: false },
   review: { claudeModel: null, codexModel: null, opencodeModel: "deepseek/deepseek-v4-pro", opencodeVariants: { low: "low", medium: "medium", high: "high", xhigh: "max", max: "max" }, timeoutMs: 600_000 },
-  versions: { packages: null, lockfile: "bun.lock", validate: [], commitMessage: "chore: bump package versions" },
+  versions: { packages: null, bundles: [], lockfile: "bun.lock", validate: [], commitMessage: "chore: bump package versions" },
   pr: { rejectClaudeBranding: false },
 };
 
@@ -77,9 +77,9 @@ export function parseConfig(source: string): AgentToolConfig {
   for (const value of Object.values(variants)) if (typeof value !== "string" || !/^[^\s]+$/.test(value)) invalid("review.opencodeVariants");
   if (typeof result.review.opencodeModel !== "string" || !/^[^\s/]+\/[^\s]+$/.test(result.review.opencodeModel)) invalid("review.opencodeModel");
   if (!Number.isSafeInteger(result.review.timeoutMs) || result.review.timeoutMs < 1000 || result.review.timeoutMs > 3_600_000) invalid("review.timeoutMs");
-  if (result.versions.packages !== null) {
-    if (!strings(result.versions.packages) || result.versions.packages.some(dir => dir !== "." && (path.isAbsolute(dir) || dir.includes("\\") || dir.split("/").some(part => !part || part === "." || part === "..")))) invalid("versions.packages");
-  }
+  const packageDirs = (dirs: unknown): boolean => strings(dirs) && !dirs.some(dir => dir !== "." && (path.isAbsolute(dir) || dir.includes("\\") || dir.split("/").some(part => !part || part === "." || part === "..")));
+  if (result.versions.packages !== null && !packageDirs(result.versions.packages)) invalid("versions.packages");
+  if (!packageDirs(result.versions.bundles)) invalid("versions.bundles");
   if (result.versions.lockfile !== null && result.versions.lockfile !== "bun.lock") invalid("versions.lockfile");
   // Commands are argv arrays resolved on PATH outside the repository; no shell.
   if (!Array.isArray(result.versions.validate) || result.versions.validate.some(command => !strings(command) || command.length === 0 || !/^[\w.+-]+$/.test(command[0]!))) invalid("versions.validate");
