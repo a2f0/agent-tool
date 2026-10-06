@@ -176,7 +176,8 @@ past the base; a deliberate major or minor bump is kept. `plan`, `bump`, and
 `versions.bundles` names versioned packages whose published artifact includes
 the workspace packages they depend on. Such a package also counts as changed
 when any workspace package it reaches through `workspace:` ranges in
-`dependencies` changes, directly or transitively; `devDependencies` and
+`dependencies` changes, directly or transitively; an alias range such as
+`workspace:crypto@*` names its target. `devDependencies` and
 `peerDependencies` do not count. A bundled package whose only change is its
 version does not move the bundle.
 

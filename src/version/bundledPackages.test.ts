@@ -142,3 +142,26 @@ test("a bundled package outside versions.packages may use any version", () => {
   commitAll(root, "chore: describe crypto");
   expect(targets(root, base)).toEqual({ [SDK]: "1.0.1" });
 });
+
+test("an aliased workspace dependency resolves to the package it names", () => {
+  const { root } = bundleRepository();
+  write(root, SDK, manifest("sdk", "1.0.0", '\n  "dependencies": { "keys": "workspace:crypto@*" },'));
+  const base = commitAll(root, "chore: alias crypto");
+  write(root, "packages/encoding/src/index.ts", "export const changed = true;\n");
+  commitAll(root, "feat: change encoding");
+  expect(targets(root, base)).toEqual({ [ENCODING]: "3.0.1", [SDK]: "1.0.1" });
+});
+
+test("a bundle without workspace dependencies needs no workspace declaration", () => {
+  const root = repository();
+  write(root, "package.json", JSON.stringify({ name: "root", version: "1.0.0" }));
+  write(
+    root,
+    "agent-tool.json",
+    JSON.stringify({ schemaVersion: 1, versions: { packages: ["."], bundles: ["."] } }),
+  );
+  const base = commitAll(root, "chore: single package");
+  write(root, "README.md", "changed\n");
+  commitAll(root, "docs: change readme");
+  expect(targets(root, base)).toEqual({ "package.json": "1.0.1" });
+});
