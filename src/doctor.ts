@@ -3,7 +3,7 @@ import { loadConfig } from "./config";
 
 const specifications = [
   { name: "git", help: [] as string[], flags: [] as string[] },
-  { name: "gh", help: [] as string[], flags: [] as string[] },
+  { name: "gh", help: ["pr", "checks", "--help"], flags: ["--json"] },
   { name: "claude", help: ["--help"], flags: ["--safe-mode", "--permission-mode", "--effort"] },
   { name: "codex", help: ["exec", "--help"], flags: ["--ignore-user-config", "--ignore-rules", "--strict-config", "--ephemeral", "--output-last-message"] },
   { name: "opencode", help: ["run", "--help"], flags: ["--pure", "--variant", "--agent"] },

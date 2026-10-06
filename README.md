@@ -71,8 +71,8 @@ platform archives, a Homebrew formula, and Debian packages.
 - Bun 1.4 or newer on `PATH` for `versions prepare`, with either install,
   because it refreshes workspace versions in `bun.lock`.
 
-Run `agent-tool doctor` to report installed versions and supported review flags
-without calling a model.
+Run `agent-tool doctor` to report installed versions and the flags the tool needs
+from each CLI, such as `gh pr checks --json` for merging, without calling a model.
 
 ## Quick start
 
