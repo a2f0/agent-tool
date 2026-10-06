@@ -6,10 +6,14 @@ import {
 import { posix } from "node:path";
 import { loadConfig } from "../config";
 
-/** Discover every committed workspace, including globbed and newly added ones. */
+/** The versioned packages: the configured directories, or every workspace. */
 export function workspacePackages(rootDir: string): string[] {
   const configured = loadConfig(rootDir).versions.packages;
-  if (configured !== null) return [...configured];
+  return configured === null ? discoveredWorkspaces(rootDir) : [...configured];
+}
+
+/** Discover every committed workspace, including globbed and newly added ones. */
+export function discoveredWorkspaces(rootDir: string): string[] {
   const options: ExecFileSyncOptionsWithStringEncoding = {
     cwd: rootDir,
     env: gitEnvironment(),

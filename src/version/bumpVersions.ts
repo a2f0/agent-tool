@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { lstatSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+import { bundledPackages } from "./bundledPackages";
 import {
   bumpPatch,
   isReleaseBump,
@@ -58,18 +59,12 @@ function resolveBaseCommit(
   return git(rootDir, ["rev-parse", "--verify", `${oid}^{commit}`]).trim();
 }
 
-/**
- * Whether the branch changes the package, counting its manifest only for edits
- * beyond the version field.
- */
-function packageChanged(
+function changedFiles(
   rootDir: string,
   mergeBase: string,
   packageDir: string,
-  headManifest: string,
-): boolean {
-  const manifest = manifestPath(packageDir);
-  const changed = git(rootDir, [
+): string[] {
+  return git(rootDir, [
     "diff",
     "--name-only",
     "--no-renames",
@@ -81,6 +76,20 @@ function packageChanged(
   ])
     .split("\0")
     .filter(Boolean);
+}
+
+/**
+ * Whether the branch changes the package, counting its manifest only for edits
+ * beyond the version field.
+ */
+function packageChanged(
+  rootDir: string,
+  mergeBase: string,
+  packageDir: string,
+  headManifest: string,
+): boolean {
+  const manifest = manifestPath(packageDir);
+  const changed = changedFiles(rootDir, mergeBase, packageDir);
   if (changed.some((file) => file !== manifest)) {
     return true;
   }
@@ -98,10 +107,40 @@ function packageChanged(
   return withVersion(mergeBaseManifest, version) !== headManifest;
 }
 
+/** A manifest's fields other than `version`, in a comparable form. */
+function withoutVersion(manifest: string | null): string | null {
+  if (manifest === null) return null;
+  const parsed: unknown = JSON.parse(manifest);
+  if (typeof parsed === "object" && parsed !== null) {
+    Reflect.deleteProperty(parsed, "version");
+  }
+  return JSON.stringify(parsed);
+}
+
+/**
+ * Whether the branch changes a package a bundle ships, beyond its version.
+ * The package need not be versioned, so its version is never parsed.
+ */
+function bundledPackageChanged(
+  rootDir: string,
+  mergeBase: string,
+  packageDir: string,
+): boolean {
+  const manifest = manifestPath(packageDir);
+  const changed = changedFiles(rootDir, mergeBase, packageDir);
+  if (changed.some((file) => file !== manifest)) return true;
+  if (!changed.includes(manifest)) return false;
+  return (
+    withoutVersion(showFile(rootDir, mergeBase, manifest)) !==
+    withoutVersion(showFile(rootDir, "HEAD", manifest))
+  );
+}
+
 /**
  * The version each package should carry at HEAD to merge onto `baseCommit`:
- * one patch past the base when the branch changes the package, the base's own
- * version when it does not, and a deliberate major or minor bump left alone.
+ * one patch past the base when the branch changes the package or a package it
+ * bundles, the base's own version when it does not, and a deliberate major or
+ * minor bump left alone.
  */
 export function planVersions(
   rootDir: string,
@@ -109,6 +148,16 @@ export function planVersions(
 ): VersionPlan[] {
   const baseCommit = resolveBaseCommit(rootDir, baseOid);
   const mergeBase = git(rootDir, ["merge-base", baseCommit, "HEAD"]).trim();
+  const bundles = bundledPackages(rootDir);
+  const bundledChanges = new Map<string, boolean>();
+  const bundledChanged = (packageDir: string): boolean => {
+    let result = bundledChanges.get(packageDir);
+    if (result === undefined) {
+      result = bundledPackageChanged(rootDir, mergeBase, packageDir);
+      bundledChanges.set(packageDir, result);
+    }
+    return result;
+  };
   const plans: VersionPlan[] = [];
   for (const packageDir of workspacePackages(rootDir)) {
     const manifest = manifestPath(packageDir);
@@ -127,7 +176,10 @@ export function planVersions(
     let targetVersion = baseVersion;
     if (isReleaseBump(headVersion, baseVersion)) {
       targetVersion = headVersion;
-    } else if (packageChanged(rootDir, mergeBase, packageDir, headManifest)) {
+    } else if (
+      packageChanged(rootDir, mergeBase, packageDir, headManifest) ||
+      (bundles.get(packageDir) ?? []).some(bundledChanged)
+    ) {
       targetVersion = bumpPatch(baseVersion);
     }
     plans.push({ manifest, baseVersion, headVersion, targetVersion });
