@@ -122,3 +122,23 @@ test("a bundle's workspace dependency must be a workspace package", () => {
     "packages/sdk depends on absent, which is not a workspace package.",
   );
 });
+
+// An unversioned bundled package may carry any version, or none.
+test("a bundled package outside versions.packages may use any version", () => {
+  const root = repository();
+  write(
+    root,
+    "agent-tool.json",
+    JSON.stringify({ schemaVersion: 1, versions: { packages: ["packages/sdk"], bundles: ["packages/sdk"] } }),
+  );
+  write(root, SDK, manifest("sdk", "1.0.0", dependencies("dependencies", ["crypto"])));
+  write(root, CRYPTO, manifest("crypto", "2.0.0-beta.1"));
+  write(root, "packages/crypto/src/index.ts", "export {};\n");
+  const base = commitAll(root, "chore: add packages");
+  write(root, CRYPTO, manifest("crypto", "2.0.0-beta.2"));
+  commitAll(root, "chore: release crypto");
+  expect(targets(root, base)).toEqual({});
+  write(root, CRYPTO, manifest("crypto", "2.0.0-beta.2", '\n  "description": "changed",'));
+  commitAll(root, "chore: describe crypto");
+  expect(targets(root, base)).toEqual({ [SDK]: "1.0.1" });
+});

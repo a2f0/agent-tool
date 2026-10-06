@@ -59,18 +59,12 @@ function resolveBaseCommit(
   return git(rootDir, ["rev-parse", "--verify", `${oid}^{commit}`]).trim();
 }
 
-/**
- * Whether the branch changes the package, counting its manifest only for edits
- * beyond the version field.
- */
-function packageChanged(
+function changedFiles(
   rootDir: string,
   mergeBase: string,
   packageDir: string,
-  headManifest: string,
-): boolean {
-  const manifest = manifestPath(packageDir);
-  const changed = git(rootDir, [
+): string[] {
+  return git(rootDir, [
     "diff",
     "--name-only",
     "--no-renames",
@@ -82,6 +76,20 @@ function packageChanged(
   ])
     .split("\0")
     .filter(Boolean);
+}
+
+/**
+ * Whether the branch changes the package, counting its manifest only for edits
+ * beyond the version field.
+ */
+function packageChanged(
+  rootDir: string,
+  mergeBase: string,
+  packageDir: string,
+  headManifest: string,
+): boolean {
+  const manifest = manifestPath(packageDir);
+  const changed = changedFiles(rootDir, mergeBase, packageDir);
   if (changed.some((file) => file !== manifest)) {
     return true;
   }
@@ -99,6 +107,35 @@ function packageChanged(
   return withVersion(mergeBaseManifest, version) !== headManifest;
 }
 
+/** A manifest's fields other than `version`, in a comparable form. */
+function withoutVersion(manifest: string | null): string | null {
+  if (manifest === null) return null;
+  const parsed: unknown = JSON.parse(manifest);
+  if (typeof parsed === "object" && parsed !== null) {
+    Reflect.deleteProperty(parsed, "version");
+  }
+  return JSON.stringify(parsed);
+}
+
+/**
+ * Whether the branch changes a package a bundle ships, beyond its version.
+ * The package need not be versioned, so its version is never parsed.
+ */
+function bundledPackageChanged(
+  rootDir: string,
+  mergeBase: string,
+  packageDir: string,
+): boolean {
+  const manifest = manifestPath(packageDir);
+  const changed = changedFiles(rootDir, mergeBase, packageDir);
+  if (changed.some((file) => file !== manifest)) return true;
+  if (!changed.includes(manifest)) return false;
+  return (
+    withoutVersion(showFile(rootDir, mergeBase, manifest)) !==
+    withoutVersion(showFile(rootDir, "HEAD", manifest))
+  );
+}
+
 /**
  * The version each package should carry at HEAD to merge onto `baseCommit`:
  * one patch past the base when the branch changes the package or a package it
@@ -112,15 +149,12 @@ export function planVersions(
   const baseCommit = resolveBaseCommit(rootDir, baseOid);
   const mergeBase = git(rootDir, ["merge-base", baseCommit, "HEAD"]).trim();
   const bundles = bundledPackages(rootDir);
-  const changes = new Map<string, boolean>();
-  const changed = (packageDir: string): boolean => {
-    let result = changes.get(packageDir);
+  const bundledChanges = new Map<string, boolean>();
+  const bundledChanged = (packageDir: string): boolean => {
+    let result = bundledChanges.get(packageDir);
     if (result === undefined) {
-      const manifest = showFile(rootDir, "HEAD", manifestPath(packageDir));
-      result =
-        manifest !== null &&
-        packageChanged(rootDir, mergeBase, packageDir, manifest);
-      changes.set(packageDir, result);
+      result = bundledPackageChanged(rootDir, mergeBase, packageDir);
+      bundledChanges.set(packageDir, result);
     }
     return result;
   };
@@ -143,8 +177,8 @@ export function planVersions(
     if (isReleaseBump(headVersion, baseVersion)) {
       targetVersion = headVersion;
     } else if (
-      changed(packageDir) ||
-      (bundles.get(packageDir) ?? []).some(changed)
+      packageChanged(rootDir, mergeBase, packageDir, headManifest) ||
+      (bundles.get(packageDir) ?? []).some(bundledChanged)
     ) {
       targetVersion = bumpPatch(baseVersion);
     }
