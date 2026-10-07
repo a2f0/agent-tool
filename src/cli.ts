@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { writeFileSync, writeSync } from "node:fs";
+import { readFileSync, writeFileSync, writeSync } from "node:fs";
 import path from "node:path";
 import { DEFAULT_CONFIG, loadConfig } from "./config";
 import { doctor } from "./doctor";
+import { checkTerraformPlan } from "./dependencies/terraformPlan";
 import { review } from "./harnesses";
 import { runAgentToolAction } from "./runAgentToolAction";
 import { BUNDLED_SKILLS } from "./skills/bundled";
@@ -23,6 +24,7 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   pr merge <subject-or-empty> <head-oid> <base-branch>
   versions <plan|bump|check|prepare> <base-oid>
   versions resolve-conflicts
+  dependencies check-terraform-plan <json-file>  Read-only destructive-plan check
   skills list
   skills install [--harness <all|claude|codex|opencode>] [--apply]
   skills check [--harness <all|claude|codex|opencode>]
@@ -58,6 +60,14 @@ export function main(argv = process.argv.slice(2)): number {
     writeSync(1, HELP); return 0;
   }
   if (command === "--version") { usage(args.length === 0, "Unexpected version arguments."); writeSync(1, `${metadata.version}\n`); return 0; }
+  if (command === "dependencies") {
+    usage(args.length === 2 && args[0] === "check-terraform-plan", "Usage: agent-tool dependencies check-terraform-plan <json-file>");
+    const source = readFileSync(args[1], "utf8");
+    let plan: unknown;
+    try { plan = JSON.parse(source); } catch { throw new Error("Invalid Terraform plan JSON."); }
+    const result = checkTerraformPlan(plan);
+    output(result); return result.ok ? 0 : 1;
+  }
   if (command === "init") {
     usage(args.length === 0, "Usage: agent-tool init");
     writeFileSync(path.join(process.cwd(), "agent-tool.json"), `${JSON.stringify(DEFAULT_CONFIG, null, 2)}\n`, { flag: "wx" });

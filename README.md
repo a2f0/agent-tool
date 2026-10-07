@@ -101,6 +101,7 @@ agent-tool skills install --apply
 | `versions plan\|bump\|check <base-oid>` | Plan, rewrite, or check package versions against an exact base |
 | `versions prepare <base-oid>` | Bump, refresh `bun.lock`, validate, and commit versions; print a JSON receipt |
 | `versions resolve-conflicts` | Resolve only version-field conflicts in configured manifests |
+| `dependencies check-terraform-plan <json-file>` | Read-only screening for destructive or incomplete Terraform JSON plans |
 | `skills list` | List embedded portable skills |
 | `skills install [--harness all\|claude\|codex\|opencode] [--apply]` | Preview by default; install or update managed skills |
 | `skills check [--harness all\|claude\|codex\|opencode]` | Read-only CI check for current managed skills |
@@ -220,7 +221,8 @@ if new skills do not appear. OpenCode may list identical skills from both
 paths.
 
 The bundle provides `cross-agent-review`, `open-pr`, `squash-merge`, `ship-pr`,
-and `reset`. They make no package-manager or project-layout assumptions:
+`reset`, and `update-dependencies`. They make no package-manager or project-layout
+assumptions:
 
 - Keep validation commands, review-bot rules, and deployment checks in the
   project's `AGENTS.md`.
@@ -235,6 +237,42 @@ is no force mode. After updating the dependency, run
 `.agent-tool-skills.json`. Run `agent-tool skills check` in hooks and CI; it
 fails for missing, outdated, unmanaged, or edited skills without writing
 anything. Use the same `--harness` for install and check.
+
+### Dependency upgrades
+
+Invoke `update-dependencies` in Claude Code, Codex, or OpenCode to inventory and
+upgrade package dependencies, runtimes, mise tools, Actions, native toolchains,
+Ansible, Terraform providers/modules, and other repository-owned pins. It reads
+official migration guides, upgrades coupled dependencies together, resolves
+deprecations, and records validated, constrained, and skipped upgrades. It follows
+the repository's existing upgrade skills and support policy.
+
+The skill requires a dry run before any infrastructure mutation, including ones
+triggered by hooks or CI on push/merge. Resource destruction or replacement, and
+previews that cannot establish safety, skip the affected upgrade group. A Wrangler
+bundle dry run alone does not prove remote resource safety. The skill does not
+itself authorize deployment or shipping; use `ship-pr` when requested.
+
+For a full refreshed Terraform saved plan, export its private JSON and screen it:
+
+```sh
+terraform show -json /private/path/upgrade.tfplan > /private/path/upgrade.json
+agent-tool dependencies check-terraform-plan /private/path/upgrade.json
+```
+
+The check returns JSON with `ok`, `issues`, and `resourceActions`, and exits 1 for
+unsafe or unsupported plans. It rejects delete and replacement actions, unknown
+actions, destructive drift, incomplete/deferred plans, unpassed checks, and opaque
+provider action invocations. It requires JSON format 1.x and `complete: true`
+(available from Terraform 1.8); older plans without completeness evidence fail.
+OpenTofu's current JSON format omits `complete` and is not accepted; report that
+limitation rather than fabricating the field.
+Missing `resource_changes` is valid for a complete empty or output-only plan;
+removing an output is not a resource deletion. Invalid JSON fails without echoing
+the input. The command never applies or contacts a backend and prints no attribute
+values. It cannot establish plan freshness, environment/identity, provider or
+provisioner side effects, or authorization; inspect those before deploying and
+apply the exact approved saved plan. Keep state and plans out of Git.
 
 ## Review guarantees and limits
 
@@ -271,7 +309,10 @@ can resolve fork PR bases; `pr open` supports same-repository branches.
 
 ## Development
 
-Development and the CI workflow use Bun 1.4.2.
+Development and all build/release workflows use Bun 1.4.2 and TypeScript 7.0.2.
+The compiler is used through `tsc`; this repository does not depend on its removed
+JavaScript compiler API. Runtime consumers still support Bun 1.3.11 or newer;
+CI also runs the installed-package smoke and plan-guard tests on that minimum.
 
 ```sh
 bun install --frozen-lockfile
