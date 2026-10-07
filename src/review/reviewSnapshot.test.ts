@@ -81,6 +81,7 @@ function createRepository(): string {
   git(rootDir, ["init", "--quiet"]);
   git(rootDir, ["config", "user.email", "agent-tool@example.com"]);
   git(rootDir, ["config", "user.name", "Agent Tool"]);
+  git(rootDir, ["config", "commit.gpgsign", "false"]);
   mkdirSync(path.join(rootDir, "src"));
   writeFileSync(path.join(rootDir, "src", "tracked.txt"), "committed\n");
   git(rootDir, ["add", "."]);

@@ -262,6 +262,9 @@ triggered by hooks or CI on push/merge. Resource destruction or replacement, and
 previews that cannot establish safety, skip the affected upgrade group. A Wrangler
 bundle dry run alone does not prove remote resource safety. The skill does not
 itself authorize deployment or shipping; use `ship-pr` when requested.
+For Wrangler, the skill treats remote D1 migration listing as potentially
+mutating and holds deployment when a migration is pending or the upload cannot
+be proven to match the validated preview artifacts.
 
 For a full refreshed Terraform saved plan, export its private JSON and screen it:
 

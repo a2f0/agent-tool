@@ -18,6 +18,7 @@ function git(...args: string[]): string {
 git("init", "--quiet", "--initial-branch=main");
 git("config", "user.name", "Agent Tool Test");
 git("config", "user.email", "agent-tool@example.com");
+git("config", "commit.gpgsign", "false");
 writeFileSync(path.join(repoDir, "AGENTS.md"), "TRUSTED BASE POLICY\n");
 git("add", "AGENTS.md");
 git("commit", "--quiet", "-m", "base policy");
