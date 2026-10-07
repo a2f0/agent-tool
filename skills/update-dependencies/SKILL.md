@@ -158,6 +158,21 @@ programmatic API may break test/lint runners that import it even when `tsc` pass
 Action runtime upgrades can require newer self-hosted runners; preserve workflow
 permissions, action inputs/outputs, caching, artifact semantics, and job names.
 
+Check current advisories with read-only ecosystem audits against both the baseline
+and proposed lockfiles, covering direct and resolved transitive dependencies,
+including native/platform-specific binaries. Latest direct packages can still
+pin vulnerable transitive versions. Trace each finding to its owning dependency,
+verify affected versions, runtime conditions, and remediation in the maintainer's
+advisory and fixed release, and prefer a supported upgrade of that owner.
+If the owner still pins a vulnerable version, a narrowly scoped security patch
+override may be used only with API/ABI/runtime compatibility evidence and focused
+regression checks of the actual affected integration. Document its rationale and
+removal condition; a passing install or bundle alone is insufficient. Do not run
+blind audit fixes or use blanket overrides to bypass compatibility constraints.
+Re-audit the final resolved graph. Report unresolved advisories and unavailable
+audit coverage accurately; current direct pins or a partial clean audit do not
+establish that the whole dependency graph is safe.
+
 ## Migrate and validate
 
 Capture relevant baseline checks and warnings first, after screening their side
@@ -170,6 +185,10 @@ Review intentional patches, overrides, and pins before removal; retain them unti
 upstream fixes and regression checks demonstrate they are unnecessary.
 Avoid unrelated global installations or environment changes. Use task-local or
 repository-scoped tools for testing changed runtime pins.
+For published packages, also validate tarballs and consumer installs with their
+documented supported package managers, including manifest/override syntax and
+runtime requirements. A successful owning-manager install does not prove that
+published metadata works for those consumers.
 
 Run the repository's setup/hooks, frozen installs, lint, typechecks, tests, builds,
 package/platform smoke checks, and relevant safe integration previews. Resolve
