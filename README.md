@@ -254,7 +254,7 @@ override requires compatibility evidence, a regression check of the affected
 integration, and a documented removal condition; blind audit fixes and blanket
 compatibility overrides are excluded. Remaining advisories and audit limits are
 reported explicitly.
-Published packages also check tarballs and consumer installs with their documented
+For published packages, the skill also checks tarballs and consumer installs with their documented
 supported managers, including override syntax and runtime requirements.
 
 The skill requires a dry run before any infrastructure mutation, including ones
