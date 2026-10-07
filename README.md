@@ -247,6 +247,16 @@ official migration guides, upgrades coupled dependencies together, resolves
 deprecations, and records validated, constrained, and skipped upgrades. It follows
 the repository's existing upgrade skills and support policy.
 
+Read-only advisory checks cover baseline and candidate lockfiles, including
+resolved transitive and native dependencies. The skill traces findings to their
+owning dependency and prefers an upstream-supported fix. A scoped security patch
+override requires compatibility evidence, a regression check of the affected
+integration, and a documented removal condition; blind audit fixes and blanket
+compatibility overrides are excluded. Remaining advisories and audit limits are
+reported explicitly. For published packages, the skill also checks tarballs and
+consumer installs with their documented supported managers, including override
+syntax and runtime requirements.
+
 The skill requires a dry run before any infrastructure mutation, including ones
 triggered by hooks or CI on push/merge. Resource destruction or replacement, and
 previews that cannot establish safety, skip the affected upgrade group. A Wrangler
