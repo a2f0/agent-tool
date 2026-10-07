@@ -265,6 +265,8 @@ unsafe or unsupported plans. It rejects delete and replacement actions, unknown
 actions, destructive drift, incomplete/deferred plans, unpassed checks, and opaque
 provider action invocations. It requires JSON format 1.x and `complete: true`
 (available from Terraform 1.8); older plans without completeness evidence fail.
+OpenTofu's current JSON format omits `complete` and is not accepted; report that
+limitation rather than fabricating the field.
 Missing `resource_changes` is valid for a complete empty or output-only plan;
 removing an output is not a resource deletion. Invalid JSON fails without echoing
 the input. The command never applies or contacts a backend and prints no attribute
@@ -309,7 +311,8 @@ can resolve fork PR bases; `pr open` supports same-repository branches.
 
 Development and all build/release workflows use Bun 1.4.2 and TypeScript 7.0.2.
 The compiler is used through `tsc`; this repository does not depend on its removed
-JavaScript compiler API. Runtime consumers still support Bun 1.3.11 or newer.
+JavaScript compiler API. Runtime consumers still support Bun 1.3.11 or newer;
+CI also runs the installed-package smoke and plan-guard tests on that minimum.
 
 ```sh
 bun install --frozen-lockfile

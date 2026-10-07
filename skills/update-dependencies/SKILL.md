@@ -72,6 +72,8 @@ failed checks, or opaque provider action invocations. It prints actions and
 diagnostics without resource attribute values; it does not prove that a plan is
 fresh, comprehensive, authentic, or that provider code has no hidden effects.
 Older/unsupported plan formats that cannot establish completeness are skipped.
+OpenTofu currently omits `complete` in its JSON format and is rejected by this
+helper; report that limitation rather than adding a synthetic completeness flag.
 Also inspect resource identity, drift, warnings, provider semantics, and any
 effects outside resource actions. For an authorized apply, consume the exact
 approved saved plan, not an uninspected newly generated plan.

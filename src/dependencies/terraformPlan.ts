@@ -39,7 +39,7 @@ export function checkTerraformPlan(value: unknown): TerraformPlanCheck {
         continue;
       }
       const actions = item.change.actions;
-      if (!Array.isArray(actions) || actions.length === 0 || !actions.every(action => typeof action === "string")) {
+      if (!Array.isArray(actions) || actions.length === 0 || !actions.every((action): action is string => typeof action === "string")) {
         issues.push(`${label}: missing or malformed actions.`);
         continue;
       }
@@ -54,11 +54,13 @@ export function checkTerraformPlan(value: unknown): TerraformPlanCheck {
   if (checks !== undefined) {
     if (!Array.isArray(checks)) issues.push("checks must be an array.");
     else for (const [index, check] of checks.entries()) {
-      if (!record(check) || check.status !== "pass") issues.push(`checks[${index}]: check did not pass or is malformed.`);
+      if (record(check) && check.status === "unknown") issues.push(`checks[${index}]: condition cannot be established before apply; skip this upgrade.`);
+      else if (!record(check) || check.status !== "pass") issues.push(`checks[${index}]: check did not pass or is malformed.`);
       if (record(check) && check.instances !== undefined) {
         if (!Array.isArray(check.instances)) issues.push(`checks[${index}]: instances must be an array.`);
         else for (const instance of check.instances) {
-          if (!record(instance) || instance.status !== "pass") issues.push(`checks[${index}]: instance check did not pass or is malformed.`);
+          if (record(instance) && instance.status === "unknown") issues.push(`checks[${index}]: instance condition cannot be established before apply; skip this upgrade.`);
+          else if (!record(instance) || instance.status !== "pass") issues.push(`checks[${index}]: instance check did not pass or is malformed.`);
         }
       }
     }
