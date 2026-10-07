@@ -27,7 +27,8 @@ try {
   const run = (...args: string[]) => execFileSync(executable, args, { cwd: consumer, env, encoding: "utf8" });
   assert.equal(run("--version").trim(), metadata.version);
   assert.match(run("--help"), /pr merge/);
-  assert.ok(JSON.parse(run("skills", "list")).includes("ship-pr"));
+  const skills = JSON.parse(run("skills", "list"));
+  assert.ok(skills.includes("ship-pr") && skills.includes("update-dependencies"));
   assert.equal(JSON.parse(run("config", "show")).schemaVersion, 1);
   assert.equal(JSON.parse(run("skills", "install")).applied, false);
   assert.equal(existsSync(path.join(consumer, ".agents")), false);
@@ -35,6 +36,19 @@ try {
   assert.throws(check, "missing skills fail the CI check");
   run("skills", "install", "--apply");
   assert.equal(JSON.parse(check()).ok, true);
+  assert.equal(readFileSync(path.join(consumer, ".agents/skills/update-dependencies/SKILL.md"), "utf8"), readFileSync(path.join(consumer, ".claude/skills/update-dependencies/SKILL.md"), "utf8"), "all harnesses receive the same dependency-upgrade policy");
+  const plan = path.join(consumer, "plan.json");
+  const safe = { format_version: "1.2", terraform_version: "1.14.0", complete: true, planned_values: {}, configuration: {}, resource_changes: [] };
+  writeFileSync(plan, JSON.stringify(safe));
+  assert.equal(JSON.parse(run("dependencies", "check-terraform-plan", plan)).ok, true);
+  writeFileSync(plan, JSON.stringify({ ...safe, resource_changes: [{ address: "module.site.aws_instance.main", mode: "managed", change: { actions: ["create", "delete"], before: { secret: "private-attribute" } } }] }));
+  assert.throws(() => run("dependencies", "check-terraform-plan", plan), error => {
+    const failure = error as { status?: number; stdout?: string };
+    assert.equal(failure.status, 1);
+    assert.equal(JSON.parse(String(failure.stdout)).ok, false);
+    assert.equal(String(failure.stdout).includes("private-attribute"), false);
+    return true;
+  }, "installed CLI rejects resource replacement without printing attributes");
   const skill = path.join(consumer, ".agents/skills/ship-pr/SKILL.md");
   writeFileSync(skill, "local edit");
   assert.throws(check, "edited skills fail the CI check");
