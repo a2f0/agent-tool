@@ -93,7 +93,24 @@ replacement, or unprovable remote effects skip the affected group. Apply the
 equivalent preview and identity checks to other tools rather than assuming they
 share Terraform's guarantees.
 
-Source: [Wrangler command documentation](https://developers.cloudflare.com/workers/wrangler/commands/).
+Do not use `wrangler d1 migrations list --remote` as a read-only preview: it
+initializes migration tracking with `CREATE TABLE IF NOT EXISTS`. Verify the
+database identity and compare migration files with its existing tracking table
+through audited read-only queries. A missing table, pending migration, or
+unverifiable schema/data effects hold the affected upgrade/deployment group.
+Never initialize schema merely to establish preview safety.
+
+Wrangler runs a custom `build.command` again during deployment. Use supported
+configuration referencing the same validated artifacts for both preview and
+deployment, preventing another unvalidated build before upload. Bind the
+artifacts, configuration, and pinned tool to the authorized commit, and recheck
+their identities before upload and after relevant changes. Hold the affected
+group when the later upload cannot be proven to match the preview.
+
+Sources: [Wrangler command documentation](https://developers.cloudflare.com/workers/wrangler/commands/),
+[D1 migration listing implementation](https://github.com/cloudflare/workers-sdk/blob/main/packages/wrangler/src/d1/migrations/list.ts),
+[migration table initialization](https://github.com/cloudflare/workers-sdk/blob/main/packages/wrangler/src/d1/migrations/helpers.ts),
+and [Wrangler custom builds](https://developers.cloudflare.com/workers/wrangler/custom-builds/).
 
 ### Ansible
 

@@ -33,6 +33,7 @@ function createRepository(): {
   git(rootDir, "init", "--quiet", "--initial-branch=main");
   git(rootDir, "config", "user.name", "Agent Tool Test");
   git(rootDir, "config", "user.email", "agent-tool@example.com");
+  git(rootDir, "config", "commit.gpgsign", "false");
   writeFileSync(path.join(rootDir, "AGENTS.md"), "TRUSTED POLICY\n");
   writeFileSync(path.join(rootDir, "tracked.txt"), "base\n");
   git(rootDir, "add", ".");

@@ -36,7 +36,10 @@ try {
   assert.throws(check, "missing skills fail the CI check");
   run("skills", "install", "--apply");
   assert.equal(JSON.parse(check()).ok, true);
-  assert.equal(readFileSync(path.join(consumer, ".agents/skills/update-dependencies/SKILL.md"), "utf8"), readFileSync(path.join(consumer, ".claude/skills/update-dependencies/SKILL.md"), "utf8"), "all harnesses receive the same dependency-upgrade policy");
+  const dependencySkill = readFileSync(path.join(root, "skills/update-dependencies/SKILL.md"), "utf8");
+  for (const harness of [".agents", ".claude"]) {
+    assert.equal(readFileSync(path.join(consumer, harness, "skills/update-dependencies/SKILL.md"), "utf8"), dependencySkill, "installed harness policies match the canonical dependency-upgrade skill");
+  }
   const plan = path.join(consumer, "plan.json");
   const safe = { format_version: "1.2", terraform_version: "1.14.0", complete: true, planned_values: {}, configuration: {}, resource_changes: [] };
   writeFileSync(plan, JSON.stringify(safe));
