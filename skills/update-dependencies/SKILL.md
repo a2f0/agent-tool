@@ -158,14 +158,16 @@ programmatic API may break test/lint runners that import it even when `tsc` pass
 Action runtime upgrades can require newer self-hosted runners; preserve workflow
 permissions, action inputs/outputs, caching, artifact semantics, and job names.
 
-Check current advisories with read-only ecosystem audits using the repository's
-configured registry/advisory sources or official ecosystem sources, against both
-the baseline and proposed lockfiles, covering direct and resolved transitive dependencies,
+Check current advisories with read-only ecosystem audits against the baseline and
+proposed lockfiles, using the repository's configured registry/advisory sources.
+Do not send private dependency metadata to an unconfigured or unauthorized service;
+report the resulting coverage limit. Cover direct and resolved transitive dependencies,
 including native/platform-specific binaries. Latest direct packages can still
 pin vulnerable transitive versions. Trace each finding to its owning dependency,
 verify affected versions, runtime conditions, and remediation in the maintainer's
-advisory and fixed release. First re-resolve the lockfile when the owner's declared
-range already permits a fixed version; otherwise prefer a supported owner upgrade.
+advisory and fixed release. When the owner's range permits a fixed version, use a
+targeted refresh with the lockfile's owning manager and preserve unrelated
+resolutions; otherwise prefer a supported owner upgrade.
 If the owner still pins a vulnerable version, a narrowly scoped security patch
 override may be used only with API/ABI/runtime compatibility evidence and focused
 regression checks of the actual affected integration. Document its rationale and
