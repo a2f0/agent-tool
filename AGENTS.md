@@ -17,7 +17,8 @@ CI also verifies Linux Debian packaging. Preserve the review snapshot,
 read-only tool permissions, pinned-base checks, and exact-head merge behavior.
 
 When handling review feedback, reply in its original review thread through
-`POST /repos/{owner}/{repo}/pulls/comments/{comment_id}/replies` and resolve
-only fully addressed findings. Each merge that bumps the version deploys it to
-npm as `@a2f0/agent-tool`; after merging, verify the "Publish npm package"
-workflow run for the merge commit and that npm lists the version.
+`POST /repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies`
+and resolve only fully addressed findings. Each merge that bumps the version
+deploys it to npm as `@a2f0/agent-tool`; after merging, verify the
+"Publish npm package" workflow run for the merge commit and that npm lists the
+version.
