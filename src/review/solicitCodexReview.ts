@@ -22,9 +22,7 @@ import {
 } from "./reviewEffort";
 import { buildReviewPrompt, CODEX_ACCESS_NOTE } from "./reviewPrompt";
 import { type ReviewerEnv, relayReviewWithRetry } from "./runReview";
-
-/** How much transcript tail to relay when a codex attempt fails outright. */
-const TRANSCRIPT_TAIL_CHARS = 2000;
+import { withReviewDiagnostics } from "./diagnostics";
 
 /**
  * Build the `codex exec` argv. `exec`, not `review`: `codex review` writes its
@@ -120,8 +118,9 @@ function readLastMessage(lastMessageFile: string): string {
  * codex prints its session transcript — including a verbatim echo of the
  * prompt and diff — to stderr and the final message to stdout, and inheriting
  * either would bury the verdict in noise (the exact failure this replaces).
- * Both streams are captured; on a failed launch the stderr tail is relayed so
- * the error is still diagnosable. Degenerate exit-0 output is retried once via
+ * Stdout is captured and stderr is retained in a private file; on a failed
+ * launch its bounded tail is relayed so the error is still diagnosable.
+ * Degenerate exit-0 output is retried once via
  * the shared gate, same as the Claude path.
  */
 export function spawnCodexReview(
@@ -144,7 +143,7 @@ export function spawnCodexReview(
       // never be read as the previous attempt's stale message.
       attempt += 1;
       const lastMessageFile = path.join(outDir, `review-${attempt}.md`);
-      const result = spawnSync(
+      const result = withReviewDiagnostics("codex", fd => spawnSync(
         codexExecutable,
         buildCodexReviewArgs(
           effort,
@@ -154,7 +153,7 @@ export function spawnCodexReview(
           loadConfig().review.codexModel,
         ),
         {
-          stdio: ["pipe", "pipe", "pipe"],
+          stdio: ["pipe", "pipe", fd],
           input: prompt,
           encoding: "utf8",
           maxBuffer: MAX_BUFFER_BYTES,
@@ -164,14 +163,8 @@ export function spawnCodexReview(
           cwd: outDir,
           env,
         },
-      );
+      ));
       const exitCode = spawnExitCode("codex", result);
-      const transcript = result.stderr ?? "";
-      if (exitCode !== 0 && transcript.length > 0) {
-        process.stderr.write(
-          `codex transcript (tail):\n${transcript.slice(-TRANSCRIPT_TAIL_CHARS)}\n`,
-        );
-      }
       return { exitCode, review: readLastMessage(lastMessageFile) };
     });
   } finally {

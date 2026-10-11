@@ -11,6 +11,8 @@ version management, and portable skills for Claude Code, Codex, and OpenCode.
   `bun.lock` in sync.
 - **Share skills**: install the same workflow instructions where each harness
   discovers them, and check them in CI.
+- **Compact output**: run noisy commands with full private logs and bounded
+  diagnostics, keeping routine output out of an agent's context.
 
 ## Install
 
@@ -95,6 +97,8 @@ agent-tool skills install --apply
 
 | Command | Behavior |
 | --- | --- |
+| `run [--label text] [--max-bytes N] [--tail-lines N] -- <command> [args...]` | Run with full local logs and compact results; preserve exit status |
+| `logs <file> [--max-bytes N] [--tail-lines N]` | Inspect a bounded, terminal-safe tail of a local file |
 | `review claude\|codex\|opencode [effort] [--base ref]` | Review committed HEAD using a pinned raw-file snapshot |
 | `pr open [title]` | Open a same-repository PR; body from stdin; branch already pushed |
 | `pr merge <subject-or-empty> <head-oid> <base-branch>` | Check CI and synchronously squash the reviewed HEAD |
@@ -118,6 +122,56 @@ A successful review exit means a complete review was returned, ending in a
 `VERDICT:` line. BLOCKER or MAJOR findings still require action. The review
 command does not repair, push, or merge; the shipping skills coordinate that
 work.
+
+### Compact command output
+
+```sh
+agent-tool run --label tests -- bun test
+agent-tool run --label build -- npm run build
+agent-tool run --label checks -- sh -c 'npm run lint && npm test'
+agent-tool logs /path/from/receipt/output.log --max-bytes 8192 --tail-lines 80
+```
+
+`run` executes the argv after `--` directly, without a shell, in the current
+directory (or `--repo`), with inherited environment and stdin. Use an explicit
+shell only when the command needs shell syntax. The child receives regular files
+for stdout and stderr, so interactive/TTY programs should run directly. This
+works outside Git and does not depend on project policy or a package manager.
+Use it for finite commands; long-running servers need their own lifecycle.
+
+Both streams go directly to one private log: even gigabytes of output do not
+accumulate in the runner's memory. On completion, stdout contains one JSON
+receipt with `status`, `exitCode`, `signal`, `durationMs`, `outputBytes`, and
+`log` (plus an optional label of at most 120 characters). Command arguments and
+environment are not copied to the receipt. A success emits no log content;
+failure adds a terminal-control-stripped tail on stderr. The default tail is at
+most 4096 bytes and 40 lines, with explicit limits up to 65536 bytes and 1000
+lines. Limits bound the excerpt after decoding too, including one huge line or
+invalid UTF-8; receipt metadata is additional. A command's numeric status is
+preserved, missing executables return 127, and other launch failures return 126.
+On macOS/Linux, SIGINT, SIGTERM, and SIGHUP are forwarded to the child process
+group, with SIGKILL escalation after five seconds; the runner then terminates by
+the original signal. Children that create a separate session escape that group;
+SIGKILL of the runner cannot be intercepted. The command is not a sandbox.
+
+Logs live in unique `agent-tool-run-*` directories under the system temporary
+directory, with mode 0700 directories and 0600 files. They are retained until you
+remove the specific directory reported by the receipt or the OS cleans temporary
+files. Remove task logs after investigation; long or repeated commands can use
+substantial disk space. There is no automatic age sweep or disk quota. Logs are
+complete, raw, and may contain secrets; terminal cleanup is not secret redaction.
+`logs` reads any explicitly supplied regular local file, including symlink targets;
+it does not authenticate a file as an agent-tool artifact.
+
+Use bounded log inspection or scoped searches for a failure, required warnings,
+coverage, timing assertions, or build artifacts; do not reread successful suite
+logs wholesale. Success means the command exited zero, not that its logs contain
+no warnings. Keep structured output and decisions visible: run `review`,
+`versions prepare`, audit reports, and infrastructure plan guards directly.
+Review commands retain full reviewer stderr in separate private
+`agent-tool-review-log-*` directories and show bounded stderr on failure, while
+always displaying the final findings and verdict. Empty reviewer logs are removed.
+The bundled shipping, review, and dependency skills use this distinction.
 
 ## Configuration
 

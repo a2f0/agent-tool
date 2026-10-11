@@ -18,6 +18,7 @@ import {
 } from "./reviewEffort";
 import { buildReviewPrompt, OPENCODE_ACCESS_NOTE } from "./reviewPrompt";
 import { type ReviewerEnv, relayReviewWithRetry } from "./runReview";
+import { withReviewDiagnostics } from "./diagnostics";
 
 /**
  * The model every opencode review runs under. Pinned so the review never
@@ -126,18 +127,13 @@ export function buildOpencodeReviewArgs(variant: string, model = OPENCODE_MODEL)
 }
 
 /**
- * How much stderr tail to relay when an opencode attempt fails outright.
- */
-const TRANSCRIPT_TAIL_CHARS = 2000;
-
-/**
  * Run `opencode run` over an already-built review prompt and relay whatever it
  * prints to stdout — the final message alone, since run mode keeps its TUI
  * noise on stderr. Exit codes and the verdict gate behave exactly like the
  * Claude and Codex paths: a nonzero CLI exit is returned as-is, and an exit-0
  * run without a verdict-signed review is retried once before failing.
  *
- * Both streams are captured: opencode prints its session transcript — tool
+ * Stdout is captured and stderr is retained in a private file: opencode prints its session transcript — tool
  * call echo, progress lines, and the like — to stderr, and inheriting it
  * would bury the review under noise on every run. On a failed launch the
  * stderr tail is relayed so the error is still diagnosable (the Codex path
@@ -169,11 +165,11 @@ export function spawnOpencodeReview(
   const outDir = mkdtempSync(path.join(tmpdir(), "agent-tool-opencode-"));
   try {
     return relayReviewWithRetry("opencode", () => {
-      const result = spawnSync(
+      const result = withReviewDiagnostics("opencode", fd => spawnSync(
         executable,
         buildOpencodeReviewArgs(resolveOpencodeVariant(effort, loadConfig().review.opencodeVariants), model),
         {
-          stdio: ["pipe", "pipe", "pipe"],
+          stdio: ["pipe", "pipe", fd],
           input: prompt,
           encoding: "utf8",
           maxBuffer: MAX_BUFFER_BYTES,
@@ -187,14 +183,8 @@ export function spawnOpencodeReview(
             OPENCODE_CONFIG_DIR: outDir,
           },
         },
-      );
+      ));
       const exitCode = spawnExitCode("opencode", result);
-      const transcript = result.stderr ?? "";
-      if (exitCode !== 0 && transcript.length > 0) {
-        process.stderr.write(
-          `opencode transcript (tail):\n${transcript.slice(-TRANSCRIPT_TAIL_CHARS)}\n`,
-        );
-      }
       return {
         exitCode,
         review: result.stdout ?? "",
