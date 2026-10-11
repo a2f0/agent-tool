@@ -26,12 +26,13 @@ export function logTail(file: string, limits: OutputLimits): { text: string; byt
     const size = readSync(fd, buffer, 0, buffer.length, Math.max(0, stat.size - buffer.length));
     let text = plainText(buffer.subarray(0, size).toString("utf8"));
     const lines = text.replace(/\n$/, "").split("\n");
-    const truncated = stat.size > size || lines.length > limits.tailLines;
+    let truncated = stat.size > size || lines.length > limits.tailLines;
     text = lines.slice(-limits.tailLines).join("\n");
     // Invalid UTF-8 can expand to replacement characters; enforce the byte cap
     // after decoding and terminal-control removal as well.
     const encoded = Buffer.from(text);
     if (encoded.length > limits.maxBytes) {
+      truncated = true;
       let offset = encoded.length - limits.maxBytes;
       while ((encoded[offset] & 0xc0) === 0x80) offset++;
       text = encoded.subarray(offset).toString("utf8");

@@ -64,6 +64,16 @@ test("argv is literal and the selected directory, environment and stdin are inhe
   expect(existsSync(path.join(cwd, "unintended"))).toBe(false);
 });
 
+test("UTF-8 expansion reports truncation even when all source bytes were read", () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "agent-tool-command-test-")); temporary.push(cwd);
+  const file = path.join(cwd, "invalid-utf8.log");
+  writeFileSync(file, Buffer.alloc(120, 255));
+  const result = run("logs", file, "--max-bytes", "120");
+  expect(result.status).toBe(0);
+  expect(JSON.parse(result.stdout.split("\n")[0])).toMatchObject({ outputBytes: 120, truncated: true });
+  expect(Buffer.byteLength(result.stdout.split("\n")[1])).toBe(120);
+});
+
 test("missing and non-executable commands fail with a retained diagnostic", () => {
   const missing = run("run", "--", "agent-tool-missing-command-42");
   expect(missing.status).toBe(127);
