@@ -9,6 +9,10 @@ Use the canonical skills in `skills/` to ship this package. Run the source CLI
 with `bun src/index.ts`; invoke it directly when passing an empty merge subject.
 Project title and required CI policy is in `agent-tool.json`.
 
+Follow [dependency upgrade guidance](docs/dependency-upgrades.md) for maintenance
+records: keep current constraints in dedicated docs and run evidence in the PR;
+keep README and this file concise.
+
 Validate changes with `bun run typecheck`, `bun test`,
 `bun scripts/smoke-package.ts`, `bun run build`, and
 `bun scripts/smoke.ts dist/agent-tool`. The build regenerates embedded skills
