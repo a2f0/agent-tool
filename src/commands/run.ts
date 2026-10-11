@@ -25,6 +25,7 @@ export async function runCommand(args: string[]): Promise<number> {
   const started = performance.now();
   let interrupted: NodeJS.Signals | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancelDeadline = Infinity;
   const handlers = new Map<NodeJS.Signals, () => void>();
   const grouped = process.platform !== "win32";
   let status: number | null = null;
@@ -45,6 +46,7 @@ export async function runCommand(args: string[]): Promise<number> {
     for (const value of FORWARDED_SIGNALS) {
       const handler = () => {
         interrupted ??= value;
+        cancelDeadline = Math.min(cancelDeadline, performance.now() + 5000);
         forward(value);
         // A child may ignore cancellation; do not leave its process group behind.
         timer ??= setTimeout(() => forward("SIGKILL"), 5000);
@@ -61,7 +63,19 @@ export async function runCommand(args: string[]): Promise<number> {
     });
     status = result.status;
     signal = interrupted ?? result.signal;
-    if (interrupted) forward("SIGKILL");
+    if (interrupted) {
+      // The direct child can exit before its descendants finish cleanup. Keep
+      // the original grace period for the remaining process group as well.
+      while (grouped && child.pid && performance.now() < cancelDeadline) {
+        try { process.kill(-child.pid, 0); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ESRCH") break;
+          throw error;
+        }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      forward("SIGKILL");
+    }
     const exitCode = signal ? 128 + (constants.signals[signal] ?? 0) : status ?? 1;
     writeSync(1, `${JSON.stringify({ status: exitCode === 0 ? "passed" : "failed", ...(label ? { label } : {}), exitCode, signal, durationMs: Math.round(performance.now() - started), outputBytes: fstatSync(fd).size, log })}\n`);
     if (exitCode !== 0) printLogTail(log, limits, 2);

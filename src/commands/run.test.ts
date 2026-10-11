@@ -96,12 +96,12 @@ test("child signal termination stays a signal rather than success", () => {
   expect(JSON.parse(result.stdout)).toMatchObject({ status: "failed", exitCode: 143, signal: "SIGTERM" });
 });
 
-test("cancellation reaches descendants and remains a signal even if the child exits zero", async () => {
+test("cancellation lets descendants finish cleanup after the direct child exits zero", async () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "agent-tool-command-test-")); temporary.push(cwd);
   const ready = path.join(cwd, "ready");
   const terminated = path.join(cwd, "terminated");
-  const grandchild = `const fs = require("node:fs"); process.on("SIGTERM", () => { fs.writeFileSync(${JSON.stringify(terminated)}, "yes"); process.exit(0); }); fs.writeFileSync(${JSON.stringify(ready)}, "yes"); setInterval(() => {}, 1000);`;
-  const source = `require("node:child_process").spawn(process.execPath,["-e",${JSON.stringify(grandchild)}],{stdio:"inherit"}); process.on("SIGTERM",()=>setTimeout(()=>process.exit(0),100)); setInterval(()=>{},1000);`;
+  const grandchild = `const fs = require("node:fs"); process.on("SIGTERM", () => setTimeout(() => { fs.writeFileSync(${JSON.stringify(terminated)}, "yes"); process.exit(0); }, 250)); fs.writeFileSync(${JSON.stringify(ready)}, "yes"); setInterval(() => {}, 1000);`;
+  const source = `require("node:child_process").spawn(process.execPath,["-e",${JSON.stringify(grandchild)}],{stdio:"inherit"}); process.on("SIGTERM",()=>process.exit(0)); setInterval(()=>{},1000);`;
   const child = spawn(process.execPath, [cli, "run", "--", process.execPath, "-e", source], { stdio: ["ignore", "pipe", "pipe"] });
   let output = "";
   child.stdout.on("data", chunk => output += chunk);
