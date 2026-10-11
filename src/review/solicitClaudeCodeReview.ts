@@ -16,6 +16,7 @@ import {
 } from "./reviewEffort";
 import { buildReviewPrompt, CLAUDE_ACCESS_NOTE } from "./reviewPrompt";
 import { type ReviewerEnv, relayReviewWithRetry } from "./runReview";
+import { withReviewDiagnostics } from "./diagnostics";
 
 /**
  * Tools the reviewer gets. Read-only, and deliberately not empty: the diff alone
@@ -91,11 +92,11 @@ export function spawnClaudeReview(
     // Captured rather than inherited: a review has to be read to be judged, and
     // `claude` exits 0 whether it reviewed the diff or merely said it would.
     // `--print` emits the review in one final block, so nothing streams anyway.
-    const result = spawnSync(
+    const result = withReviewDiagnostics("claude", fd => spawnSync(
       executable,
       buildClaudeReviewArgs(effort, snapshotRoot, loadConfig().review.claudeModel),
       {
-        stdio: ["pipe", "pipe", "inherit"],
+        stdio: ["pipe", "pipe", fd],
         input: prompt,
         encoding: "utf8",
         maxBuffer: MAX_BUFFER_BYTES,
@@ -105,7 +106,7 @@ export function spawnClaudeReview(
         // the one the runtime snapshotted at startup.
         env,
       },
-    );
+    ));
     return {
       exitCode: spawnExitCode("claude", result),
       review: result.stdout ?? "",

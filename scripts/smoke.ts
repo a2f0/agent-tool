@@ -32,6 +32,14 @@ try {
   stub("codex", `cat > ${q(prompt)}\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = '--output-last-message' ]; then shift; printf 'Compiled Codex review\\nVERDICT: CLEAN\\n' > "$1"; exit 0; fi\n  shift\ndone\nexit 92`);
   assert.equal(run("--version").status, 0);
   assert.equal(run("--help").status, 0);
+  const compact = run("run", "--", "/bin/sh", "-c", "printf 'standalone output\\n'; exit 7");
+  assert.equal(compact.status, 7);
+  const receipt = JSON.parse(compact.stdout);
+  try {
+    assert.equal(receipt.exitCode, 7);
+    assert.match(compact.stderr, /standalone output/);
+    assert.match(run("logs", receipt.log).stdout, /standalone output/);
+  } finally { rmSync(path.dirname(receipt.log), { recursive: true, force: true }); }
   for (const name of ["claude", "codex", "opencode"]) {
     const result = run("review", name, "--base", "main");
     assert.equal(result.status, 0, `${name}: ${result.stderr}`);

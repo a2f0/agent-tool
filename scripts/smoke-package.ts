@@ -27,6 +27,12 @@ try {
   const run = (...args: string[]) => execFileSync(executable, args, { cwd: consumer, env, encoding: "utf8" });
   assert.equal(run("--version").trim(), metadata.version);
   assert.match(run("--help"), /pr merge/);
+  const compact = JSON.parse(run("run", "--", process.execPath, "-e", 'console.log("installed harness output")'));
+  try {
+    assert.equal(compact.exitCode, 0);
+    assert.equal(readFileSync(compact.log, "utf8"), "installed harness output\n");
+    assert.match(run("logs", compact.log), /installed harness output/);
+  } finally { rmSync(path.dirname(compact.log), { recursive: true, force: true }); }
   const skills = JSON.parse(run("skills", "list"));
   assert.ok(skills.includes("ship-pr") && skills.includes("update-dependencies"));
   assert.equal(JSON.parse(run("config", "show")).schemaVersion, 1);

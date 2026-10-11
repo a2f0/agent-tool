@@ -14,11 +14,15 @@ import { resolveVersionConflicts } from "./version/resolveVersionConflicts";
 import { openPr } from "./pr/openPr";
 import { squashMerge } from "./pr/squashMerge";
 import metadata from "../package.json";
+import { runCommand } from "./commands/run";
+import { inspectLog } from "./commands/output";
 
 export const HELP = `agent-tool ${metadata.version}
 
 Usage: agent-tool [--repo <directory>] [--config <file>] <command>
 
+  run [--label text] [--max-bytes N] [--tail-lines N] -- <command> [args...]
+  logs <file> [--max-bytes N] [--tail-lines N]  Bounded local log tail
   review <claude|codex|opencode> [effort] [--base <local-ref>]
   pr open [title]                       Body from stdin; branch already pushed
   pr merge <subject-or-empty> <head-oid> <base-branch>
@@ -45,7 +49,7 @@ function gitRoot(): string {
   return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
 }
 
-export function main(argv = process.argv.slice(2)): number {
+export function main(argv = process.argv.slice(2)): number | Promise<number> {
   const args = [...argv];
   while (args[0] === "--repo" || args[0] === "--config") {
     const flag = args.shift()!;
@@ -60,6 +64,8 @@ export function main(argv = process.argv.slice(2)): number {
     writeSync(1, HELP); return 0;
   }
   if (command === "--version") { usage(args.length === 0, "Unexpected version arguments."); writeSync(1, `${metadata.version}\n`); return 0; }
+  if (command === "run") return runCommand(args);
+  if (command === "logs") return inspectLog(args);
   if (command === "dependencies") {
     usage(args.length === 2 && args[0] === "check-terraform-plan", "Usage: agent-tool dependencies check-terraform-plan <json-file>");
     const source = readFileSync(args[1], "utf8");

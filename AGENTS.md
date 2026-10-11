@@ -15,6 +15,9 @@ Validate changes with `bun run typecheck`, `bun test`,
 from `skills/*/SKILL.md`; commit `src/skills/bundled.ts` with skill changes.
 CI also verifies Linux Debian packaging. Preserve the review snapshot,
 read-only tool permissions, pinned-base checks, and exact-head merge behavior.
+Run noisy local checks through `bun src/index.ts run --label <check> -- <command>`;
+inspect required diagnostics with `bun src/index.ts logs <log>` or targeted
+searches. Keep review findings and version receipts directly visible.
 
 When handling review feedback, reply in its original review thread through
 `POST /repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies`
