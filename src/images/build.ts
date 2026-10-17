@@ -110,8 +110,12 @@ export function replaceFile(destination: string, bytes: Uint8Array): void {
     created = true;
     renameSync(temporary, destination);
   } catch (error) {
-    rmSync(temporary, { force: true });
-    if (created || !["EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+    if (created || !["EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) {
+      // Best effort: the original error matters more than a temporary file left behind.
+      try { rmSync(temporary, { force: true }); } catch {}
+      throw error;
+    }
+    // Nothing was created, and a sandbox may refuse even an attempt to remove an undeclared path.
     const descriptor = openSync(destination, constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW);
     try {
       // A hard link would share the file with a path outside the output, so only a sole link is rewritten.
