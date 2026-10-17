@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, st
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { main } from "../cli";
-import { buildImages, listImages } from "./build";
+import { buildImages, listImages, replaceFile } from "./build";
 import { parseImages } from "./config";
 import { decodePng, pixel } from "./png.testUtils";
 
@@ -211,6 +211,18 @@ test("writes in place where only declared outputs may be written, as in Xcode's 
     expect((await buildImages(repo, targets, [])).targets[0]!.written).toEqual(["out/icon.png"]);
     expect(pixel(decodePng(readFileSync(path.join(out, "icon.png"))), 4, 4)).toEqual([0x20, 0x40, 0x60, 255]);
   } finally { chmodSync(out, 0o755); rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("never follows a link when rewriting in place", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "agent-tool-images-replace-"));
+  const outside = path.join(mkdtempSync(path.join(tmpdir(), "agent-tool-images-target-")), "target.png");
+  try {
+    writeFileSync(outside, "outside");
+    symlinkSync(outside, path.join(dir, "icon.png"));
+    chmodSync(dir, 0o555);
+    expect(() => replaceFile(path.join(dir, "icon.png"), Buffer.from("new"))).toThrow();
+    expect(readFileSync(outside, "utf8")).toBe("outside");
+  } finally { chmodSync(dir, 0o755); rmSync(dir, { recursive: true, force: true }); rmSync(path.dirname(outside), { recursive: true, force: true }); }
 });
 
 test("checks sources it copies unchanged", async () => {
