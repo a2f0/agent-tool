@@ -89,11 +89,19 @@ try {
   writeFileSync(path.join(repository, "agent-tool.json"), '{"schemaVersion":2}');
   assert.equal(run("review", "claude", "--base", "main").status, 1);
   writeFileSync(path.join(repository, "agent-tool.json"), '{"schemaVersion":1}');
+  mkdirSync(path.join(repository, "assets/brand"), { recursive: true });
+  writeFileSync(path.join(repository, "assets/brand/logo.svg"), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 2"><rect width="1" height="2" fill="#f00"/></svg>');
+  writeFileSync(path.join(repository, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, images: { targets: { web: { dir: "public", outputs: [{ path: "icon.png", size: 48, opaque: true, layers: [{ source: "logo" }] }] } } } }));
+  const images = run("images", "build");
+  assert.equal(images.status, 0, images.stderr);
+  assert.deepEqual(JSON.parse(images.stdout).targets[0].written, ["public/icon.png"]);
+  const icon = readFileSync(path.join(repository, "public/icon.png"));
+  assert.deepEqual([icon.readUInt32BE(16), icon.readUInt32BE(20), icon[25]], [48, 48, 2], "the embedded renderer writes an opaque PNG");
   stub("claude", `cat > /dev/null\ngit -c commit.gpgsign=false -c core.hooksPath=/dev/null -C ${q(repository)} commit --allow-empty -qm 'test: concurrent head change'\nprintf 'Complete review\\nVERDICT: CLEAN\\n'`);
   const drifted = run("review", "claude", "--base", "main");
   assert.equal(drifted.status, 1);
   assert.match(drifted.stderr, /HEAD changed during review/);
-  console.log("Standalone executable passed reviews for all three harnesses, skill installation, cleanup, HEAD drift rejection, and failure handling without Bun or Node on PATH.");
+  console.log("Standalone executable passed reviews for all three harnesses, skill installation, image rendering, cleanup, HEAD drift rejection, and failure handling without Bun or Node on PATH.");
 } finally {
   rmSync(temporary, { recursive: true, force: true });
 }

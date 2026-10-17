@@ -62,8 +62,13 @@ try {
   writeFileSync(skill, "local edit");
   assert.throws(check, "edited skills fail the CI check");
   assert.equal(readFileSync(skill, "utf8"), "local edit", "checking never repairs files");
+  mkdirSync(path.join(consumer, "assets/brand"), { recursive: true });
+  writeFileSync(path.join(consumer, "assets/brand/logo.svg"), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 2"><rect width="1" height="2" fill="#f00"/></svg>');
+  writeFileSync(path.join(consumer, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, images: { targets: { web: { outputs: [{ path: "favicon.ico", sizes: [16, 32], layers: [{ source: "logo" }] }] } } } }));
+  assert.deepEqual(JSON.parse(run("images", "build", "web", "--out", "public")).targets[0].written, ["public/favicon.ico"], "the installed renderer dependency loads");
+  assert.equal(readFileSync(path.join(consumer, "public/favicon.ico")).readUInt16LE(4), 2);
   assert.match(execFileSync(process.execPath, ["run", "agent-tool", "--help"], { cwd: consumer, env, encoding: "utf8" }), /agent-tool/);
-  console.log("Installed source package passed executable, script, policy, and embedded-skills checks without install scripts or a build.");
+  console.log("Installed source package passed executable, script, policy, image rendering, and embedded-skills checks without install scripts or a build.");
 } finally {
   rmSync(temporary, { recursive: true, force: true });
 }
