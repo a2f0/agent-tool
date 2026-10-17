@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { main } from "../cli";
@@ -213,16 +213,18 @@ test("writes in place where only declared outputs may be written, as in Xcode's 
   } finally { chmodSync(out, 0o755); rmSync(repo, { recursive: true, force: true }); }
 });
 
-test("never follows a link when rewriting in place", () => {
-  const dir = mkdtempSync(path.join(tmpdir(), "agent-tool-images-replace-"));
-  const outside = path.join(mkdtempSync(path.join(tmpdir(), "agent-tool-images-target-")), "target.png");
-  try {
-    writeFileSync(outside, "outside");
-    symlinkSync(outside, path.join(dir, "icon.png"));
-    chmodSync(dir, 0o555);
-    expect(() => replaceFile(path.join(dir, "icon.png"), Buffer.from("new"))).toThrow();
-    expect(readFileSync(outside, "utf8")).toBe("outside");
-  } finally { chmodSync(dir, 0o755); rmSync(dir, { recursive: true, force: true }); rmSync(path.dirname(outside), { recursive: true, force: true }); }
+test("never rewrites a symbolic or hard link in place", () => {
+  for (const link of [symlinkSync, linkSync]) {
+    const dir = mkdtempSync(path.join(tmpdir(), "agent-tool-images-replace-"));
+    const outside = path.join(mkdtempSync(path.join(tmpdir(), "agent-tool-images-target-")), "target.png");
+    try {
+      writeFileSync(outside, "outside");
+      link(outside, path.join(dir, "icon.png"));
+      chmodSync(dir, 0o555);
+      expect(() => replaceFile(path.join(dir, "icon.png"), Buffer.from("new"))).toThrow();
+      expect(readFileSync(outside, "utf8")).toBe("outside");
+    } finally { chmodSync(dir, 0o755); rmSync(dir, { recursive: true, force: true }); rmSync(path.dirname(outside), { recursive: true, force: true }); }
+  }
 });
 
 test("checks sources it copies unchanged", async () => {
