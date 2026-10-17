@@ -1,7 +1,7 @@
 import { initWasm, Resvg } from "@resvg/resvg-wasm";
 import wasm from "@resvg/resvg-wasm/index_bg.wasm" with { type: "file" };
 import { randomUUID } from "node:crypto";
-import { closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { composeSvg, type Canvas } from "./compose";
 import { expand, format, SOURCE_DIRECTORY, verbatim, type ImageOutput, type ImagesConfig, type ImageTarget } from "./config";
@@ -113,7 +113,8 @@ export function replaceFile(destination: string, bytes: Uint8Array): void {
     rmSync(temporary, { force: true });
     if (created || !["EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
     const descriptor = openSync(destination, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW);
-    try { writeSync(descriptor, bytes); } finally { closeSync(descriptor); }
+    // writeFileSync on a descriptor repeats short writes until every byte is written.
+    try { writeFileSync(descriptor, bytes); } finally { closeSync(descriptor); }
   }
 }
 
