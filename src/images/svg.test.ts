@@ -27,12 +27,16 @@ describe("brand source parsing", () => {
       ['<g xmlns="http://www.w3.org/1999/xhtml"><script/></g>', "unsupported <g>"],
       ['<rect x:fill="red"/><foo:bar/>', "unsupported <foo:bar>"],
       ['<rect fill="url(https://example.com/p.svg#g)"/>', "references 'url(https://example.com/p.svg#g)'"],
-      ["<rect style='filter: url( \"x.svg#f\" )'/>", "references"],
+      ["<rect filter='url( \"x.svg#f\" )'/>", "references"],
       ['<?xml-stylesheet href="https://example.com/a.css"?>', "processing instruction"],
       ['<rect fill="url&#40;https://example.com/g.svg#g)"/>', "references 'url(https://example.com/g.svg#g)'"],
       ['<rect fill="url&#x28;https://example.com/g.svg#g)"/>', "references"],
       ['<image href="&#106;avascript:alert(1)"/>', "references 'javascript:alert(1)'"],
-      ["<rect style='fill: u\\72 l(https://example.com/g.svg#g)'/>", "CSS escape"],
+      ["<rect fill='u\\72 l(https://example.com/g.svg#g)'/>", "CSS escape"],
+      ['<rect style="fill:red"/>', "style attribute; use presentation attributes"],
+      ["<rect mask=\"image-set('https://example.com/x.png' 1x)\"/>", "CSS image function"],
+      ["<rect mask=\"-webkit-image-set('https://example.com/x.png' 1x)\"/>", "CSS image function"],
+      ['<rect fill="cross-fade(red, blue)"/>', "CSS image function"],
       ['<rect title="a &nbsp; b"/>', "undefined entity"],
       ['<rect title="a & b"/>', "undefined entity"],
       ["<g>", "closes </svg> out of order"],
@@ -58,9 +62,9 @@ describe("brand source parsing", () => {
 });
 
 test("inlines each copy with prefixed ids and references, without hidden elements", () => {
-  const source = parseSvg("logo", `<svg ${NS} viewBox="0 0 4 4"><defs><linearGradient id="g"/></defs><g id="unlit"><g><rect/></g><rect/></g><rect fill="url(#g)" style='fill: url("#g")' title='say "hi"'/><use xlink:href="#g"/></svg>`);
+  const source = parseSvg("logo", `<svg ${NS} viewBox="0 0 4 4"><defs><linearGradient id="g"/></defs><g id="unlit"><g><rect/></g><rect/></g><rect fill="url(#g)" stroke='URL("#g")' title='say "hi"'/><use xlink:href="#g"/></svg>`);
   expect(inlineSvg(source, "l1-", new Set(["unlit"]))).toBe(
-    '<defs><linearGradient id="l1-g"/></defs><rect fill="url(#l1-g)" style="fill: url(#l1-g)" title="say &quot;hi&quot;"/><use xlink:href="#l1-g"/>',
+    '<defs><linearGradient id="l1-g"/></defs><rect fill="url(#l1-g)" stroke="url(#l1-g)" title="say &quot;hi&quot;"/><use xlink:href="#l1-g"/>',
   );
   expect(inlineSvg(source, "l2-", new Set())).toContain('<g id="l2-unlit"><g><rect/></g><rect/></g>');
   expect(inlineSvg(parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"><g id="a"/><use x:href="#a"/></svg>`), "p-", new Set())).toBe('<g id="p-a"/><use x:href="#p-a"/>');

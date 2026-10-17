@@ -122,6 +122,7 @@ export async function buildImages(root: string, config: ImagesConfig, names: str
   const sources = new Sources(root);
   // Render everything first, so a bad source or setting leaves no partial set behind.
   const rendered: { name: string; dir: string; files: { relative: string; destination: string; bytes: Uint8Array }[] }[] = [];
+  const owners = new Map<string, string>();
   for (const [name, target] of select(config, names, true)) {
     const dir = directory(name, target, out);
     const files = [];
@@ -131,6 +132,9 @@ export async function buildImages(root: string, config: ImagesConfig, names: str
         const destination = path.resolve(root, dir, file.path);
         // An explicit --out is the caller's choice; configured directories are checked from the repository root.
         assertNoLinks(out === undefined ? root : path.resolve(root, out), destination);
+        const owner = owners.get(destination);
+        if (owner !== undefined) throw new Error(`Image targets '${owner}' and '${name}' both write ${path.relative(root, destination)}.`);
+        owners.set(destination, name);
         files.push({ relative: path.join(dir, file.path), destination, bytes: typeof content === "string" ? Buffer.from(content) : content });
       }
     }

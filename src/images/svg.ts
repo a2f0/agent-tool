@@ -78,10 +78,13 @@ function tokenize(name: string, text: string): Token[] {
 /** The name without its namespace prefix: any prefix may be bound to the SVG or XLink namespace. */
 function local(name: string): string { return name.slice(name.indexOf(":") + 1); }
 
-/** Event handlers, and references to anything outside the file except embedded images, are refused. */
+/** Event handlers, stylesheets, and references to anything outside the file except embedded images, are refused. */
 function checkAttributes(name: string, element: string, attributes: [string, string][]): void {
   for (const [key, value] of attributes) {
     if (/^on/i.test(local(key))) throw new Error(`Image source '${name}' has a '${key}' event handler.`);
+    if (local(key) === "style") throw new Error(`Image source '${name}' has a style attribute; use presentation attributes.`);
+    // CSS image functions can fetch without url(), for example through a mask presentation attribute.
+    if (key !== "id" && /(?:image-set|image|cross-fade|element|src)\s*\(/i.test(value)) throw new Error(`Image source '${name}' uses a CSS image function in '${value.slice(0, 40)}'.`);
     const external = local(key) === "href"
       ? !value.startsWith("#") && !(["image", "feImage"].includes(local(element)) && value.startsWith("data:"))
       : value.split(/url\(/i).slice(1).some(target => !target.trimStart().replace(/^['"]/, "").startsWith("#"));
@@ -164,7 +167,7 @@ export function attribute(key: string, value: string): string {
 
 /** Points `url(#id)` references at a copy whose ids carry the prefix. */
 export function renameReferences(value: string, prefix: string): string {
-  return value.replace(/url\(\s*(['"]?)#([^'")\s]+)\1\s*\)/g, (_, _quote, id: string) => `url(#${prefix}${id})`);
+  return value.replace(/url\(\s*(['"]?)#([^'")\s]+)\1\s*\)/gi, (_, _quote, id: string) => `url(#${prefix}${id})`);
 }
 
 /** The source's children with every id prefixed, internal references rewritten, and hidden elements removed. */
