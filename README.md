@@ -371,7 +371,7 @@ can resolve fork PR bases; `pr open` supports same-repository branches.
 
 ## Development
 
-Development and all build/release workflows use Bun 1.4.2 and TypeScript 7.0.2.
+Development and all build/release workflows use Bun 1.4.3 and TypeScript 7.0.2.
 The compiler is used through `tsc`; this repository does not depend on its removed
 JavaScript compiler API. Runtime consumers still support Bun 1.3.11 or newer;
 CI also runs the installed-package smoke and plan-guard tests on that minimum.

@@ -55,7 +55,7 @@ suite failed five cases under Bun 1.3.11, which does not refresh existing
 workspace versions in `bun.lock`. It is now `versions prepare`. The source's
 hard-coded `lint:source-shape` call became the `versions.validate` policy, and
 the lockfile became `versions.lockfile`. A post-refresh check rejects a stale
-`bun.lock` instead of committing one. CI runs Bun 1.4.2.
+`bun.lock` instead of committing one. CI runs Bun 1.4.3.
 
 `stealth`'s credential-free preflight, full reviewer credential/environment
 allowlisting, and stricter GitHub protection-policy interpretation are not
