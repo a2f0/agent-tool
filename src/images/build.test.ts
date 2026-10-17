@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { main } from "../cli";
@@ -195,6 +195,22 @@ test("refuses to write through symbolic links in configured directories", async 
     expect((await buildImages(repo, linked, ["a"], "packages/public")).targets[0]!.written).toEqual(["packages/public/icon.png"]);
     expect(existsSync(path.join(outside, "icon.png"))).toBe(true);
   } finally { rmSync(repo, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); }
+});
+
+test("writes in place where only declared outputs may be written, as in Xcode's script sandbox", async () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "agent-tool-images-sandbox-"));
+  const out = path.join(repo, "out");
+  try {
+    mkdirSync(path.join(repo, "assets/brand"), { recursive: true });
+    writeFileSync(path.join(repo, "assets/brand/logo.svg"), sources.logo);
+    const targets = parseImages({ targets: { a: { dir: "out", outputs: [{ path: "icon.png", size: 8, layers: [{ source: "logo" }] }] } } });
+    await buildImages(repo, targets, []);
+    writeFileSync(path.join(repo, "assets/brand/logo.svg"), sources.background);
+    // The directory refuses new files, as the sandbox refuses undeclared ones, but the output stays writable.
+    chmodSync(out, 0o555);
+    expect((await buildImages(repo, targets, [])).targets[0]!.written).toEqual(["out/icon.png"]);
+    expect(pixel(decodePng(readFileSync(path.join(out, "icon.png"))), 4, 4)).toEqual([0x20, 0x40, 0x60, 255]);
+  } finally { chmodSync(out, 0o755); rmSync(repo, { recursive: true, force: true }); }
 });
 
 test("checks sources it copies unchanged", async () => {

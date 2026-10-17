@@ -150,8 +150,14 @@ export async function buildImages(root: string, config: ImagesConfig, names: str
       const temporary = `${destination}.${randomUUID()}.tmp`;
       try {
         writeFileSync(temporary, bytes, { flag: "wx" });
-        renameSync(temporary, destination);
-      } catch (error) { rmSync(temporary, { force: true }); throw error; }
+      } catch (error) {
+        // Sandboxed build phases, such as Xcode's, may write only their declared outputs: write in place.
+        if (!["EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+        writeFileSync(destination, bytes);
+        written.push(relative);
+        continue;
+      }
+      try { renameSync(temporary, destination); } catch (error) { rmSync(temporary, { force: true }); throw error; }
       written.push(relative);
     }
     return { name, dir, written, unchanged };
