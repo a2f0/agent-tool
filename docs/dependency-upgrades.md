@@ -5,7 +5,10 @@ upgrade package dependencies, runtimes, mise tools, Actions, native toolchains,
 Ansible, Terraform providers/modules, and other repository-owned pins. It reads
 official migration guides, upgrades coupled dependencies together, resolves
 deprecations, and records validated, constrained, and skipped upgrades. It follows
-the repository's existing upgrade skills and support policy.
+the repository's existing upgrade skills and support policy. Dependency-update
+execution continues through `ship-pr`: independent review, PR, required CI, merge,
+and verification of normal merge-triggered publishing or deployment. Explicit
+inventory-only, local-change, or open-PR-only requests keep that narrower scope.
 
 Read-only advisory checks cover baseline and candidate lockfiles, including
 resolved transitive and native dependencies. The skill traces findings to their
@@ -20,8 +23,9 @@ syntax and runtime requirements.
 The skill requires a dry run before any infrastructure mutation, including ones
 triggered by hooks or CI on push/merge. Resource destruction or replacement, and
 previews that cannot establish safety, skip the affected upgrade group. A Wrangler
-bundle dry run alone does not prove remote resource safety. The skill does not
-itself authorize deployment or shipping; use `ship-pr` when requested.
+bundle dry run alone does not prove remote resource safety. The shipping default
+does not waive preview gates or authorize standalone infrastructure applies,
+deployments, or global tool changes.
 For Wrangler, the skill treats remote D1 migration listing as potentially
 mutating and holds deployment when a migration is pending or the upload cannot
 be proven to match the validated preview artifacts.
