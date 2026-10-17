@@ -197,7 +197,7 @@ test("refuses to write through symbolic links in configured directories", async 
   } finally { rmSync(repo, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); }
 });
 
-test("writes in place where only declared outputs may be written, as in Xcode's script sandbox", async () => {
+test.skipIf(process.getuid?.() === 0)("writes in place where only declared outputs may be written, as in Xcode's script sandbox", async () => {
   const repo = mkdtempSync(path.join(tmpdir(), "agent-tool-images-sandbox-"));
   const out = path.join(repo, "out");
   try {
@@ -213,7 +213,8 @@ test("writes in place where only declared outputs may be written, as in Xcode's 
   } finally { chmodSync(out, 0o755); rmSync(repo, { recursive: true, force: true }); }
 });
 
-test("never rewrites a symbolic or hard link in place", () => {
+// Root ignores directory permissions, so the refused temporary file cannot be simulated.
+test.skipIf(process.getuid?.() === 0)("never rewrites a symbolic or hard link in place", () => {
   for (const link of [symlinkSync, linkSync]) {
     const dir = mkdtempSync(path.join(tmpdir(), "agent-tool-images-replace-"));
     const outside = path.join(mkdtempSync(path.join(tmpdir(), "agent-tool-images-target-")), "target.png");
