@@ -39,6 +39,22 @@ const REASONS: Record<string, string> = {
 };
 const ROOT_GEOMETRY = new Set(["xmlns", "version", "baseProfile", "width", "height", "x", "y", "viewBox", "preserveAspectRatio", "overflow", "id"]);
 
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+
+/** Attribute values as an XML parser sees them, so checks cannot be bypassed by encoding. */
+function decode(name: string, value: string): string {
+  if (/&(?!(?:#x[0-9a-fA-F]{1,6}|#[0-9]{1,7}|amp|lt|gt|quot|apos);)/.test(value)) throw new Error(`Image source '${name}' uses an undefined entity in '${value.slice(0, 40)}'.`);
+  const decoded = value.replace(/&(?:#x([0-9a-fA-F]+)|#([0-9]+)|(amp|lt|gt|quot|apos));/g, (reference, hex?: string, decimal?: string, entity?: string) => {
+    if (entity) return ENTITIES[entity]!;
+    const code = hex ? Number.parseInt(hex, 16) : Number(decimal);
+    if (code < 1 || code > 0x10ffff) throw new Error(`Image source '${name}' has an invalid character reference '${reference}'.`);
+    return String.fromCodePoint(code);
+  });
+  // CSS escapes could spell url( in a way the reference check cannot see; SVG values never need them.
+  if (decoded.includes("\\")) throw new Error(`Image source '${name}' uses a CSS escape in '${value.slice(0, 40)}'.`);
+  return decoded;
+}
+
 function tokenize(name: string, text: string): Token[] {
   const tokens: Token[] = [];
   TOKEN.lastIndex = 0;
@@ -51,7 +67,7 @@ function tokenize(name: string, text: string): Token[] {
       const attributes: [string, string][] = [];
       for (const attribute of match[4]!.matchAll(ATTRIBUTE)) {
         if (attributes.some(([key]) => key === attribute[1])) throw new Error(`Image source '${name}' repeats attribute '${attribute[1]}'.`);
-        attributes.push([attribute[1]!, attribute[2] ?? attribute[3]!]);
+        attributes.push([attribute[1]!, decode(name, attribute[2] ?? attribute[3]!)]);
       }
       tokens.push({ kind: "start", name: match[3], attributes, selfClosing: match[5] === "/" });
     } else tokens.push({ kind: "raw", text: match[0] });
@@ -143,7 +159,7 @@ export function parseSvg(name: string, text: string): SvgSource {
 }
 
 export function attribute(key: string, value: string): string {
-  return ` ${key}="${value.replaceAll('"', "&quot;")}"`;
+  return ` ${key}="${value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;")}"`;
 }
 
 /** Points `url(#id)` references at a copy whose ids carry the prefix. */

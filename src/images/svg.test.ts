@@ -29,6 +29,12 @@ describe("brand source parsing", () => {
       ['<rect fill="url(https://example.com/p.svg#g)"/>', "references 'url(https://example.com/p.svg#g)'"],
       ["<rect style='filter: url( \"x.svg#f\" )'/>", "references"],
       ['<?xml-stylesheet href="https://example.com/a.css"?>', "processing instruction"],
+      ['<rect fill="url&#40;https://example.com/g.svg#g)"/>', "references 'url(https://example.com/g.svg#g)'"],
+      ['<rect fill="url&#x28;https://example.com/g.svg#g)"/>', "references"],
+      ['<image href="&#106;avascript:alert(1)"/>', "references 'javascript:alert(1)'"],
+      ["<rect style='fill: u\\72 l(https://example.com/g.svg#g)'/>", "CSS escape"],
+      ['<rect title="a &nbsp; b"/>', "undefined entity"],
+      ['<rect title="a & b"/>', "undefined entity"],
       ["<g>", "closes </svg> out of order"],
       ["<g></rect>", "out of order"],
       ["<rect x=1/>", "not well-formed"],
@@ -58,4 +64,6 @@ test("inlines each copy with prefixed ids and references, without hidden element
   );
   expect(inlineSvg(source, "l2-", new Set())).toContain('<g id="l2-unlit"><g><rect/></g><rect/></g>');
   expect(inlineSvg(parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"><g id="a"/><use x:href="#a"/></svg>`), "p-", new Set())).toBe('<g id="p-a"/><use x:href="#p-a"/>');
+  // Values are decoded before checks and renames, then escaped again.
+  expect(inlineSvg(parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"><g id="a"/><rect fill="url&#40;&#35;a)" title="a &amp; &lt;b&gt;"/></svg>`), "p-", new Set())).toBe('<g id="p-a"/><rect fill="url(#p-a)" title="a &amp; &lt;b>"/>');
 });
