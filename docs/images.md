@@ -14,17 +14,21 @@ Code that displays the logo should import it from this location too, so there
 is one copy.
 
 Sources are composed by inlining them, and every source, including one copied
-unchanged, must meet these rules:
+unchanged, must be plain static SVG:
 
 - an `<svg>` root declaring `xmlns="http://www.w3.org/2000/svg"`, with a
   `viewBox` or numeric `width` and `height`;
-- no `<style>`, `<script>`, `<foreignObject>`, `<text>`, or `on*` event
-  handler attributes (convert text to paths: rendering it would depend on
-  installed fonts);
-- no external references: `href` must point at an element in the file, or at a
-  `data:` URI in an `<image>`.
+- only SVG shapes, groups, `<use>`, paint servers, clipping, masking, markers,
+  filters, `<image>`, `<title>`, `<desc>`, and `<metadata>`; no text (convert it
+  to paths, since rendering it would depend on installed fonts), `<style>`,
+  scripts, animation, links, or elements from other namespaces, such as editor
+  metadata (export plain SVG);
+- no processing instructions other than the XML declaration, and no `on*`
+  event handler attributes;
+- no external references: `href` and `url()` must point at an element in the
+  file, or `href` at a `data:` URI in an `<image>` or `<feImage>`.
 
-Gradients, masks, clip paths, filters, strokes, and transforms are supported.
+Gradients, masks, clip paths, filters, strokes, and transforms render fully.
 Ids are prefixed per layer, so sources may reuse each other's ids.
 
 ## Targets

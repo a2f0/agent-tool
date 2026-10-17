@@ -21,6 +21,14 @@ describe("brand source parsing", () => {
       ['<image href="logo.png"/>', "references 'logo.png'"],
       ['<use href="other.svg#mark"/>', "references"],
       ['<g id="a"/><g id="a"/>', "repeats id 'a'"],
+      ['<a href="#x"><animate attributeName="href" values="javascript:alert(1)"/></a>', "unsupported <a> element"],
+      ['<set attributeName="fill" to="red"/>', "unsupported <set> element"],
+      ['<h:script xmlns:h="http://www.w3.org/1999/xhtml"/>', "unsupported <h:script>"],
+      ['<g xmlns="http://www.w3.org/1999/xhtml"><script/></g>', "unsupported <g>"],
+      ['<rect x:fill="red"/><foo:bar/>', "unsupported <foo:bar>"],
+      ['<rect fill="url(https://example.com/p.svg#g)"/>', "references 'url(https://example.com/p.svg#g)'"],
+      ["<rect style='filter: url( \"x.svg#f\" )'/>", "references"],
+      ['<?xml-stylesheet href="https://example.com/a.css"?>', "processing instruction"],
       ["<g>", "closes </svg> out of order"],
       ["<g></rect>", "out of order"],
       ["<rect x=1/>", "not well-formed"],
@@ -28,13 +36,15 @@ describe("brand source parsing", () => {
     expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"><g/>`)).toThrow("never closes");
     expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1" onload="alert(1)"/>`)).toThrow("'onload' event handler");
     expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"><rect onClick="alert(1)"/></svg>`)).toThrow("'onClick' event handler");
-    expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"><s:script xmlns:s="http://www.w3.org/2000/svg">alert(1)</s:script></svg>`)).toThrow("<script>");
+    expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"><s:script xmlns:s="http://www.w3.org/2000/svg">alert(1)</s:script></svg>`)).toThrow("unsupported <s:script> element");
     expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"><rect s:onclick="alert(1)"/></svg>`)).toThrow("'s:onclick' event handler");
-    expect(() => parseSvg("logo", `<svg ${NS} xmlns:x="http://www.w3.org/1999/xlink" viewBox="0 0 1 1"><s:image x:href="https://example.com/a.png"/></svg>`)).toThrow("references 'https://example.com/a.png'");
+    expect(() => parseSvg("logo", `<svg ${NS} xmlns:s="http://www.w3.org/2000/svg" xmlns:x="http://www.w3.org/1999/xlink" viewBox="0 0 1 1"><s:image x:href="https://example.com/a.png"/></svg>`)).toThrow("references 'https://example.com/a.png'");
     expect(() => parseSvg("logo", `<svg viewBox="0 0 1 1"/>`)).toThrow("must declare xmlns");
     expect(() => parseSvg("logo", `<svg ${NS}/>`)).toThrow("needs a viewBox");
     expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 0 1"/>`)).toThrow("invalid viewBox");
     expect(() => parseSvg("logo", `<!DOCTYPE svg [<!ENTITY x "y">]><svg ${NS} viewBox="0 0 1 1"/>`)).toThrow("DOCTYPE subset");
+    expect(() => parseSvg("logo", `<?xml-stylesheet href="https://example.com/a.css"?><svg ${NS} viewBox="0 0 1 1"/>`)).toThrow("<svg> root");
+    expect(parseSvg("logo", `<?xml version="1.0"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg ${NS} xmlns:s="${"http://www.w3.org/2000/svg"}" viewBox="0 0 1 1"><s:rect/><title>Logo</title></svg>`).tokens).toHaveLength(4);
     expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"/><svg ${NS}/>`)).toThrow("content after");
     expect(() => parseSvg("logo", `text<svg ${NS} viewBox="0 0 1 1"/>`)).toThrow("<svg> root");
     expect(parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"><image href="data:image/png;base64,AA=="/></svg>`).tokens).toHaveLength(1);

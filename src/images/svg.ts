@@ -1,7 +1,8 @@
 /**
  * Just enough XML to inline brand sources in a composed document: one copy per
  * layer with prefixed ids, named elements dropped, and features refused when
- * they would render differently between machines or leak between layers.
+ * they would render differently between machines, leak between layers, or
+ * script or fetch when an output is opened.
  */
 
 export interface SvgSource {
@@ -22,14 +23,21 @@ type Token =
 const TOKEN = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<!DOCTYPE[^>[]*(\[[\s\S]*?\])?\s*>|<\/([A-Za-z_][\w.:-]*)\s*>|<([A-Za-z_][\w.:-]*)((?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>|[^<]+/y;
 const ATTRIBUTE = /\s+([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
-// Fonts, stylesheets, scripts, and external files would make output depend on the machine or leak between layers.
-const REFUSED: Record<string, string> = {
+// Static SVG only: shapes, paint servers, clipping, masking, and filters. Animation, links, and markup
+// from other namespaces could script or fetch when an output is opened, so they are refused, not trusted.
+const ELEMENTS = new Set([
+  "circle", "clipPath", "defs", "desc", "ellipse", "feBlend", "feColorMatrix", "feComponentTransfer", "feComposite",
+  "feConvolveMatrix", "feDiffuseLighting", "feDisplacementMap", "feDistantLight", "feDropShadow", "feFlood", "feFuncA",
+  "feFuncB", "feFuncG", "feFuncR", "feGaussianBlur", "feImage", "feMerge", "feMergeNode", "feMorphology", "feOffset",
+  "fePointLight", "feSpecularLighting", "feSpotLight", "feTile", "feTurbulence", "filter", "g", "image", "line",
+  "linearGradient", "marker", "mask", "metadata", "path", "pattern", "polygon", "polyline", "radialGradient", "rect",
+  "stop", "svg", "switch", "symbol", "title", "use",
+]);
+const REASONS: Record<string, string> = {
   style: "a <style> element; use presentation attributes",
-  script: "a <script> element",
   text: "text, which depends on installed fonts; convert it to paths",
-  foreignObject: "a <foreignObject> element",
 };
-const ROOT_GEOMETRY = new Set(["xmlns", "version", "baseProfile", "width", "height", "x", "y", "viewBox", "preserveAspectRatio", "id"]);
+const ROOT_GEOMETRY = new Set(["xmlns", "version", "baseProfile", "width", "height", "x", "y", "viewBox", "preserveAspectRatio", "overflow", "id"]);
 
 function tokenize(name: string, text: string): Token[] {
   const tokens: Token[] = [];
@@ -54,9 +62,24 @@ function tokenize(name: string, text: string): Token[] {
 /** The name without its namespace prefix: any prefix may be bound to the SVG or XLink namespace. */
 function local(name: string): string { return name.slice(name.indexOf(":") + 1); }
 
-function refuseScripting(name: string, attributes: [string, string][]): void {
-  const handler = attributes.find(([key]) => /^on/i.test(local(key)));
-  if (handler) throw new Error(`Image source '${name}' has a '${handler[0]}' event handler.`);
+/** Event handlers, and references to anything outside the file except embedded images, are refused. */
+function checkAttributes(name: string, element: string, attributes: [string, string][]): void {
+  for (const [key, value] of attributes) {
+    if (/^on/i.test(local(key))) throw new Error(`Image source '${name}' has a '${key}' event handler.`);
+    const external = local(key) === "href"
+      ? !value.startsWith("#") && !(["image", "feImage"].includes(local(element)) && value.startsWith("data:"))
+      : value.split(/url\(/i).slice(1).some(target => !target.trimStart().replace(/^['"]/, "").startsWith("#"));
+    if (external) throw new Error(`Image source '${name}' references '${value.slice(0, 40)}'; embed it or reference an element in the file.`);
+  }
+}
+
+interface Scope { default: string | undefined; prefixes: Record<string, string> }
+function declare(parent: Scope, attributes: [string, string][]): Scope {
+  const declarations = attributes.filter(([key]) => key === "xmlns" || key.startsWith("xmlns:"));
+  if (!declarations.length) return parent;
+  const scope: Scope = { default: parent.default, prefixes: { ...parent.prefixes } };
+  for (const [key, value] of declarations) if (key === "xmlns") scope.default = value; else scope.prefixes[key.slice(6)] = value;
+  return scope;
 }
 
 function number(value: string | undefined): number | undefined {
@@ -69,11 +92,11 @@ export function parseSvg(name: string, text: string): SvgSource {
   const start = all.findIndex(token => token.kind !== "raw");
   const root = all[start];
   const prologue = all.slice(0, Math.max(start, 0));
-  if (!root || root.kind !== "start" || root.name !== "svg" || prologue.some(token => token.kind === "raw" && !/^(?:\s+|<!--[\s\S]*-->|<\?[\s\S]*\?>|<!DOCTYPE[\s\S]*>)$/.test(token.text))) {
+  if (!root || root.kind !== "start" || root.name !== "svg" || prologue.some(token => token.kind === "raw" && !/^(?:\s+|<!--[\s\S]*-->|<\?xml\s[\s\S]*\?>|<!DOCTYPE[\s\S]*>)$/.test(token.text))) {
     throw new Error(`Image source '${name}' must have an <svg> root element.`);
   }
   const rootAttributes = new Map(root.attributes);
-  refuseScripting(name, root.attributes);
+  checkAttributes(name, root.name, root.attributes);
   if (rootAttributes.get("xmlns") !== SVG_NAMESPACE) throw new Error(`Image source '${name}' must declare xmlns="${SVG_NAMESPACE}".`);
   const box = rootAttributes.get("viewBox")?.trim().split(/[\s,]+/).map(Number);
   const width = number(rootAttributes.get("width")), height = number(rootAttributes.get("height"));
@@ -84,7 +107,7 @@ export function parseSvg(name: string, text: string): SvgSource {
   } else if (width && height) viewBox = [0, 0, width, height];
   else throw new Error(`Image source '${name}' needs a viewBox or numeric width and height.`);
 
-  const tokens: Token[] = [], ids = new Set<string>(), stack: string[] = [];
+  const tokens: Token[] = [], ids = new Set<string>(), stack: string[] = [], scopes = [declare({ default: undefined, prefixes: {} }, root.attributes)];
   // Ends on the root's closing tag, or on the root itself when it is self-closing.
   let index = start;
   if (!root.selfClosing) {
@@ -93,17 +116,17 @@ export function parseSvg(name: string, text: string): SvgSource {
       if (token.kind === "end") {
         if (stack.length === 0) { if (token.name !== "svg") throw new Error(`Image source '${name}' closes </${token.name}> without opening it.`); break; }
         if (stack.pop() !== token.name) throw new Error(`Image source '${name}' closes </${token.name}> out of order.`);
+        scopes.pop();
       } else if (token.kind === "start") {
-        if (Object.hasOwn(REFUSED, local(token.name))) throw new Error(`Image source '${name}' contains ${REFUSED[local(token.name)]}.`);
-        refuseScripting(name, token.attributes);
-        for (const [key, value] of token.attributes) {
-          if (key === "id") { if (ids.has(value)) throw new Error(`Image source '${name}' repeats id '${value}'.`); ids.add(value); }
-          if (local(key) === "href" && !value.startsWith("#") && !(local(token.name) === "image" && value.startsWith("data:"))) {
-            throw new Error(`Image source '${name}' references '${value.slice(0, 40)}'; embed it or reference an element in the file.`);
-          }
+        const scope = declare(scopes.at(-1)!, token.attributes);
+        const prefix = token.name.includes(":") ? token.name.slice(0, token.name.indexOf(":")) : undefined;
+        if ((prefix === undefined ? scope.default : scope.prefixes[prefix]) !== SVG_NAMESPACE || !ELEMENTS.has(local(token.name))) {
+          throw new Error(`Image source '${name}' contains ${REASONS[local(token.name)] ?? `an unsupported <${token.name}> element; keep only static SVG shapes, paint, clipping, masking, and filters`}.`);
         }
-        if (!token.selfClosing) stack.push(token.name);
-      }
+        checkAttributes(name, token.name, token.attributes);
+        for (const [key, value] of token.attributes) if (key === "id") { if (ids.has(value)) throw new Error(`Image source '${name}' repeats id '${value}'.`); ids.add(value); }
+        if (!token.selfClosing) { stack.push(token.name); scopes.push(scope); }
+      } else if (token.text.startsWith("<?")) throw new Error(`Image source '${name}' contains a processing instruction.`);
       tokens.push(token);
     }
     if (index === all.length) throw new Error(`Image source '${name}' never closes its <svg> root.`);

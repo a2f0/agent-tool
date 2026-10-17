@@ -7,9 +7,10 @@ export interface Canvas { width: number; height: number; factor: number | null }
 function n(value: number): string { return String(Number(value.toFixed(6))); }
 
 function nested(source: SvgSource, prefix: string, hide: Set<string>, box: [number, number, number, number], viewBox: number[], aspect: string): string {
-  let markup = `<svg x="${n(box[0])}" y="${n(box[1])}" width="${n(box[2])}" height="${n(box[3])}" viewBox="${viewBox.map(n).join(" ")}" preserveAspectRatio="${aspect}" overflow="hidden"`;
-  for (const [key, value] of source.attributes) markup += attribute(key, renameReferences(value, prefix));
-  return `${markup}>${inlineSvg(source, prefix, hide)}</svg>`;
+  const content = inlineSvg(source, prefix, hide);
+  // The source root's presentation attributes go on a group, so none can collide with or loosen the viewport's.
+  const presentation = source.attributes.map(([key, value]) => attribute(key, renameReferences(value, prefix))).join("");
+  return `<svg x="${n(box[0])}" y="${n(box[1])}" width="${n(box[2])}" height="${n(box[3])}" viewBox="${viewBox.map(n).join(" ")}" preserveAspectRatio="${aspect}" overflow="hidden">${presentation ? `<g${presentation}>${content}</g>` : content}</svg>`;
 }
 
 function placeSource(layer: SourceLayer, index: number, canvas: Canvas, source: SvgSource): string {

@@ -1,6 +1,7 @@
 import { initWasm, Resvg } from "@resvg/resvg-wasm";
 import wasm from "@resvg/resvg-wasm/index_bg.wasm" with { type: "file" };
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { composeSvg, type Canvas } from "./compose";
 import { expand, format, SOURCE_DIRECTORY, verbatim, type ImageOutput, type ImagesConfig, type ImageTarget } from "./config";
@@ -50,12 +51,14 @@ async function render(output: ImageOutput, canvas: Canvas, sources: Sources): Pr
     for (const [name, color] of Object.entries(output.colors!)) {
       let hex = typeof color === "string" ? color : "";
       if (typeof color !== "string") {
-        // The source's mean color over white, for settings that take a color rather than an image.
-        const average = { layers: [{ source: color.average, fit: "contain" as const, scale: null, size: null, hide: [], tint: null, bleed: [], pixelSnap: false }], mask: null, opaque: true };
-        const { data } = await rasterize(composeSvg(average, { width: 64, height: 64, factor: 1 }, sources.parsed([color.average])), 64, 64, true);
+        // The source's mean color over white, on a canvas of its own proportions, for settings that take a color.
+        const parsed = sources.parsed([color.average]), [, , viewWidth, viewHeight] = parsed.get(color.average)!.viewBox;
+        const width = Math.max(1, Math.round(64 * Math.min(1, viewWidth / viewHeight))), height = Math.max(1, Math.round(64 * Math.min(1, viewHeight / viewWidth)));
+        const average = { layers: [{ source: color.average, fit: "cover" as const, scale: null, size: null, hide: [], tint: null, bleed: [], pixelSnap: false }], mask: null, opaque: true };
+        const { data } = await rasterize(composeSvg(average, { width, height, factor: 1 }, parsed), width, height, true);
         const sums = [0, 0, 0];
         for (let index = 0; index < data.length; index += 1) sums[index % 3]! += data[index]!;
-        hex = `#${sums.map(sum => Math.round(sum / (64 * 64)).toString(16).padStart(2, "0")).join("")}`;
+        hex = `#${sums.map(sum => Math.round(sum / (width * height)).toString(16).padStart(2, "0")).join("")}`;
       }
       if (hex.length === 4) hex = `#${[...hex.slice(1)].map(digit => digit + digit).join("")}`;
       colors += `    <color name="${name}">${hex.toUpperCase()}</color>\n`;
@@ -138,9 +141,12 @@ export async function buildImages(root: string, config: ImagesConfig, names: str
     for (const { relative, destination, bytes } of files) {
       if (existsSync(destination) && Buffer.compare(readFileSync(destination), bytes) === 0) { unchanged.push(relative); continue; }
       mkdirSync(path.dirname(destination), { recursive: true });
-      const temporary = `${destination}.${process.pid}.tmp`;
-      writeFileSync(temporary, bytes);
-      renameSync(temporary, destination);
+      // An unpredictable name created exclusively, so no committed link can stand in for it.
+      const temporary = `${destination}.${randomUUID()}.tmp`;
+      try {
+        writeFileSync(temporary, bytes, { flag: "wx" });
+        renameSync(temporary, destination);
+      } catch (error) { rmSync(temporary, { force: true }); throw error; }
       written.push(relative);
     }
     return { name, dir, written, unchanged };

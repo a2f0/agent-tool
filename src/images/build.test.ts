@@ -97,6 +97,10 @@ describe("building image targets", async () => {
     );
   });
 
+  test("leaves no temporary files behind", () => {
+    expect([...new Bun.Glob("**/*.tmp").scanSync(path.join(root, "out"))]).toEqual([]);
+  });
+
   test("leaves byte-identical files untouched on the next build", async () => {
     const before = statSync(path.join(root, "out/app/icon.png")).mtimeMs;
     const second = await buildImages(root, config, ["app"]);
@@ -140,6 +144,23 @@ test("lists every target's files without rendering, including targets that need 
   expect(listImages(config, ["web"])).toEqual({ sources: "assets/brand", targets: [{ name: "web", dir: null, files: ["favicon.ico", "favicon.svg", "rounded.svg"] }] });
 });
 
+test("averages a source on its own proportions and keeps root attributes off the viewport", async () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "agent-tool-images-wide-"));
+  try {
+    mkdirSync(path.join(repo, "assets/brand"), { recursive: true });
+    writeFileSync(path.join(repo, "assets/brand/wide.svg"), `<svg ${NS} viewBox="0 0 20 10" overflow="visible" fill="#ff0000"><rect width="20" height="10"/></svg>`);
+    const targets = parseImages({ targets: { a: { dir: "out", outputs: [
+      { path: "colors.xml", colors: { wide: { average: "wide" } } },
+      { path: "wide.svg", size: [20, 10], layers: [{ source: "wide" }] },
+    ] } } });
+    await buildImages(repo, targets, []);
+    expect(readFileSync(path.join(repo, "out/colors.xml"), "utf8")).toContain('<color name="wide">#FF0000</color>');
+    const svg = readFileSync(path.join(repo, "out/wide.svg"), "utf8");
+    expect(svg).toContain('preserveAspectRatio="none" overflow="hidden"><g fill="#ff0000"><rect');
+    expect(svg).not.toContain("visible");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
 test("rewrites references in root attributes and tints cover layers", async () => {
   const repo = mkdtempSync(path.join(tmpdir(), "agent-tool-images-root-"));
   try {
@@ -178,7 +199,7 @@ test("checks sources it copies unchanged", async () => {
     mkdirSync(path.join(repo, "assets/brand"), { recursive: true });
     writeFileSync(path.join(repo, "assets/brand/logo.svg"), `<svg ${NS} viewBox="0 0 1 1"><script>alert(1)</script></svg>`);
     const copy = parseImages({ targets: { a: { dir: "out", outputs: [{ path: "favicon.svg", layers: [{ source: "logo" }] }] } } });
-    await expect(buildImages(repo, copy, [])).rejects.toThrow("contains a <script> element");
+    await expect(buildImages(repo, copy, [])).rejects.toThrow("contains an unsupported <script> element");
     expect(existsSync(path.join(repo, "out"))).toBe(false);
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
