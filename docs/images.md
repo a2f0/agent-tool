@@ -122,9 +122,10 @@ Layers draw in order, each centered on the canvas.
     small sizes. A missing id is an error.
   - `tint`: recolors every drawn pixel, keeping its alpha, for monochrome and
     notification icons.
-  - `bleed`: edges (`"top"`, `"right"`, `"bottom"`, `"left"`) whose outermost
-    rendered pixels stretch to the canvas edge, for marks that should meet the
-    edge of a mask larger than the safe zone.
+  - `bleed`: edges (`"top"`, `"right"`, `"bottom"`, `"left"`) where the
+    source's outermost strip, one output pixel deep, stretches to the canvas
+    edge, for marks whose straight edges should meet the edge of a mask larger
+    than the safe zone.
   - `pixelSnap`: scales pixel art by the largest whole number that fits and
     aligns it to whole pixels. Combine it with `shape-rendering="crispEdges"`
     on the source root for exact pixels without anti-aliasing.

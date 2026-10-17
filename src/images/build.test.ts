@@ -136,6 +136,8 @@ describe("image target errors", () => {
     expect(existsSync(path.join(root, "x"))).toBe(false);
     const overlapping = parseImages({ targets: { a: { dir: "x", outputs: [{ path: "a.png", size: 8, layers: [{ source: "logo" }] }] }, b: { dir: "x", outputs: [{ path: "a.png", size: 8, layers: [{ source: "logo" }] }] } } });
     await expect(buildImages(root, overlapping, [])).rejects.toThrow("Image targets 'a' and 'b' both write x/a.png.");
+    const folded = parseImages({ targets: { a: { dir: "x", outputs: [{ path: "A.png", size: 8, layers: [{ source: "logo" }] }] }, b: { dir: "x", outputs: [{ path: "a.png", size: 8, layers: [{ source: "logo" }] }] } } });
+    await expect(buildImages(root, folded, [])).rejects.toThrow("Image targets 'a' and 'b' both write x/a.png.");
     const coarse = parseImages({ targets: { a: { dir: "x", outputs: [{ path: "a.png", size: 3, layers: [{ source: "pixel", pixelSnap: true }] }] } } });
     await expect(buildImages(root, coarse, [])).rejects.toThrow("cannot snap to pixels within 3x3");
   });

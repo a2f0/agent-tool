@@ -132,9 +132,10 @@ export async function buildImages(root: string, config: ImagesConfig, names: str
         const destination = path.resolve(root, dir, file.path);
         // An explicit --out is the caller's choice; configured directories are checked from the repository root.
         assertNoLinks(out === undefined ? root : path.resolve(root, out), destination);
-        const owner = owners.get(destination);
+        // Compared without case, as macOS and Windows file systems do.
+        const owner = owners.get(destination.toLowerCase());
         if (owner !== undefined) throw new Error(`Image targets '${owner}' and '${name}' both write ${path.relative(root, destination)}.`);
-        owners.set(destination, name);
+        owners.set(destination.toLowerCase(), name);
         files.push({ relative: path.join(dir, file.path), destination, bytes: typeof content === "string" ? Buffer.from(content) : content });
       }
     }

@@ -179,7 +179,9 @@ export function parseImages(value: unknown): ImagesConfig {
     const paths = outputs.flatMap(output => expand(output).map(file => file.path));
     const escaping = paths.find(path => !relativePath(path));
     if (escaping !== undefined) throw new Error(`${setting} writes '${escaping}', which is not a path inside its directory.`);
-    const repeated = paths.find((path, index) => paths.indexOf(path) !== index);
+    // Compared without case, as macOS and Windows file systems do.
+    const folded = paths.map(path => path.toLowerCase());
+    const repeated = paths.find((_, index) => folded.indexOf(folded[index]!) !== index);
     if (repeated) throw new Error(`${setting} writes ${repeated} more than once.`);
     result.targets[name] = { dir: target.dir ?? null, outputs };
   }
