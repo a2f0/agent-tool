@@ -1,7 +1,7 @@
 import { initWasm, Resvg } from "@resvg/resvg-wasm";
 import wasm from "@resvg/resvg-wasm/index_bg.wasm" with { type: "file" };
 import { randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { composeSvg, type Canvas } from "./compose";
 import { expand, format, SOURCE_DIRECTORY, verbatim, type ImageOutput, type ImagesConfig, type ImageTarget } from "./config";
@@ -96,6 +96,38 @@ function assertNoLinks(base: string, destination: string): void {
   }
 }
 
+/**
+ * Replaces a file atomically through an unpredictable, exclusively created
+ * temporary name, so no committed link can stand in for it. Sandboxed build
+ * phases, such as Xcode's, may write only their declared outputs; there the
+ * file is rewritten in place, refusing to follow a link.
+ */
+export function replaceFile(destination: string, bytes: Uint8Array): void {
+  const temporary = `${destination}.${randomUUID()}.tmp`;
+  let created = false;
+  try {
+    writeFileSync(temporary, bytes, { flag: "wx" });
+    created = true;
+    renameSync(temporary, destination);
+  } catch (error) {
+    if (created || !["EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) {
+      // Best effort: the original error matters more than a temporary file left behind.
+      try { rmSync(temporary, { force: true }); } catch {}
+      throw error;
+    }
+    // Nothing was created, and a sandbox may refuse even an attempt to remove an undeclared path.
+    const descriptor = openSync(destination, constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW);
+    try {
+      // A hard link would share the file with a path outside the output, so only a sole link is rewritten.
+      const stats = fstatSync(descriptor);
+      if (!stats.isFile() || stats.nlink !== 1) throw new Error(`Refusing to rewrite ${destination}, which is not a file with a single link.`);
+      ftruncateSync(descriptor, 0);
+      // writeFileSync on a descriptor repeats short writes until every byte is written.
+      writeFileSync(descriptor, bytes);
+    } finally { closeSync(descriptor); }
+  }
+}
+
 function directory(name: string, target: ImageTarget, out: string | undefined): string {
   const dir = out ?? target.dir;
   if (dir === null) throw new Error(`Image target '${name}' has no dir; pass --out <directory>.`);
@@ -146,12 +178,7 @@ export async function buildImages(root: string, config: ImagesConfig, names: str
     for (const { relative, destination, bytes } of files) {
       if (existsSync(destination) && Buffer.compare(readFileSync(destination), bytes) === 0) { unchanged.push(relative); continue; }
       mkdirSync(path.dirname(destination), { recursive: true });
-      // An unpredictable name created exclusively, so no committed link can stand in for it.
-      const temporary = `${destination}.${randomUUID()}.tmp`;
-      try {
-        writeFileSync(temporary, bytes, { flag: "wx" });
-        renameSync(temporary, destination);
-      } catch (error) { rmSync(temporary, { force: true }); throw error; }
+      replaceFile(destination, bytes);
       written.push(relative);
     }
     return { name, dir, written, unchanged };
