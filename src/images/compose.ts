@@ -1,5 +1,5 @@
 import { pair, type ImageOutput, type SourceLayer } from "./config";
-import { attribute, inlineSvg, type SvgSource } from "./svg";
+import { attribute, inlineSvg, renameReferences, type SvgSource } from "./svg";
 
 export interface Canvas { width: number; height: number; factor: number | null }
 
@@ -8,7 +8,7 @@ function n(value: number): string { return String(Number(value.toFixed(6))); }
 
 function nested(source: SvgSource, prefix: string, hide: Set<string>, box: [number, number, number, number], viewBox: number[], aspect: string): string {
   let markup = `<svg x="${n(box[0])}" y="${n(box[1])}" width="${n(box[2])}" height="${n(box[3])}" viewBox="${viewBox.map(n).join(" ")}" preserveAspectRatio="${aspect}" overflow="hidden"`;
-  for (const [key, value] of source.attributes) markup += attribute(key, value);
+  for (const [key, value] of source.attributes) markup += attribute(key, renameReferences(value, prefix));
   return `${markup}>${inlineSvg(source, prefix, hide)}</svg>`;
 }
 
@@ -19,7 +19,8 @@ function placeSource(layer: SourceLayer, index: number, canvas: Canvas, source: 
   const [vx, vy, vw, vh] = source.viewBox;
   const [boxWidth, boxHeight] = layer.size === null ? [width * (layer.scale ?? 1), height * (layer.scale ?? 1)] : pair(layer.size).map(side => side * canvas.factor!);
   const boxX = (width - boxWidth!) / 2, boxY = (height - boxHeight!) / 2;
-  if (layer.fit === "cover") return nested(source, `l${index}-`, hide, [boxX, boxY, boxWidth!, boxHeight!], source.viewBox, "xMidYMid slice");
+  const tint = (parts: string[]) => layer.tint === null ? parts.join("") : `<g filter="url(#agent-tool-tint-${index})">${parts.join("")}</g>`;
+  if (layer.fit === "cover") return tint([nested(source, `l${index}-`, hide, [boxX, boxY, boxWidth!, boxHeight!], source.viewBox, "xMidYMid slice")]);
   let scale = Math.min(boxWidth! / vw, boxHeight! / vh);
   if (layer.pixelSnap) {
     if (!Number.isInteger(vw) || !Number.isInteger(vh)) throw new Error(`Image source '${source.name}' needs a whole-unit viewBox to snap to pixels.`);
@@ -42,7 +43,7 @@ function placeSource(layer: SourceLayer, index: number, canvas: Canvas, source: 
     const [box, viewBox] = strips[edge]!;
     if (box[2] > 0 && box[3] > 0) parts.push(nested(source, `l${index}${edge}-`, hide, box, viewBox, "none"));
   }
-  return layer.tint === null ? parts.join("") : `<g filter="url(#agent-tool-tint-${index})">${parts.join("")}</g>`;
+  return tint(parts);
 }
 
 /**

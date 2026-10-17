@@ -51,6 +51,11 @@ function tokenize(name: string, text: string): Token[] {
   return tokens;
 }
 
+function refuseScripting(name: string, attributes: [string, string][]): void {
+  const handler = attributes.find(([key]) => /^on/i.test(key));
+  if (handler) throw new Error(`Image source '${name}' has a '${handler[0]}' event handler.`);
+}
+
 function number(value: string | undefined): number | undefined {
   const parsed = value === undefined ? NaN : Number(value.trim().replace(/px$/, ""));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
@@ -65,6 +70,7 @@ export function parseSvg(name: string, text: string): SvgSource {
     throw new Error(`Image source '${name}' must have an <svg> root element.`);
   }
   const rootAttributes = new Map(root.attributes);
+  refuseScripting(name, root.attributes);
   if (rootAttributes.get("xmlns") !== SVG_NAMESPACE) throw new Error(`Image source '${name}' must declare xmlns="${SVG_NAMESPACE}".`);
   const box = rootAttributes.get("viewBox")?.trim().split(/[\s,]+/).map(Number);
   const width = number(rootAttributes.get("width")), height = number(rootAttributes.get("height"));
@@ -86,6 +92,7 @@ export function parseSvg(name: string, text: string): SvgSource {
         if (stack.pop() !== token.name) throw new Error(`Image source '${name}' closes </${token.name}> out of order.`);
       } else if (token.kind === "start") {
         if (Object.hasOwn(REFUSED, token.name)) throw new Error(`Image source '${name}' contains ${REFUSED[token.name]}.`);
+        refuseScripting(name, token.attributes);
         for (const [key, value] of token.attributes) {
           if (key === "id") { if (ids.has(value)) throw new Error(`Image source '${name}' repeats id '${value}'.`); ids.add(value); }
           if ((key === "href" || key === "xlink:href") && !value.startsWith("#") && !(token.name === "image" && value.startsWith("data:"))) {
@@ -113,9 +120,14 @@ export function attribute(key: string, value: string): string {
   return ` ${key}="${value.replaceAll('"', "&quot;")}"`;
 }
 
+/** Points `url(#id)` references at a copy whose ids carry the prefix. */
+export function renameReferences(value: string, prefix: string): string {
+  return value.replace(/url\(\s*(['"]?)#([^'")\s]+)\1\s*\)/g, (_, _quote, id: string) => `url(#${prefix}${id})`);
+}
+
 /** The source's children with every id prefixed, internal references rewritten, and hidden elements removed. */
 export function inlineSvg(source: SvgSource, prefix: string, hide: ReadonlySet<string>): string {
-  const rename = (value: string) => value.replace(/url\(\s*(['"]?)#([^'")\s]+)\1\s*\)/g, (_, _quote, id: string) => `url(#${prefix}${id})`);
+  const rename = (value: string) => renameReferences(value, prefix);
   let markup = "", skipped = 0;
   for (const token of source.tokens) {
     if (token.kind === "start") {

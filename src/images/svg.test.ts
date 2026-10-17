@@ -26,6 +26,8 @@ describe("brand source parsing", () => {
       ["<rect x=1/>", "not well-formed"],
     ]) expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1">${markup}</svg>`)).toThrow(message);
     expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"><g/>`)).toThrow("never closes");
+    expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1" onload="alert(1)"/>`)).toThrow("'onload' event handler");
+    expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"><rect onClick="alert(1)"/></svg>`)).toThrow("'onClick' event handler");
     expect(() => parseSvg("logo", `<svg viewBox="0 0 1 1"/>`)).toThrow("must declare xmlns");
     expect(() => parseSvg("logo", `<svg ${NS}/>`)).toThrow("needs a viewBox");
     expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 0 1"/>`)).toThrow("invalid viewBox");

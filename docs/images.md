@@ -13,12 +13,14 @@ a transparent canvas, and optionally `background.svg`, a full-bleed backdrop.
 Code that displays the logo should import it from this location too, so there
 is one copy.
 
-Sources are composed by inlining them, which requires:
+Sources are composed by inlining them, and every source, including one copied
+unchanged, must meet these rules:
 
 - an `<svg>` root declaring `xmlns="http://www.w3.org/2000/svg"`, with a
   `viewBox` or numeric `width` and `height`;
-- no `<style>`, `<script>`, `<foreignObject>`, or `<text>` (convert text to
-  paths: rendering it would depend on installed fonts);
+- no `<style>`, `<script>`, `<foreignObject>`, `<text>`, or `on*` event
+  handler attributes (convert text to paths: rendering it would depend on
+  installed fonts);
 - no external references: `href` must point at an element in the file, or at a
   `data:` URI in an `<image>`.
 

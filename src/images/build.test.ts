@@ -135,8 +135,35 @@ describe("image target errors", () => {
   });
 });
 
-test("lists every file without rendering", () => {
+test("lists every target's files without rendering, including targets that need --out", () => {
+  expect(listImages(config, []).targets.map(target => [target.name, target.dir, target.files.length])).toEqual([["app", "out/app", 7], ["web", null, 3]]);
   expect(listImages(config, ["web"])).toEqual({ sources: "assets/brand", targets: [{ name: "web", dir: null, files: ["favicon.ico", "favicon.svg", "rounded.svg"] }] });
+});
+
+test("rewrites references in root attributes and tints cover layers", async () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "agent-tool-images-root-"));
+  try {
+    mkdirSync(path.join(repo, "assets/brand"), { recursive: true });
+    writeFileSync(path.join(repo, "assets/brand/gradient.svg"), `<svg ${NS} viewBox="0 0 10 10" fill="url(#g)"><defs><linearGradient id="g"><stop offset="0" stop-color="#00f"/><stop offset="1" stop-color="#00f"/></linearGradient></defs><rect width="10" height="10"/></svg>`);
+    const targets = parseImages({ targets: { a: { dir: "out", outputs: [
+      { path: "gradient.png", size: 10, layers: [{ source: "gradient" }] },
+      { path: "tinted.png", size: 10, layers: [{ source: "gradient", fit: "cover", tint: "#ff0000" }] },
+    ] } } });
+    await buildImages(repo, targets, []);
+    expect(pixel(decodePng(readFileSync(path.join(repo, "out/gradient.png"))), 5, 5)).toEqual([0, 0, 255, 255]);
+    expect(pixel(decodePng(readFileSync(path.join(repo, "out/tinted.png"))), 5, 5)).toEqual([255, 0, 0, 255]);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("checks sources it copies unchanged", async () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "agent-tool-images-copy-"));
+  try {
+    mkdirSync(path.join(repo, "assets/brand"), { recursive: true });
+    writeFileSync(path.join(repo, "assets/brand/logo.svg"), `<svg ${NS} viewBox="0 0 1 1"><script>alert(1)</script></svg>`);
+    const copy = parseImages({ targets: { a: { dir: "out", outputs: [{ path: "favicon.svg", layers: [{ source: "logo" }] }] } } });
+    await expect(buildImages(repo, copy, [])).rejects.toThrow("contains a <script> element");
+    expect(existsSync(path.join(repo, "out"))).toBe(false);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 
 test("the CLI reads targets from agent-tool.json in --repo", async () => {
