@@ -11,6 +11,9 @@ version management, and portable skills for Claude Code, Codex, and OpenCode.
   `bun.lock` in sync.
 - **Share skills**: install the same workflow instructions where each harness
   discovers them, and check them in CI.
+- **Render brand images**: build app icons, splash screens, favicons, and store
+  graphics from the SVGs in `assets/brand/`, with every size and destination
+  declared in `agent-tool.json`.
 - **Compact output**: run noisy commands with full private logs and bounded
   diagnostics, keeping routine output out of an agent's context.
 
@@ -109,6 +112,8 @@ agent-tool skills install --apply
 | `skills list` | List embedded portable skills |
 | `skills install [--harness all\|claude\|codex\|opencode] [--apply]` | Preview by default; install or update managed skills |
 | `skills check [--harness all\|claude\|codex\|opencode]` | Read-only CI check for current managed skills |
+| `images list [target...]` | List the files each image target writes, without rendering |
+| `images build [target...] [--out dir]` | Render image targets from `assets/brand/*.svg`; `--out` redirects one target |
 | `init` / `config show` | Create or inspect data-only project policy |
 | `doctor` | Inspect local versions and required CLI flags without running a model |
 
@@ -256,6 +261,38 @@ the commit restores the manifests, lockfile, and index, unless HEAD or other
 paths changed, in which case it leaves that state for inspection. Repeating
 against the same base creates no commit.
 
+### Images
+
+`images` declares named targets of brand images rendered from SVG sources in
+`assets/brand/`. Each output names its file, pixel size or variants (such as
+Android densities or `@2x`/`@3x`), and the layers composed into it:
+
+```json
+{
+  "schemaVersion": 1,
+  "images": {
+    "targets": {
+      "ios": {
+        "dir": "ios/App/Assets.xcassets",
+        "outputs": [
+          {
+            "path": "AppIcon.appiconset/AppIcon.png",
+            "size": 1024,
+            "opaque": true,
+            "layers": [{ "source": "background", "fit": "cover" }, { "source": "logo", "scale": 0.7 }]
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+`agent-tool images build ios` writes PNG, ICO, SVG, and Android color resource
+outputs with a bundled WebAssembly renderer, so builds need no ImageMagick or
+librsvg and render identically on every machine. See the
+[image reference](docs/images.md) for every setting.
+
 ## Portable skills
 
 Canonical skills live in `skills/`. The build embeds them, and the installer
@@ -393,6 +430,7 @@ yet.
 ## Further reading
 
 - [Design](docs/design.md): component boundaries and implementation choices.
+- [Images](docs/images.md): brand image sources, targets, and output settings.
 - [Validation record](docs/validation.md): observed test results and their
   limits.
 - [Extraction record](docs/extraction.md): the projects this tool was extracted

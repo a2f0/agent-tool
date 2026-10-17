@@ -32,6 +32,8 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   skills list
   skills install [--harness <all|claude|codex|opencode>] [--apply]
   skills check [--harness <all|claude|codex|opencode>]
+  images list [target...]               JSON files each image target writes
+  images build [target...] [--out <dir>]  Render assets/brand/*.svg per agent-tool.json
   init                                  Create agent-tool.json without overwriting
   config show
   doctor                                JSON versions and supported review flags
@@ -84,6 +86,22 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
     usage(args.length === 0, "Usage: agent-tool doctor");
     const result = doctor(process.cwd()); output(result);
     return result.tools.find(item => item.name === "git")?.compatible && result.tools.some(item => ["claude", "codex", "opencode"].includes(item.name) && item.compatible) ? 0 : 1;
+  }
+  if (command === "images") {
+    const action = args.shift();
+    usage(action === "list" || action === "build", "Usage: agent-tool images <list|build> [target...] [--out <dir>]");
+    const names: string[] = [];
+    let out: string | undefined;
+    while (args.length) {
+      const value = args.shift()!;
+      if (value === "--out") { usage(action === "build" && out === undefined && !!args[0] && !args[0].startsWith("--"), "--out requires one directory and applies to build."); out = args.shift(); }
+      else { usage(!value.startsWith("-"), `Unknown images argument '${value}'.`); names.push(value); }
+    }
+    const { images } = loadConfig();
+    // Loaded on demand so other commands never initialize the renderer.
+    return import("./images/build").then(async ({ buildImages, listImages }) => {
+      output(action === "list" ? listImages(images, names) : await buildImages(process.cwd(), images, names, out)); return 0;
+    });
   }
   if (command === "skills") {
     const action = args.shift();

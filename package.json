@@ -1,6 +1,6 @@
 {
   "name": "@a2f0/agent-tool",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "type": "module",
   "description": "Portable cross-agent review, PR workflows, and shared skills",
   "license": "UNLICENSED",
@@ -33,5 +33,8 @@
   "devDependencies": {
     "@types/bun": "1.4.2",
     "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "@resvg/resvg-wasm": "2.6.2"
   }
 }

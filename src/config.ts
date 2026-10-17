@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { parseImages, type ImagesConfig } from "./images/config";
 
 export interface RequiredCheck {
   name: string;
@@ -13,6 +14,7 @@ export interface AgentToolConfig {
   review: { claudeModel: string | null; codexModel: string | null; opencodeModel: string; opencodeVariants: Record<string, string>; timeoutMs: number };
   versions: { packages: string[] | null; bundles: string[]; lockfile: "bun.lock" | null; validate: string[][]; commitMessage: string };
   pr: { rejectClaudeBranding: boolean };
+  images: ImagesConfig;
 }
 
 export const DEFAULT_CONFIG: AgentToolConfig = {
@@ -26,6 +28,7 @@ export const DEFAULT_CONFIG: AgentToolConfig = {
   review: { claudeModel: null, codexModel: null, opencodeModel: "deepseek/deepseek-v4-pro", opencodeVariants: { low: "low", medium: "medium", high: "high", xhigh: "max", max: "max" }, timeoutMs: 600_000 },
   versions: { packages: null, bundles: [], lockfile: "bun.lock", validate: [], commitMessage: "chore: bump package versions" },
   pr: { rejectClaudeBranding: false },
+  images: { targets: {} },
 };
 
 function object(value: unknown, name: string): Record<string, unknown> {
@@ -57,6 +60,7 @@ export function parseConfig(source: string): AgentToolConfig {
     keys(settings, Object.keys(result[section]), section);
     Object.assign(result[section], settings);
   }
+  if (input.images !== undefined) result.images = parseImages(input.images);
   const invalid = (setting: string): never => { throw new Error(`Invalid config setting '${setting}'.`); };
   if (typeof result.subject.conventional !== "boolean") invalid("subject.conventional");
   if (!Number.isSafeInteger(result.subject.maxLength) || result.subject.maxLength < 1) invalid("subject.maxLength");
