@@ -23,9 +23,10 @@ unchanged, must be plain static SVG:
   to paths, since rendering it would depend on installed fonts), `<style>`,
   scripts, animation, links, or elements from other namespaces, such as editor
   metadata (export plain SVG);
-- no processing instructions other than the XML declaration, no `on*` event
-  handler or `style` attributes (use presentation attributes such as `fill`),
-  no CSS escapes, and no CSS image functions such as `image-set()`;
+- no processing instructions other than the XML declaration, no DOCTYPE
+  other than the W3C SVG DTD, no `on*` event handler, `style`, or `xml:base`
+  attributes (use presentation attributes such as `fill`), no CSS escapes, and
+  no CSS image functions such as `image-set()`;
 - no external references: `href` and `url()` must point at an element in the
   file, or `href` at a `data:` URI in an `<image>` or `<feImage>`.
 

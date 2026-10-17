@@ -62,6 +62,9 @@ function tokenize(name: string, text: string): Token[] {
     const match = TOKEN.exec(text);
     if (!match) throw new Error(`Image source '${name}' is not well-formed SVG near offset ${TOKEN.lastIndex}.`);
     if (match[1] !== undefined) throw new Error(`Image source '${name}' declares a DOCTYPE subset; remove it.`);
+    if (match[0].startsWith("<!DOCTYPE") && /["']/.test(match[0]) && !/^<!DOCTYPE\s+svg\s+PUBLIC\s+"[^"]*"\s+"http:\/\/www\.w3\.org\/[^"]*"\s*>$/.test(match[0])) {
+      throw new Error(`Image source '${name}' names a DOCTYPE other than the W3C SVG DTD; remove it.`);
+    }
     if (match[2] !== undefined) tokens.push({ kind: "end", name: match[2] });
     else if (match[3] !== undefined) {
       const attributes: [string, string][] = [];
@@ -83,6 +86,7 @@ function checkAttributes(name: string, element: string, attributes: [string, str
   for (const [key, value] of attributes) {
     if (/^on/i.test(local(key))) throw new Error(`Image source '${name}' has a '${key}' event handler.`);
     if (local(key) === "style") throw new Error(`Image source '${name}' has a style attribute; use presentation attributes.`);
+    if (local(key) === "base") throw new Error(`Image source '${name}' sets '${key}', which could resolve references elsewhere.`);
     // CSS image functions can fetch without url(), for example through a mask presentation attribute.
     if (key !== "id" && /(?:image-set|image|cross-fade|element|src)\s*\(/i.test(value)) throw new Error(`Image source '${name}' uses a CSS image function in '${value.slice(0, 40)}'.`);
     const external = local(key) === "href"

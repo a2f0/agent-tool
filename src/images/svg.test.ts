@@ -34,6 +34,7 @@ describe("brand source parsing", () => {
       ['<image href="&#106;avascript:alert(1)"/>', "references 'javascript:alert(1)'"],
       ["<rect fill='u\\72 l(https://example.com/g.svg#g)'/>", "CSS escape"],
       ['<rect style="fill:red"/>', "style attribute; use presentation attributes"],
+      ['<image xml:base="https://example.com/image.svg" href="#x"/>', "sets 'xml:base'"],
       ["<rect mask=\"image-set('https://example.com/x.png' 1x)\"/>", "CSS image function"],
       ["<rect mask=\"-webkit-image-set('https://example.com/x.png' 1x)\"/>", "CSS image function"],
       ['<rect fill="cross-fade(red, blue)"/>', "CSS image function"],
@@ -54,6 +55,9 @@ describe("brand source parsing", () => {
     expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 0 1"/>`)).toThrow("invalid viewBox");
     expect(() => parseSvg("logo", `<!DOCTYPE svg [<!ENTITY x "y">]><svg ${NS} viewBox="0 0 1 1"/>`)).toThrow("DOCTYPE subset");
     expect(() => parseSvg("logo", `<?xml-stylesheet href="https://example.com/a.css"?><svg ${NS} viewBox="0 0 1 1"/>`)).toThrow("<svg> root");
+    expect(() => parseSvg("logo", `<!DOCTYPE svg SYSTEM "https://example.com/x.dtd"><svg ${NS} viewBox="0 0 1 1"/>`)).toThrow("W3C SVG DTD");
+    expect(() => parseSvg("logo", `<svg ${NS} xml:base="https://example.com/" viewBox="0 0 1 1"/>`)).toThrow("sets 'xml:base'");
+    expect(parseSvg("logo", `<!DOCTYPE svg><svg ${NS} viewBox="0 0 1 1"/>`).viewBox).toEqual([0, 0, 1, 1]);
     expect(parseSvg("logo", `<?xml version="1.0"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg ${NS} xmlns:s="${"http://www.w3.org/2000/svg"}" viewBox="0 0 1 1"><s:rect/><title>Logo</title></svg>`).tokens).toHaveLength(4);
     expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"/><svg ${NS}/>`)).toThrow("content after");
     expect(() => parseSvg("logo", `text<svg ${NS} viewBox="0 0 1 1"/>`)).toThrow("<svg> root");
