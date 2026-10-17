@@ -1,6 +1,6 @@
 import { initWasm, Resvg } from "@resvg/resvg-wasm";
 import wasm from "@resvg/resvg-wasm/index_bg.wasm" with { type: "file" };
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { composeSvg, type Canvas } from "./compose";
 import { expand, format, SOURCE_DIRECTORY, verbatim, type ImageOutput, type ImagesConfig, type ImageTarget } from "./config";
@@ -82,6 +82,17 @@ function select(config: ImagesConfig, names: string[], writable: boolean): [stri
   return selected.map(name => [name, config.targets[name]!]);
 }
 
+/** Refuses symbolic links below the base, so a committed link cannot redirect a write outside it. */
+function assertNoLinks(base: string, destination: string): void {
+  let current = base;
+  for (const part of path.relative(base, destination).split(path.sep)) {
+    current = path.join(current, part);
+    let link: boolean;
+    try { link = lstatSync(current).isSymbolicLink(); } catch { return; }
+    if (link) throw new Error(`Refusing to write through symbolic link ${path.relative(base, current)}.`);
+  }
+}
+
 function directory(name: string, target: ImageTarget, out: string | undefined): string {
   const dir = out ?? target.dir;
   if (dir === null) throw new Error(`Image target '${name}' has no dir; pass --out <directory>.`);
@@ -114,7 +125,10 @@ export async function buildImages(root: string, config: ImagesConfig, names: str
     for (const output of target.outputs) {
       for (const file of expand(output)) {
         const content = await render(output, { width: file.width, height: file.height, factor: file.factor }, sources);
-        files.push({ relative: path.join(dir, file.path), destination: path.resolve(root, dir, file.path), bytes: typeof content === "string" ? Buffer.from(content) : content });
+        const destination = path.resolve(root, dir, file.path);
+        // An explicit --out is the caller's choice; configured directories are checked from the repository root.
+        assertNoLinks(out === undefined ? root : path.resolve(root, out), destination);
+        files.push({ relative: path.join(dir, file.path), destination, bytes: typeof content === "string" ? Buffer.from(content) : content });
       }
     }
     rendered.push({ name, dir, files });

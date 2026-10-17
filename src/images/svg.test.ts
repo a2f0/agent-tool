@@ -28,6 +28,9 @@ describe("brand source parsing", () => {
     expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"><g/>`)).toThrow("never closes");
     expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1" onload="alert(1)"/>`)).toThrow("'onload' event handler");
     expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"><rect onClick="alert(1)"/></svg>`)).toThrow("'onClick' event handler");
+    expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"><s:script xmlns:s="http://www.w3.org/2000/svg">alert(1)</s:script></svg>`)).toThrow("<script>");
+    expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"><rect s:onclick="alert(1)"/></svg>`)).toThrow("'s:onclick' event handler");
+    expect(() => parseSvg("logo", `<svg ${NS} xmlns:x="http://www.w3.org/1999/xlink" viewBox="0 0 1 1"><s:image x:href="https://example.com/a.png"/></svg>`)).toThrow("references 'https://example.com/a.png'");
     expect(() => parseSvg("logo", `<svg viewBox="0 0 1 1"/>`)).toThrow("must declare xmlns");
     expect(() => parseSvg("logo", `<svg ${NS}/>`)).toThrow("needs a viewBox");
     expect(() => parseSvg("logo", `<svg ${NS} viewBox="0 0 0 1"/>`)).toThrow("invalid viewBox");
@@ -44,4 +47,5 @@ test("inlines each copy with prefixed ids and references, without hidden element
     '<defs><linearGradient id="l1-g"/></defs><rect fill="url(#l1-g)" style="fill: url(#l1-g)" title="say &quot;hi&quot;"/><use xlink:href="#l1-g"/>',
   );
   expect(inlineSvg(source, "l2-", new Set())).toContain('<g id="l2-unlit"><g><rect/></g><rect/></g>');
+  expect(inlineSvg(parseSvg("logo", `<svg ${NS} viewBox="0 0 1 1"><g id="a"/><use x:href="#a"/></svg>`), "p-", new Set())).toBe('<g id="p-a"/><use x:href="#p-a"/>');
 });

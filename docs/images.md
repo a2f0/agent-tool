@@ -70,7 +70,9 @@ agent-tool --repo ../.. images build favicons --out packages/site/public
 Run it from the repository root, or pass `--repo` from a package directory;
 `--out` is relative to the repository root. `build` prints a JSON receipt of
 written and unchanged files. Files whose bytes already match are not touched,
-so Xcode and Gradle see no change, and others are replaced atomically. Output
+so Xcode and Gradle see no change, and others are replaced atomically. Writes
+refuse symbolic links between the repository root (or `--out`) and each file,
+and nothing is written unless every file renders. Output
 is deterministic: PNGs carry no timestamps, and the bundled renderer loads no
 system fonts.
 

@@ -79,6 +79,8 @@ describe("image targets in agent-tool.json", () => {
       [target({ path: "a.xml", colors: { a: { mean: "logo" } } }), "Unknown"],
       [target({ path: "a.xml", colors: { a: "#fff" }, layers: icon }), "cannot set 'layers'"],
       [target({ path: "a.png", size: 1, layers: icon }, { path: "a.png", size: 2, layers: icon }), "writes a.png more than once"],
+      [target({ path: "{variant}/a.png", size: 1, variants: { "..": 1 }, layers: icon }), "writes '../a.png', which is not a path inside"],
+      [target({ path: "{variant}/a.png", size: 1, variants: { "": 1 }, layers: icon }), "writes '/a.png', which is not a path inside"],
     ] as const) expect(() => parseImages(images)).toThrow(message);
   });
 });

@@ -177,6 +177,8 @@ export function parseImages(value: unknown): ImagesConfig {
     if (!Array.isArray(target.outputs) || !target.outputs.length) fail(`${setting}.outputs`);
     const outputs = target.outputs.map((output, index) => parseOutput(output, `${setting}.outputs[${index}]`));
     const paths = outputs.flatMap(output => expand(output).map(file => file.path));
+    const escaping = paths.find(path => !relativePath(path));
+    if (escaping !== undefined) throw new Error(`${setting} writes '${escaping}', which is not a path inside its directory.`);
     const repeated = paths.find((path, index) => paths.indexOf(path) !== index);
     if (repeated) throw new Error(`${setting} writes ${repeated} more than once.`);
     result.targets[name] = { dir: target.dir ?? null, outputs };

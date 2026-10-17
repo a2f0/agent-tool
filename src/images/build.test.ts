@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { main } from "../cli";
@@ -153,6 +153,23 @@ test("rewrites references in root attributes and tints cover layers", async () =
     expect(pixel(decodePng(readFileSync(path.join(repo, "out/gradient.png"))), 5, 5)).toEqual([0, 0, 255, 255]);
     expect(pixel(decodePng(readFileSync(path.join(repo, "out/tinted.png"))), 5, 5)).toEqual([255, 0, 0, 255]);
   } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("refuses to write through symbolic links in configured directories", async () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "agent-tool-images-link-"));
+  const outside = mkdtempSync(path.join(tmpdir(), "agent-tool-images-outside-"));
+  try {
+    mkdirSync(path.join(repo, "assets/brand"), { recursive: true });
+    writeFileSync(path.join(repo, "assets/brand/logo.svg"), sources.logo);
+    mkdirSync(path.join(repo, "packages"));
+    symlinkSync(outside, path.join(repo, "packages/public"));
+    const linked = parseImages({ targets: { a: { dir: "packages/public/icons", outputs: [{ path: "icon.png", size: 8, layers: [{ source: "logo" }] }] } } });
+    await expect(buildImages(repo, linked, [])).rejects.toThrow("Refusing to write through symbolic link packages/public.");
+    expect(existsSync(path.join(outside, "icons"))).toBe(false);
+    // An explicit --out names the caller's destination, link or not.
+    expect((await buildImages(repo, linked, ["a"], "packages/public")).targets[0]!.written).toEqual(["packages/public/icon.png"]);
+    expect(existsSync(path.join(outside, "icon.png"))).toBe(true);
+  } finally { rmSync(repo, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); }
 });
 
 test("checks sources it copies unchanged", async () => {

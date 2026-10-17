@@ -51,8 +51,11 @@ function tokenize(name: string, text: string): Token[] {
   return tokens;
 }
 
+/** The name without its namespace prefix: any prefix may be bound to the SVG or XLink namespace. */
+function local(name: string): string { return name.slice(name.indexOf(":") + 1); }
+
 function refuseScripting(name: string, attributes: [string, string][]): void {
-  const handler = attributes.find(([key]) => /^on/i.test(key));
+  const handler = attributes.find(([key]) => /^on/i.test(local(key)));
   if (handler) throw new Error(`Image source '${name}' has a '${handler[0]}' event handler.`);
 }
 
@@ -91,11 +94,11 @@ export function parseSvg(name: string, text: string): SvgSource {
         if (stack.length === 0) { if (token.name !== "svg") throw new Error(`Image source '${name}' closes </${token.name}> without opening it.`); break; }
         if (stack.pop() !== token.name) throw new Error(`Image source '${name}' closes </${token.name}> out of order.`);
       } else if (token.kind === "start") {
-        if (Object.hasOwn(REFUSED, token.name)) throw new Error(`Image source '${name}' contains ${REFUSED[token.name]}.`);
+        if (Object.hasOwn(REFUSED, local(token.name))) throw new Error(`Image source '${name}' contains ${REFUSED[local(token.name)]}.`);
         refuseScripting(name, token.attributes);
         for (const [key, value] of token.attributes) {
           if (key === "id") { if (ids.has(value)) throw new Error(`Image source '${name}' repeats id '${value}'.`); ids.add(value); }
-          if ((key === "href" || key === "xlink:href") && !value.startsWith("#") && !(token.name === "image" && value.startsWith("data:"))) {
+          if (local(key) === "href" && !value.startsWith("#") && !(local(token.name) === "image" && value.startsWith("data:"))) {
             throw new Error(`Image source '${name}' references '${value.slice(0, 40)}'; embed it or reference an element in the file.`);
           }
         }
@@ -135,7 +138,7 @@ export function inlineSvg(source: SvgSource, prefix: string, hide: ReadonlySet<s
       markup += `<${token.name}`;
       for (const [key, value] of token.attributes) {
         if (key === "id") markup += attribute(key, `${prefix}${value}`);
-        else if ((key === "href" || key === "xlink:href") && value.startsWith("#")) markup += attribute(key, `#${prefix}${value.slice(1)}`);
+        else if (local(key) === "href" && value.startsWith("#")) markup += attribute(key, `#${prefix}${value.slice(1)}`);
         else markup += attribute(key, rename(value));
       }
       markup += token.selfClosing ? "/>" : ">";
