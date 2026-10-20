@@ -9,6 +9,10 @@ Use the canonical skills in `skills/` to ship this package. Run the source CLI
 with `bun src/index.ts`; invoke it directly when passing an empty merge subject.
 Project title and required CI policy is in `agent-tool.json`.
 
+Use Bun from `.mise.toml` for development. Agent shells should put the matching
+`~/.local/share/mise/installs/bun/<version>/bin` first on `PATH` rather than
+running `mise trust`.
+
 Follow [dependency upgrade guidance](docs/dependency-upgrades.md) for maintenance
 records: keep current constraints in dedicated docs and run evidence in the PR;
 keep README and this file concise.

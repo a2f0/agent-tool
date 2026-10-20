@@ -1,6 +1,7 @@
 {
   "name": "@a2f0/agent-tool",
-  "version": "0.1.15",
+  "version": "0.1.16",
+  "packageManager": "bun@1.4.3",
   "type": "module",
   "description": "Portable cross-agent review, PR workflows, and shared skills",
   "license": "UNLICENSED",
