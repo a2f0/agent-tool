@@ -371,12 +371,15 @@ can resolve fork PR bases; `pr open` supports same-repository branches.
 
 ## Development
 
-Development and all build/release workflows use Bun 1.4.3 and TypeScript 7.0.2.
+Development and build/release workflows use the Bun version pinned in
+`.mise.toml` and TypeScript 7.0.2. [mise](https://mise.jdx.dev/) installs the
+same Bun version locally and in CI.
 The compiler is used through `tsc`; this repository does not depend on its removed
 JavaScript compiler API. Runtime consumers still support Bun 1.3.11 or newer;
 CI also runs the installed-package smoke and plan-guard tests on that minimum.
 
 ```sh
+mise install
 bun install --frozen-lockfile
 bun run typecheck
 bun test

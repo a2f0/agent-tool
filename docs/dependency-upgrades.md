@@ -1,5 +1,10 @@
 # Dependency upgrades
 
+Keep the development Bun version in `.mise.toml` aligned with `package.json`'s
+`packageManager`. CI installs that pin with mise; its separate minimum-runtime
+job continues to check the version in `engines.bun`. Node/npm setup remains
+explicit in the trusted-publishing workflow.
+
 Invoke `update-dependencies` in Claude Code, Codex, or OpenCode to inventory and
 upgrade package dependencies, runtimes, mise tools, Actions, native toolchains,
 Ansible, Terraform providers/modules, and other repository-owned pins. It reads
