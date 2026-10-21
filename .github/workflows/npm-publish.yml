@@ -35,13 +35,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
-          version: 2026.10.13
+          version: 2026.10.17
           install_args: bun
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.22.0
+          node-version: 24.22.1
           package-manager-cache: false
       # Publish only a version newer than npm's latest, so merges that keep the
       # version, re-runs, and out-of-order runs succeed without publishing.
@@ -70,11 +70,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Trusted publishing needs npm 11.5.1 or later; Node 24.22.0 ships 11.19.1.
+      # Trusted publishing needs npm 11.5.1 or later; Node 24.22.1 ships 11.19.1.
       # No registry-url: its .npmrc would point npm at an empty NODE_AUTH_TOKEN.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.22.0
+          node-version: 24.22.1
           package-manager-cache: false
       # The source package needs no install or build, and scripts never run.
       - run: npm publish --ignore-scripts
