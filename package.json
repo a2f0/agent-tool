@@ -28,7 +28,7 @@
     "start": "bun src/index.ts",
     "test": "bun test src scripts",
     "typecheck": "tsc --noEmit",
-    "generate": "bun scripts/bundle-skills.ts",
+    "generate": "bun scripts/build/bundle-skills.ts",
     "build": "bun run generate && bun build --compile --minify src/index.ts --outfile dist/agent-tool"
   },
   "devDependencies": {

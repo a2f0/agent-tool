@@ -1,6 +1,4 @@
 import { spawnSync } from "node:child_process";
-import { appendFileSync } from "node:fs";
-import metadata from "../package.json";
 
 const registry = "https://registry.npmjs.org";
 
@@ -53,23 +51,15 @@ export function parseRegistryState(json: string): RegistryState {
   return { latest, versions: list };
 }
 
-function readRegistryState(name: string): RegistryState {
+export function readRegistryState(name: string): RegistryState {
   // A scope registry overrides --registry, so pin the scope as well.
   const result = spawnSync("npm", [
     "view", name, "versions", "dist-tags", "--json",
     "--registry", registry, `--${name.split("/")[0]}:registry=${registry}`,
-  ], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+  ], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], timeout: 60_000 });
   if (result.error) throw result.error;
   // A failed view, including a missing package, still prints a JSON error.
   const state = result.stdout.trim() ? parseRegistryState(result.stdout) : null;
   if (result.status !== 0 || !state) throw new Error(`npm view ${name} exited with ${result.status}`);
   return state;
-}
-
-// Prints the decision and, in GitHub Actions, sets the step's publish output.
-if (import.meta.main) {
-  const { name, version } = metadata;
-  const decision = decidePublish(version, readRegistryState(name));
-  console.log(decision.publish ? `Publishing ${name}: ${decision.reason}.` : `::notice::Not publishing ${name}: ${decision.reason}.`);
-  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `publish=${decision.publish}\n`);
 }

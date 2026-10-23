@@ -6,8 +6,10 @@ import { createLog } from "./logFile";
 
 const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
+export interface RunReceipt { status: string; label?: string; exitCode: number; signal: string | null; durationMs: number; outputBytes: number; log: string }
+
 /** Run directly into a private file: child output never accumulates in memory. */
-export async function runCommand(args: string[]): Promise<number> {
+export async function runCommand(args: string[], record?: (receipt: RunReceipt) => void): Promise<number> {
   const limits = { ...DEFAULT_LIMITS };
   let label: string | undefined;
   while (args[0] !== "--" && args.length) {
@@ -77,7 +79,9 @@ export async function runCommand(args: string[]): Promise<number> {
       forward("SIGKILL");
     }
     const exitCode = signal ? 128 + (constants.signals[signal] ?? 0) : status ?? 1;
-    writeSync(1, `${JSON.stringify({ status: exitCode === 0 ? "passed" : "failed", ...(label ? { label } : {}), exitCode, signal, durationMs: Math.round(performance.now() - started), outputBytes: fstatSync(fd).size, log })}\n`);
+    const receipt: RunReceipt = { status: exitCode === 0 ? "passed" : "failed", ...(label ? { label } : {}), exitCode, signal, durationMs: Math.round(performance.now() - started), outputBytes: fstatSync(fd).size, log };
+    record?.(receipt);
+    writeSync(1, `${JSON.stringify(receipt)}\n`);
     if (exitCode !== 0) printLogTail(log, limits, 2);
   } finally {
     if (timer) clearTimeout(timer);

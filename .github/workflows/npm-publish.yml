@@ -46,11 +46,11 @@ jobs:
       # Publish only a version newer than npm's latest, so merges that keep the
       # version, re-runs, and out-of-order runs succeed without publishing.
       - id: decide
-        run: bun scripts/npm-publish-decision.ts
+        run: bun src/index.ts release plan package.json --github-output
       - if: steps.decide.outputs.publish == 'true'
         run: bun install --frozen-lockfile
       - if: steps.decide.outputs.publish == 'true'
-        run: bun run typecheck && bun test && bun scripts/smoke-package.ts
+        run: bun run typecheck && bun test && bun scripts/testing/smoke-package.ts
       # The package ships src/skills/bundled.ts, so it must match skills/.
       - if: steps.decide.outputs.publish == 'true'
         run: bun run generate && git diff --exit-code -- src/skills/bundled.ts

@@ -1,15 +1,16 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseImages, type ImagesConfig } from "./images/config";
+import { WORKFLOW_DEFAULTS, validateWorkflowConfig, type WorkflowConfig } from "./workflows/config";
 
 export interface RequiredCheck {
   name: string;
   workflow?: string;
 }
 
-export interface AgentToolConfig {
+export interface AgentToolConfig extends WorkflowConfig {
   schemaVersion: 1;
-  subject: { conventional: boolean; maxLength: number; types: string[] };
+  subject: { conventional: boolean; maxLength: number; types: string[]; lowercaseInitial: boolean; rejectTerminalPeriod: boolean; ignoreGenerated: boolean };
   merge: { requireChecks: boolean; requiredChecks: RequiredCheck[]; requireStrictBaseFreshness: boolean };
   review: { claudeModel: string | null; codexModel: string | null; opencodeModel: string; opencodeVariants: Record<string, string>; timeoutMs: number };
   versions: { packages: string[] | null; bundles: string[]; lockfile: "bun.lock" | null; validate: string[][]; commitMessage: string };
@@ -18,11 +19,15 @@ export interface AgentToolConfig {
 }
 
 export const DEFAULT_CONFIG: AgentToolConfig = {
+  ...WORKFLOW_DEFAULTS,
   schemaVersion: 1,
   subject: {
     conventional: true,
     maxLength: 72,
     types: ["feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert"],
+    lowercaseInitial: false,
+    rejectTerminalPeriod: false,
+    ignoreGenerated: false,
   },
   merge: { requireChecks: true, requiredChecks: [], requireStrictBaseFreshness: false },
   review: { claudeModel: null, codexModel: null, opencodeModel: "deepseek/deepseek-v4-pro", opencodeVariants: { low: "low", medium: "medium", high: "high", xhigh: "max", max: "max" }, timeoutMs: 600_000 },
@@ -54,7 +59,7 @@ export function parseConfig(source: string): AgentToolConfig {
   keys(input, Object.keys(DEFAULT_CONFIG), "config");
   if (input.schemaVersion !== 1) throw new Error("Unsupported config schemaVersion; expected 1.");
   const result = structuredClone(DEFAULT_CONFIG);
-  for (const section of ["subject", "merge", "review", "versions", "pr"] as const) {
+  for (const section of ["subject", "merge", "review", "versions", "pr", "branch", "commits", "hooks", "binaries"] as const) {
     if (input[section] === undefined) continue;
     const settings = object(input[section], section);
     keys(settings, Object.keys(result[section]), section);
@@ -63,6 +68,7 @@ export function parseConfig(source: string): AgentToolConfig {
   if (input.images !== undefined) result.images = parseImages(input.images);
   const invalid = (setting: string): never => { throw new Error(`Invalid config setting '${setting}'.`); };
   if (typeof result.subject.conventional !== "boolean") invalid("subject.conventional");
+  for (const key of ["lowercaseInitial", "rejectTerminalPeriod", "ignoreGenerated"] as const) if (typeof result.subject[key] !== "boolean") invalid(`subject.${key}`);
   if (!Number.isSafeInteger(result.subject.maxLength) || result.subject.maxLength < 1) invalid("subject.maxLength");
   if (!strings(result.subject.types) || result.subject.types.length === 0 || result.subject.types.some(type => !/^[a-z]+$/.test(type))) invalid("subject.types");
   if (typeof result.merge.requireChecks !== "boolean") invalid("merge.requireChecks");
@@ -89,6 +95,7 @@ export function parseConfig(source: string): AgentToolConfig {
   if (!Array.isArray(result.versions.validate) || result.versions.validate.some(command => !strings(command) || command.length === 0 || !/^[\w.+-]+$/.test(command[0]!))) invalid("versions.validate");
   if (typeof result.versions.commitMessage !== "string" || !result.versions.commitMessage.trim() || /[\r\n]/.test(result.versions.commitMessage)) invalid("versions.commitMessage");
   if (typeof result.pr.rejectClaudeBranding !== "boolean") invalid("pr.rejectClaudeBranding");
+  validateWorkflowConfig(result);
   return result;
 }
 

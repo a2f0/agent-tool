@@ -14,11 +14,11 @@ jobs:
           install_args: bun
       - run: bun install --frozen-lockfile
       - run: bun run typecheck && bun test
-      - run: bun scripts/release.ts "$GITHUB_REPOSITORY"
+      - run: bun scripts/release/build.ts "$GITHUB_REPOSITORY"
       - run: |
           version=$(bun -p 'require("./package.json").version')
-          scripts/package-deb.sh "dist/agent-tool-$version-linux-x64/bin/agent-tool" amd64
-          scripts/package-deb.sh "dist/agent-tool-$version-linux-arm64/bin/agent-tool" arm64
+          scripts/release/package-deb.sh "dist/agent-tool-$version-linux-x64/bin/agent-tool" amd64
+          scripts/release/package-deb.sh "dist/agent-tool-$version-linux-arm64/bin/agent-tool" arm64
           cd dist
           sha256sum *.tar.gz *.deb > SHA256SUMS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -13,13 +13,17 @@ Use Bun from `.mise.toml` for development. Agent shells should put the matching
 `~/.local/share/mise/installs/bun/<version>/bin` first on `PATH` rather than
 running `mise trust`.
 
+Read [development guidance](docs/development.md) for layout, setup, validation,
+and release procedures. Shared CLI contracts are in [workflows](docs/workflows.md)
+and the [reference](docs/reference.md).
+
 Follow [dependency upgrade guidance](docs/dependency-upgrades.md) for maintenance
 records: keep current constraints in dedicated docs and run evidence in the PR;
 keep README and this file concise.
 
 Validate changes with `bun run typecheck`, `bun test`,
-`bun scripts/smoke-package.ts`, `bun run build`, and
-`bun scripts/smoke.ts dist/agent-tool`. The build regenerates embedded skills
+`bun scripts/testing/smoke-package.ts`, `bun run build`, and
+`bun scripts/testing/smoke.ts dist/agent-tool`. The build regenerates embedded skills
 from `skills/*/SKILL.md`; commit `src/skills/bundled.ts` with skill changes.
 CI also verifies Linux Debian packaging. Preserve the review snapshot,
 read-only tool permissions, pinned-base checks, and exact-head merge behavior.

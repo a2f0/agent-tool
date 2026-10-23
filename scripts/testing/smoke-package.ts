@@ -3,9 +3,9 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import metadata from "../package.json";
+import metadata from "../../package.json";
 
-const root = path.resolve(import.meta.dir, "..");
+const root = path.resolve(import.meta.dir, "../..");
 const temporary = mkdtempSync(path.join(tmpdir(), "agent-tool-package-"));
 const consumer = path.join(temporary, "consumer");
 const archive = path.join(temporary, "agent-tool.tgz");

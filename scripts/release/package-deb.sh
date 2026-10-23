@@ -2,7 +2,7 @@
 set -eu
 umask 022
 if [ "$#" -ne 2 ]; then
-  echo "Usage: scripts/package-deb.sh <linux-binary> <amd64|arm64>" >&2
+  echo "Usage: scripts/release/package-deb.sh <linux-binary> <amd64|arm64>" >&2
   exit 1
 fi
 case "$2" in amd64|arm64) ;; *) echo "Unsupported Debian architecture" >&2; exit 1 ;; esac
