@@ -92,7 +92,7 @@ export async function runCommand(args: string[], record?: (receipt: RunReceipt) 
   if (signal) {
     if (interrupted || options.reraiseChildSignal !== false) {
       process.kill(process.pid, signal);
-      // Let the runtime deliver its signal before main's explicit process.exit
+      // Let the runtime deliver its signal before main sets process.exitCode
       // can turn signal termination into an ordinary numeric exit under load.
       await new Promise(resolve => setTimeout(resolve, 100));
     }

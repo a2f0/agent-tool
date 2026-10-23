@@ -386,6 +386,7 @@ and Debian packaging. Artifact workflows do not create a hosted tap or APT repo.
 ## Further reading
 
 - [Design](design.md): component boundaries and implementation choices.
+- [Shared workflows](workflows.md): branch, hook, CI, and shipping contracts.
 - [Images](images.md): brand image sources, targets, and output settings.
 - [Development](development.md): reproducible validation and release procedures.
 - [Extraction record](extraction.md): the projects this tool was extracted

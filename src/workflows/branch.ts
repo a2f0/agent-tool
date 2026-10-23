@@ -69,7 +69,7 @@ export function branchCommand(args: string[]): number {
   const expected = oid(args[0]!);
   const branch = currentBranch();
   const errors = branchErrors(branch, config);
-  assert(!errors.length && !config.branch.exempt.includes(branch), errors.join(" ") || "Push requires a feature branch.");
+  assert(!errors.length && !config.branch.exempt.includes(branch) && branch !== repository().defaultBranchRef.name, errors.join(" ") || "Push requires a feature branch.");
   clean();
   assert(head() === expected, "HEAD differs from the reviewed commit.");
   const url = remoteUrl(remote, true);

@@ -19,7 +19,8 @@ agent-tool branch push <reviewed-head-oid> --remote origin
 `check` accepts multiple names and always checks native Git ref validity. Naming
 policy is opt-in: adding a `branch` section enables it unless `enforce: false` is
 explicit. With no section only Git ref rules apply, preserving existing branch
-conventions. Set `enforce: true` when enabling policy in a full `init` config. With no names it checks the attached branch; detached HEAD is an error,
+conventions. Set `enforce: true` when enabling policy in a full `init` config.
+With no names it checks the attached branch; detached HEAD is an error,
 so CI supplies the actual PR or destination branch without a checkout mutation.
 `--pre-push` reads Git's four-field hook stdin, validates every non-deleted
 `refs/heads/` destination, and skips tag refs. Preserve stdin in the hook if other
@@ -280,6 +281,9 @@ health checks, trusted-publishing credentials, and release artifacts remain loca
   ]
 }
 ```
+
+Relative run-group plan paths are resolved from the repository root, including
+when invoked from a subdirectory; child steps also run from that root.
 
 ```sh
 agent-tool run-group scripts/testing/verify.json

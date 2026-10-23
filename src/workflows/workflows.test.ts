@@ -68,8 +68,9 @@ test("branch creation pins remote base and avoids local upstream settings", () =
 });
 test("push runs normal hooks and detects hook-created commits", () => {
   const f = fixture(); const remote = path.join(f.root, "remote.git"); f.git(["init", "--bare", remote]); f.git(["remote", "add", "origin", remote]); writeFileSync(path.join(f.root, ".git/info/exclude"), "remote.git/\n"); f.git(["switch", "-c", "chore/push"]);
+  const bin = path.join(f.root, ".git/bin"); mkdirSync(bin); writeFileSync(path.join(bin, "gh"), `#!${process.execPath}\nconsole.log(JSON.stringify({nameWithOwner:'o/r',defaultBranchRef:{name:'main'}}));\n`); chmodSync(path.join(bin, "gh"), 0o755);
   const start = f.git(["rev-parse", "HEAD"]); writeFileSync(path.join(f.root, ".git/hooks/pre-push"), "#!/bin/sh\ngit -c core.hooksPath=/dev/null commit --allow-empty -m 'chore: changed by hook'\n"); chmodSync(path.join(f.root, ".git/hooks/pre-push"), 0o755);
-  const result = f.run(["branch", "push", start]); expect(result.status).toBe(1); expect(result.stderr).toContain("Push changed local or remote HEAD"); expect(f.git(["rev-parse", "HEAD"])).not.toBe(start);
+  const result = f.run(["branch", "push", start], { PATH: bin + path.delimiter + process.env.PATH }); expect(result.status).toBe(1); expect(result.stderr).toContain("Push changed local or remote HEAD"); expect(f.git(["rev-parse", "HEAD"])).not.toBe(start);
 });
 test("commit checking rejects unsigned commits, trailers and invalid revisions", () => {
   const f = fixture({ commits: { signatures: "present" } }); expect(f.run(["commits", "check", "--range", "HEAD"]).status).toBe(1); expect(f.run(["commits", "check", "--range", "missing"]).status).toBe(1); expect(f.run(["commits", "check", "--range", "HEAD", "--exclude", "HEAD"]).status).toBe(0);
@@ -111,20 +112,30 @@ function githubFixture() {
   const state = { commit, remote, status: "OPEN", checks: [{ name: "test", state: "SUCCESS", workflow: "CI" }], apiHead: commit, liveBase: commit };
   const save = (override: Record<string, unknown> = {}) => writeFileSync(stateFile, JSON.stringify({ ...state, ...override })); save();
   const script = `#!${process.execPath}
-import {readFileSync,appendFileSync} from 'node:fs';
+import {readFileSync,appendFileSync,writeFileSync,existsSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 const a=process.argv.slice(2), s=JSON.parse(readFileSync(process.env.API_STATE,'utf8'));
+appendFileSync(process.env.API_STATE+'.calls',JSON.stringify(a)+'\\n');
 const fields=a[a.indexOf('--json')+1], say=(value)=>console.log(JSON.stringify(value));
 const pr={number:1,state:s.status,title:'chore: workflow',url:'https://github.com/o/r/pull/1',headRefName:'chore/workflow',headRefOid:s.apiHead,baseRefName:'main',baseRefOid:s.liveBase,isDraft:false,mergeable:'MERGEABLE',mergeStateStatus:'CLEAN',isCrossRepository:false,mergeCommit:{oid:s.commit}};
-if(a[0]==='repo')say({nameWithOwner:'o/r',defaultBranchRef:{name:'main'},url:'file://'+s.remote,sshUrl:'file://'+s.remote});
+if(a[0]==='repo')say({nameWithOwner:'o/r',defaultBranchRef:{name:s.defaultBranch??'main'},url:'file://'+s.remote,sshUrl:'file://'+s.remote});
 else if(a[0]==='config')console.log('https');
 else if(a[0]==='pr' && a[1]==='checks')say(s.checks);
 else if(a[0]==='pr' && fields==='headRefOid,statusCheckRollup')say({headRefOid:s.apiHead,statusCheckRollup:s.checks});
 else if(a[0]==='pr')say(pr);
+else if(a[0]==='run'){
+ const file=process.env.API_STATE+'.polls', count=existsSync(file)?Number(readFileSync(file,'utf8')):0;writeFileSync(file,String(count+1));
+ say([{databaseId:42,headSha:s.commit,status:count===0?'in_progress':'completed',conclusion:'success',url:'https://example.com/run/42'}]);
+}
+else if(a[0]==='api' && a.some(value=>value.includes('/rules/branches/'))){for(const rule of s.rules??[])say(rule);}
+else if(a[0]==='api' && a.some(value=>value.endsWith('/protection'))){if(s.protection)say(s.protection);else{console.error('HTTP '+(s.protectionStatus??404));process.exit(1);}}
+else if(a[0]==='api' && a.includes('POST')){const body=JSON.parse(readFileSync(0,'utf8'));writeFileSync(process.env.API_STATE+'.reply',JSON.stringify(body));say({id:100,...body});}
+else if(a[0]==='api' && a.some(value=>value.includes('/pulls/comments/')))say({pull_request_url:'https://api.github.com/repos/o/r/pulls/'+(a.some(value=>value.endsWith('/99'))?'2':'1')});
 else if(a[0]==='api' && a.includes('DELETE')){appendFileSync(process.env.API_STATE+'.deleted','yes');execFileSync('git',['--git-dir='+s.remote,'update-ref','-d','refs/heads/chore/workflow']);}
 else if(a[0]==='api' && a[1]==='graphql'){
  const query=a.find(value=>value.startsWith('query='));
- if(query.includes('reviewThreads')){
+ if(query.includes('resolveReviewThread'))say({data:{resolveReviewThread:{thread:{id:'T1',isResolved:true}}}});
+ else if(query.includes('reviewThreads')){
   const comments={nodes:[{id:'C1',databaseId:11,body:'finding',url:'https://example.com',author:{login:'reviewer'}}],pageInfo:{hasNextPage:true,endCursor:'comments-next'}};
   const nodes=a.includes('cursor=threads-next')?[]:[{id:'T1',isResolved:false,isOutdated:false,path:'file',line:1,comments}];
   say({data:{repository:{pullRequest:{reviewThreads:{nodes,pageInfo:{hasNextPage:!!nodes.length,endCursor:nodes.length?'threads-next':null}}}}}});
@@ -134,7 +145,7 @@ else if(a[0]==='api' && a[1]==='graphql'){
 `;
   writeFileSync(path.join(bin, "gh"), script); chmodSync(path.join(bin, "gh"), 0o755);
   const run = (args: string[]) => f.run(args, { PATH: bin + path.delimiter + process.env.PATH, API_STATE: stateFile });
-  return { ...f, run, save, stateFile, commit };
+  return { ...f, run, save, stateFile, commit, bin };
 }
 
 test("CI waiter does not pass no-check races, duplicate pending jobs, or head drift", () => {
@@ -216,4 +227,50 @@ test("commit-msg checks share attribution policy while allowing human coauthors 
   const f = fixture({ commits: { rejectCoauthors: false, rejectClaudeAttribution: true, subjects: true, signatures: "present" } }); const file = path.join(f.root, ".git/COMMIT_EDITMSG");
   writeFileSync(file, "fix: human change\n\nCo-authored-by: Human <human@example.com>\n"); expect(f.run(["commits", "check", "--message-file", file]).status).toBe(0);
   writeFileSync(file, "fix: attributed change\n\nCo-authored-by: Claude <claude@anthropic.com>\n"); expect(f.run(["commits", "check", "--message-file", file]).status).toBe(1);
+});
+
+test("hook paths expand home and root-level policy snapshots can be copied", () => {
+  const f = fixture({ hooks: { files: [{ source: "agent-tool.json", target: "policy.json", executable: false }] } });
+  const normal = f.run(["hooks", "install", "--apply"]); expect(normal.status).toBe(0); expect(readFileSync(path.join(f.root, ".git/hooks/policy.json"), "utf8")).toBe(readFileSync(path.join(f.root, "agent-tool.json"), "utf8"));
+  const home = path.join(f.root, ".git/home"); mkdirSync(home); f.git(["config", "core.hooksPath", "~/managed-hooks"]);
+  const expanded = f.run(["hooks", "install", "--apply"], { HOME: home }); expect(expanded.status).toBe(0); expect(JSON.parse(expanded.stdout).destination).toBe(path.join(realpathSync(home), "managed-hooks")); expect(existsSync(path.join(f.root, "~"))).toBe(false);
+});
+test("branch push refuses a custom default even without naming policy", () => {
+  const f = githubFixture(); f.save({ defaultBranch: "chore/workflow" }); const result = f.run(["branch", "push", f.commit]); expect(result.status).toBe(1); expect(result.stderr).toContain("feature branch");
+});
+test("thread mutations validate PR membership and use the original reply route", () => {
+  const f = githubFixture(); const file = path.join(f.root, ".git/reply.txt"); const body = 'Reply with `literal` $text\nand a newline.\n'; writeFileSync(file, body);
+  expect(f.run(["pr", "threads", "reply", "99", "--body-file", file]).status).toBe(1); expect(existsSync(f.stateFile + ".reply")).toBe(false);
+  const result = f.run(["pr", "threads", "reply", "11", "--body-file", file]); expect(result.status).toBe(0); expect(JSON.parse(readFileSync(f.stateFile + ".reply", "utf8"))).toEqual({ body });
+  const calls = readFileSync(f.stateFile + ".calls", "utf8").trim().split("\n").map(line => JSON.parse(line)); expect(calls).toContainEqual(["api", "--method", "POST", "repos/o/r/pulls/1/comments/11/replies", "--input", "-"]);
+  const resolved = f.run(["pr", "threads", "resolve", "T1"]); expect(resolved.status).toBe(0); expect(JSON.parse(resolved.stdout).resolveReviewThread.thread.isResolved).toBe(true);
+});
+test("policy diagnostics combine classic and effective rules and fail unreadable protection", () => {
+  const f = githubFixture(); f.save({ rules: [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "rules-check" }] } }], protection: { required_status_checks: { contexts: ["classic-check"] } } });
+  let result = f.run(["policy", "check"]); expect(result.status).toBe(1); expect(JSON.parse(result.stdout).missingConfiguredChecks.sort()).toEqual(["classic-check", "rules-check"]);
+  writeFileSync(path.join(f.root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, merge: { requiredChecks: [{ name: "classic-check" }, { name: "rules-check" }] } })); expect(f.run(["policy", "check"]).status).toBe(0);
+  f.save(); result = f.run(["policy", "check"]); expect(result.status).toBe(0); expect(JSON.parse(result.stdout).classicProtection).toBeNull();
+  f.save({ protectionStatus: 403 }); expect(f.run(["policy", "check"]).status).toBe(1);
+});
+test("CI gate CLI parses stdin and policy files and rejects invalid schemas", () => {
+  const f = fixture(); const policy = path.join(f.root, "policy.json"); writeFileSync(policy, JSON.stringify({ required: ["changes"], conditional: [{ job: "native", source: "changes", output: "native" }] }));
+  const run = (needs: unknown) => spawnSync(process.execPath, [cli, "ci", "gate", "-", "--policy", policy], { cwd: f.root, env: f.env, encoding: "utf8", input: JSON.stringify(needs) });
+  expect(run({ changes: { result: "success", outputs: { native: "false" } }, native: { result: "skipped" } }).status).toBe(0); expect(run({ changes: { result: "success", outputs: {} }, native: { result: "skipped" } }).status).toBe(1);
+  for (const bad of [{ unknown: true }, { required: "test" }, { conditional: [{ job: "native", output: "native" }] }]) { writeFileSync(policy, JSON.stringify(bad)); expect(run({ test: { result: "success" } }).status).toBe(1); }
+  expect(f.run(["ci", "gate", "--policy"]).status).toBe(1);
+});
+test("unscoped release plans pin only the global npm registry", () => {
+  const f = fixture(); const bin = path.join(f.root, ".git/bin"); mkdirSync(bin); const npm = path.join(bin, "npm"); writeFileSync(npm, `#!${process.execPath}\nif(process.argv.some(a=>a.startsWith('--@'))||process.argv[process.argv.indexOf('--registry')+1]!=='https://registry.npmjs.org')process.exit(8);console.log(JSON.stringify({versions:'1.0.0','dist-tags':{latest:'1.0.0'}}));\n`); chmodSync(npm, 0o755); writeFileSync(path.join(f.root, "package.json"), JSON.stringify({ name: "unscoped-package", version: "1.0.1" }));
+  const result = f.run(["release", "plan", "package.json"], { PATH: bin + path.delimiter + process.env.PATH }); expect(result.status).toBe(0); expect(JSON.parse(result.stdout).publish).toBe(true);
+});
+test("history reports corrupt receipts without losing valid source-bound runs", () => {
+  const f = fixture(); const folder = path.join(f.root, ".git/agent-tool/runs"); mkdirSync(folder, { recursive: true }); writeFileSync(path.join(folder, "bad.json"), "{bad"); writeFileSync(path.join(folder, "good.json"), JSON.stringify({ startedAt: "2026-01-01T00:00:00Z", before: { headOid: f.git(["rev-parse", "HEAD"]), branch: "main" } }));
+  const result = f.run(["runs", "list"]); expect(result.status).toBe(0); const receipt = JSON.parse(result.stdout); expect(receipt.runs).toHaveLength(1); expect(receipt.skipped[0].file).toBe("bad.json");
+});
+test("release verify CLI polls the selected workflow and commit before verifying npm", () => {
+  const f = githubFixture(); const manifest = { name: "@owner/package", version: "1.2.3" }; const packageDir = path.join(f.root, ".git/package"); mkdirSync(packageDir); writeFileSync(path.join(packageDir, "package.json"), JSON.stringify(manifest)); execFileSync("tar", ["-czf", "package.tgz", "package"], { cwd: path.join(f.root, ".git") });
+  const archive = path.join(f.root, ".git/package.tgz"); const preload = path.join(f.root, ".git/fetch.ts");
+  writeFileSync(preload, `import {readFileSync} from 'node:fs';import {createHash} from 'node:crypto';const archive=readFileSync(${JSON.stringify(archive)});let metadataCalls=0;globalThis.fetch=async(url)=>{if(String(url).endsWith('.tgz'))return new Response(archive);if(metadataCalls++===0)return new Response(null,{status:404});return Response.json({...${JSON.stringify(manifest)},gitHead:${JSON.stringify(f.commit)},dist:{tarball:'https://registry.npmjs.org/package.tgz',integrity:'sha512-'+createHash('sha512').update(archive).digest('base64')}});};`);
+  const result = spawnSync(process.execPath, ["--preload", preload, cli, "release", "verify", manifest.name, manifest.version, f.commit, "--workflow", "Publish fixture", "--timeout", "10", "--interval", "1"], { cwd: f.root, env: { ...f.env, PATH: f.bin + path.delimiter + process.env.PATH, API_STATE: f.stateFile }, encoding: "utf8", timeout: 15000 }); if (result.status !== 0) throw new Error(result.stderr); expect(JSON.parse(result.stdout).ok).toBe(true); expect(Number(readFileSync(f.stateFile + ".polls", "utf8"))).toBe(3);
+  const calls = readFileSync(f.stateFile + ".calls", "utf8").trim().split("\n").map(line => JSON.parse(line)); expect(calls.filter(call => call[0] === "run")).toEqual(Array(3).fill(["run", "list", "-R", "o/r", "--workflow", "Publish fixture", "--commit", f.commit, "--limit", "100", "--json", "databaseId,status,conclusion,headSha,url"]));
 });

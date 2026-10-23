@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { gitEnvironment } from "../git/environment";
 import { readFileSync } from "node:fs";
 import { loadConfig } from "../config";
 import { remoteBranchHead, resolvePr, resolveRepositoryGitUrl } from "../git/prContext";
@@ -105,7 +107,7 @@ function threadsCommand(args: string[]): number {
     assert(body.trim(), "Reply body is empty.");
     const comment = json<{ pull_request_url: string }>(["api", `repos/${identity.repo}/pulls/comments/${args[0]}`]);
     assert(comment.pull_request_url.endsWith(`/repos/${identity.repo}/pulls/${identity.prNumber}`), "Comment belongs to another PR.");
-    output(json(["api", "--method", "POST", `repos/${identity.repo}/pulls/${identity.prNumber}/comments/${args[0]}/replies`, "-f", `body=${body}`])); return 0;
+    output(JSON.parse(execFileSync("gh", ["api", "--method", "POST", `repos/${identity.repo}/pulls/${identity.prNumber}/comments/${args[0]}/replies`, "--input", "-"], { input: JSON.stringify({ body }), encoding: "utf8", env: gitEnvironment(), maxBuffer: 64 * 1024 * 1024 }))); return 0;
   }
   assert(action === "resolve" && args.length === 1, "Usage: pr threads resolve <thread-id>");
   const thread = reviewThreads(identity).find(thread => thread.id === args[0]);

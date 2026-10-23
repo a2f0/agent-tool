@@ -73,5 +73,8 @@ scripts/release/package-deb.sh dist/agent-tool-<version>-linux-x64/bin/agent-too
 
 The manual `Release artifacts` workflow uploads archives, a Homebrew formula,
 and Debian packages as workflow artifacts. There is no hosted Homebrew tap or
-signed APT repository. See the [reference](reference.md#releases) for distribution
-requirements and [dependency maintenance](dependency-upgrades.md) for upgrades.
+signed APT repository. To offer `brew install <owner>/<tap>/agent-tool`, host the
+archives at the formula's URLs and publish `agent-tool.rb` in that tap. Installing
+with `apt install agent-tool` by name requires a signed APT repository; local
+packages can be installed with `sudo apt install ./dist/agent-tool_<version>_amd64.deb`.
+See [dependency maintenance](dependency-upgrades.md) for upgrades.

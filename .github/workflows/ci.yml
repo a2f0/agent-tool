@@ -17,7 +17,8 @@ jobs:
           version: 2026.10.17
           install_args: bun
       - run: bun install --frozen-lockfile
-      - run: bun src/index.ts branch check "${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+      - if: github.ref_type == 'branch'
+        run: bun src/index.ts branch check "${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
       - run: bun run typecheck
       - run: bun test
       - run: bun scripts/testing/smoke-package.ts

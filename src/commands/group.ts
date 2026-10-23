@@ -74,9 +74,15 @@ export function listRuns(args: string[]): number {
   assert(!args.length && (!since || Number.isFinite(Date.parse(since))), "Invalid run history filter.");
   if (expectedHead) oid(expectedHead);
   const directory = reportsDirectory();
-  const runs = (existsSync(directory) ? readdirSync(directory) : []).filter(file => file.endsWith(".json")).map(file => {
-    const full = path.join(directory, file); assert(lstatSync(full).isFile() && lstatSync(full).size <= 1024 * 1024, "Invalid validation receipt file.");
-    return JSON.parse(readFileSync(full, "utf8")) as { startedAt: string; before: SourceState };
+  const skipped: { file: string; reason: string }[] = [];
+  const runs = (existsSync(directory) ? readdirSync(directory) : []).filter(file => file.endsWith(".json")).flatMap(file => {
+    try {
+      const full = path.join(directory, file); const stat = lstatSync(full);
+      assert(stat.isFile() && stat.size <= 1024 * 1024, "Invalid validation receipt file.");
+      const run = JSON.parse(readFileSync(full, "utf8")) as { startedAt: string; before: SourceState };
+      assert(typeof run.startedAt === "string" && Number.isFinite(Date.parse(run.startedAt)) && typeof run.before?.headOid === "string" && (run.before.branch === null || typeof run.before.branch === "string"), "Invalid validation receipt shape.");
+      return [run];
+    } catch (error) { skipped.push({ file, reason: (error as Error).message }); return []; }
   }).filter(run => (!expectedHead || run.before.headOid === expectedHead) && (!branch || run.before.branch === branch) && (!since || Date.parse(run.startedAt) >= Date.parse(since))).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-  output({ runs }); return 0;
+  output({ runs, skipped }); return 0;
 }

@@ -30,8 +30,8 @@ export function hooksCommand(args: string[]): number {
   const root = realpathSync(git(["rev-parse", "--show-toplevel"]));
   const common = resolveDirectory(git(["rev-parse", "--path-format=absolute", "--git-common-dir"]));
   const worktreeConfig = config(["--local", "--bool", "--get", "extensions.worktreeConfig"]) === "true";
-  const local = (worktreeConfig ? config(["--worktree", "--get", "core.hooksPath"]) : null) ?? config(["--local", "--get", "core.hooksPath"]);
-  const inherited = config(["--get", "core.hooksPath"]);
+  const local = (worktreeConfig ? config(["--worktree", "--type=path", "--get", "core.hooksPath"]) : null) ?? config(["--local", "--type=path", "--get", "core.hooksPath"]);
+  const inherited = config(["--type=path", "--get", "core.hooksPath"]);
   const destination = resolveDirectory(local ? path.resolve(root, local) : path.join(common, "hooks"));
   const effective = resolveDirectory(inherited ? path.resolve(root, inherited) : path.join(common, "hooks"));
   const entries = loadConfig(root).hooks.files;
@@ -39,7 +39,7 @@ export function hooksCommand(args: string[]): number {
     const source = path.join(root, entry.source);
     assert(lstatSync(source).isFile() && realpathSync(source) === source, `Hook source must be a regular file without symlinks: ${entry.source}`);
     git(["ls-files", "--error-unmatch", "--", entry.source]);
-    assert(!within(destination, source) && !within(path.dirname(source), destination), "Hook destination overlaps source files.");
+    assert(!within(destination, source) && (path.dirname(source) === root || !within(path.dirname(source), destination)), "Hook destination overlaps source files.");
     return { ...entry, source, hash: digest(source) };
   });
   // A configured destination inside the checkout must not contain tracked files.
@@ -106,7 +106,7 @@ export function hooksCommand(args: string[]): number {
   writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   renameSync(temporary, manifestFile);
   if (configure) assert(spawnSync("git", ["config", "--local", "core.hooksPath", destination], { stdio: "inherit" }).status === 0, "Could not configure installed hooks.");
-  const after = config(["--get", "core.hooksPath"]);
+  const after = config(["--type=path", "--get", "core.hooksPath"]);
   assert(resolveDirectory(after ? path.resolve(root, after) : path.join(common, "hooks")) === destination, "Effective hooksPath does not match installation; inspect Git configuration.");
   output({ ok: true, applied: true, destination, changes, backups }); return 0;
 }
