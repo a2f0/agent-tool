@@ -223,6 +223,27 @@ test("toolchain diagnostics read pinned numeric mise versions", () => {
   const result = f.run(["toolchain", "check"], { PATH: path.dirname(process.execPath) + path.delimiter + process.env.PATH }); expect(result.status).toBe(0); expect(JSON.parse(result.stdout).tools[0].actual).toBe(Bun.version);
 });
 
+test("toolchain diagnostics preserve v-prefixed major versions and reject mismatches", () => {
+  const f = fixture();
+  const bin = path.join(f.root, ".git/bin"); mkdirSync(bin);
+  const executable = path.join(bin, "node");
+  writeFileSync(path.join(f.root, ".mise.toml"), '[tools]\nnode = "24.22.1"\n');
+  for (const [reported, stream, status, expectedActual, expectedStatus] of [
+    ["v24.22.1", "stdout", 0, "24.22.1", 0],
+    ["Node v24.22.1", "stderr", 0, "24.22.1", 0],
+    ["v25.22.1", "stdout", 0, "25.22.1", 1],
+    ["v24.22.1", "stdout", 1, "24.22.1", 1],
+  ] as const) {
+    writeFileSync(executable, `#!${process.execPath}\nprocess.${stream}.write(${JSON.stringify(reported + "\n")}); process.exit(${status});\n`);
+    chmodSync(executable, 0o755);
+    const result = f.run(["toolchain", "check"], { PATH: bin + path.delimiter + process.env.PATH });
+    expect(result.status).toBe(expectedStatus);
+    const receipt = JSON.parse(result.stdout);
+    expect(receipt.tools[0].actual).toBe(expectedActual);
+    expect(receipt.ok).toBe(expectedStatus === 0);
+  }
+});
+
 test("commit-msg checks share attribution policy while allowing human coauthors when configured", () => {
   const f = fixture({ commits: { rejectCoauthors: false, rejectClaudeAttribution: true, subjects: true, signatures: "present" } }); const file = path.join(f.root, ".git/COMMIT_EDITMSG");
   writeFileSync(file, "fix: human change\n\nCo-authored-by: Human <human@example.com>\n"); expect(f.run(["commits", "check", "--message-file", file]).status).toBe(0);

@@ -102,7 +102,7 @@ export function toolchainCommand(args: string[]): number {
     const supported = /^[a-z][a-z0-9-]*$/.test(executable) && expected !== null && /^\d+(?:\.\d+){1,3}$/.test(expected);
     const resolved = supported ? Bun.which(executable) : null;
     const version = resolved ? spawnSync(resolved, ["--version"], { encoding: "utf8", timeout: 5000, maxBuffer: 65536 }) : null;
-    const actual = `${version?.stdout ?? ""}\n${version?.stderr ?? ""}`.match(/\b\d+\.\d+(?:\.\d+){0,2}\b/)?.[0] ?? null;
+    const actual = `${version?.stdout ?? ""}\n${version?.stderr ?? ""}`.match(/\bv?(\d+\.\d+(?:\.\d+){0,2})\b/)?.[1] ?? null;
     return { name, expected, resolved, actual, ok: supported && version?.status === 0 && (actual === expected || actual?.startsWith(`${expected}.`) === true), ...(supported ? {} : { reason: "Unsupported pin syntax; inspect manually." }) };
   });
   output({ ok: tools.length > 0 && tools.every(tool => tool.ok), file, tools }); return tools.length && tools.every(tool => tool.ok) ? 0 : 1;
