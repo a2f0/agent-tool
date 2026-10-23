@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { loadConfig, type AgentToolConfig } from "../config";
 import { validateCommitSubject } from "../pr/validateCommitSubject";
 import { stripPrNumberSuffix } from "../pr/prNumberSuffix";
 import { assert, git, option, flag, output } from "./core";
+import { gitEnvironment } from "../git/environment";
 
 export function signatureAccepted(status: string, policy: AgentToolConfig["commits"]["signatures"]): boolean {
   return policy === "none" || (policy === "verified" ? ["G", "U"].includes(status) : ["G", "U", "E", "X", "Y", "R"].includes(status));
@@ -11,6 +12,18 @@ export function signatureAccepted(status: string, policy: AgentToolConfig["commi
 
 export function commitsCommand(args: string[]): number {
   const action = args.shift();
+  const messageFile = option(args, "--message-file");
+  if (messageFile) {
+    assert(action === "check" && !args.length, "Usage: commits check --message-file <file>");
+    const config = loadConfig();
+    const message = readFileSync(messageFile, "utf8");
+    const trailers = execFileSync("git", ["interpret-trailers", "--parse"], { input: message, encoding: "utf8", env: gitEnvironment(), maxBuffer: 1024 * 1024 });
+    const errors: string[] = [];
+    if (config.commits.rejectCoauthors && /^co-authored-by:\s*\S/im.test(trailers)) errors.push("Co-authored-by trailer is forbidden.");
+    if (config.commits.rejectClaudeAttribution && /^(?:co-authored-by:.*(?:claude|anthropic)|.*generated.*(?:claude|anthropic))/im.test(message)) errors.push("Claude/Anthropic attribution is forbidden.");
+    if (config.commits.subjects) { try { validateCommitSubject(process.cwd(), stripPrNumberSuffix(message.split(/\r?\n/, 1)[0]!), { allowGenerated: true }); } catch (error) { errors.push((error as Error).message); } }
+    output({ ok: !errors.length, messageFile, errors }); return errors.length ? 1 : 0;
+  }
   const range = option(args, "--range");
   const excludes: string[] = [];
   while (args.includes("--exclude")) { const index = args.indexOf("--exclude"); const value = args[index + 1]; assert(value && !value.startsWith("-"), "--exclude requires a revision."); excludes.push(value); args.splice(index, 2); }
@@ -30,7 +43,7 @@ export function commitsCommand(args: string[]): number {
     if (config.commits.rejectCoauthors && git(["show", "--no-patch", "--format=%(trailers:key=Co-authored-by,valueonly)", commit]).trim()) errors.push("Co-authored-by trailer is forbidden.");
     if (config.commits.rejectClaudeAttribution && /^(?:co-authored-by:.*(?:claude|anthropic)|.*generated.*(?:claude|anthropic))/im.test(git(["show", "--no-patch", "--format=%B", commit]))) errors.push("Claude/Anthropic attribution is forbidden.");
     if (config.commits.subjects) {
-      try { validateCommitSubject(process.cwd(), stripPrNumberSuffix(git(["show", "--no-patch", "--format=%s", commit]))); }
+      try { validateCommitSubject(process.cwd(), stripPrNumberSuffix(git(["show", "--no-patch", "--format=%s", commit])), { allowGenerated: true }); }
       catch (error) { errors.push((error as Error).message); }
     }
     if (errors.length) findings.push({ commit, errors });

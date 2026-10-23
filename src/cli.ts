@@ -31,16 +31,17 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   run [--label text] [--max-bytes N] [--tail-lines N] -- <command> [args...]
   run-group <plan.json>                  Sequential checks with durable source-bound receipts
   runs list [--head oid] [--branch name] [--since ISO-date]
-  branch check [name...] | status
+  branch check [name...|--pre-push] | status
   branch create <name> [--base branch] [--remote origin]
   branch push <reviewed-head> [--remote origin]
   commits check --range <range> [--exclude ref] [--exclude-remotes remote]
+  commits check --message-file <file>    Commit-msg attribution and subject policy
   checks binaries [--staged|--all|--range range|--from-upstream]
   hooks install [--apply] [--adopt] | check
   repo context [--fetch] | cleanup <PR> <shipped-head> [--apply] [--keep-branch]
   policy check | toolchain check
   ci gate <needs.json|-> [--policy policy.json]
-  release plan <package.json> [--github-output]
+  release plan <package.json> [--github-output] [--allow-private-source]
   release verify <package> <version> <merge-oid> --workflow name [--timeout seconds]
   logs <file> [--max-bytes N] [--tail-lines N]  Bounded local log tail
   review <claude|codex|opencode> [effort] [--base <local-ref>]

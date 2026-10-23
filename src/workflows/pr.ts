@@ -28,7 +28,11 @@ export function checkSnapshot(pr: { prNumber: string; repo: string }, expected: 
     assertMergeChecks(JSON.stringify({ headRefOid: expected, checks }), expected);
     return { ok: true, waiting: false, headOid: expected, checks, reason: null };
   } catch (error) {
-    const failed = checks.some(check => ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"].includes(check.state));
+    const requiredSkipped = loadConfig().merge.requiredChecks.some(required => {
+      const matches = checks.filter(check => check.name === required.name && (required.workflow === undefined || check.workflow === required.workflow));
+      return matches.length > 0 && matches.every(check => check.state === "SKIPPED");
+    });
+    const failed = requiredSkipped || checks.some(check => !["SUCCESS", "SKIPPED", "PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED"].includes(check.state));
     return { ok: false, waiting: !failed, headOid: expected, checks, reason: (error as Error).message };
   }
 }
@@ -85,6 +89,7 @@ export function reviewThreads(pr: { prNumber: string; repo: string }): Thread[] 
       page = data.node.comments;
       thread.comments.nodes.push(...page.nodes);
     }
+    thread.comments.pageInfo = page.pageInfo;
   }
   return threads;
 }

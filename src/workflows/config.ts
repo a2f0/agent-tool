@@ -1,12 +1,12 @@
 export interface WorkflowConfig {
-  branch: { types: string[] | null; exempt: string[]; maxLength: number | null };
+  branch: { enforce: boolean; types: string[] | null; exempt: string[]; maxLength: number | null };
   commits: { signatures: "none" | "present" | "verified"; signatureHeaderFallback: boolean; rejectCoauthors: boolean; rejectClaudeAttribution: boolean; subjects: boolean };
   hooks: { files: { source: string; target: string; executable: boolean }[] };
   binaries: { allow: string[] };
 }
 
 export const WORKFLOW_DEFAULTS: WorkflowConfig = {
-  branch: { types: null, exempt: ["main", "master"], maxLength: 72 },
+  branch: { enforce: false, types: null, exempt: ["main", "master"], maxLength: 72 },
   commits: { signatures: "none", signatureHeaderFallback: false, rejectCoauthors: true, rejectClaudeAttribution: false, subjects: false },
   hooks: { files: [] },
   binaries: { allow: [] },
@@ -20,6 +20,7 @@ export function relativeFile(value: unknown): value is string {
 export function validateWorkflowConfig(config: WorkflowConfig): void {
   const fail = (name: string): never => { throw new Error(`Invalid config setting '${name}'.`); };
   const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every(item => typeof item === "string" && item.length > 0);
+  if (typeof config.branch.enforce !== "boolean") fail("branch.enforce");
   if (config.branch.types !== null && (!strings(config.branch.types) || !config.branch.types.length || config.branch.types.some(type => !/^[a-z][a-z0-9-]*$/.test(type)))) fail("branch.types");
   if (!strings(config.branch.exempt)) fail("branch.exempt");
   if (config.branch.maxLength !== null && (!Number.isSafeInteger(config.branch.maxLength) || config.branch.maxLength < 1)) fail("branch.maxLength");

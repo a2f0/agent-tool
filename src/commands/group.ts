@@ -55,7 +55,7 @@ export async function runGroup(args: string[]): Promise<number> {
   try {
     for (const [index, step] of plan.steps.entries()) {
       record.steps[index]!.status = "running"; save(report, record);
-      code = await runCommand(["--label", step.label, "--", ...step.command], receipt => { record.steps[index]!.receipt = receipt; record.steps[index]!.status = receipt.status; save(report, record); });
+      code = await runCommand(["--label", step.label, "--", ...step.command], receipt => { record.steps[index]!.receipt = receipt; record.steps[index]!.status = receipt.status; save(report, record); }, { quiet: true, reraiseChildSignal: false });
       const after = sourceState();
       assert(JSON.stringify(after) === JSON.stringify(before), "Source state changed during validation; results do not establish the current checkout.");
       if (code !== 0) break;

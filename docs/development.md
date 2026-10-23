@@ -1,7 +1,7 @@
 # Development
 
-Use Bun 1.4.3 from `.mise.toml` and TypeScript from the lockfile. In an agent
-shell, prepend `~/.local/share/mise/installs/bun/1.4.3/bin` to PATH; do not run
+Use the Bun version from `.mise.toml` and TypeScript from the lockfile. In an agent
+shell, prepend `~/.local/share/mise/installs/bun/<version>/bin` to PATH; do not run
 `mise trust` to activate the checkout. Install with `bun install --frozen-lockfile`.
 
 ## Layout
@@ -33,6 +33,10 @@ bun src/index.ts run --label compiled-smoke -- bun scripts/testing/smoke.ts dist
 ```
 
 Build regenerates `src/skills/bundled.ts`; commit it with canonical skill changes.
+After running `bun run generate`, the same five checks can run together with
+`bun src/index.ts run-group scripts/testing/verify.json`, recording source-bound
+timings and receipts. Generation runs first so a build does not change the source
+fingerprint while validation is in progress.
 The package smoke installs an npm tarball into a temporary project. Compiled
 smoke runs all three review adapters through local stubs with Bun and Node absent
 from PATH; no live model calls are made. CI runs these checks on Linux/macOS,

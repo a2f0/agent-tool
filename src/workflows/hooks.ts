@@ -29,12 +29,12 @@ export function hooksCommand(args: string[]): number {
   assert((action === "install" || action === "check") && !args.length && (action === "install" || (!apply && !adopt)), "Usage: hooks install [--apply] [--adopt] | hooks check");
   const root = realpathSync(git(["rev-parse", "--show-toplevel"]));
   const common = resolveDirectory(git(["rev-parse", "--path-format=absolute", "--git-common-dir"]));
-  const local = config(["--worktree", "--get", "core.hooksPath"]) ?? config(["--local", "--get", "core.hooksPath"]);
+  const worktreeConfig = config(["--local", "--bool", "--get", "extensions.worktreeConfig"]) === "true";
+  const local = (worktreeConfig ? config(["--worktree", "--get", "core.hooksPath"]) : null) ?? config(["--local", "--get", "core.hooksPath"]);
   const inherited = config(["--get", "core.hooksPath"]);
   const destination = resolveDirectory(local ? path.resolve(root, local) : path.join(common, "hooks"));
   const effective = resolveDirectory(inherited ? path.resolve(root, inherited) : path.join(common, "hooks"));
   const entries = loadConfig(root).hooks.files;
-  assert(entries.length > 0, "No hooks.files are configured.");
   const sources = entries.map(entry => {
     const source = path.join(root, entry.source);
     assert(lstatSync(source).isFile() && realpathSync(source) === source, `Hook source must be a regular file without symlinks: ${entry.source}`);
@@ -45,6 +45,7 @@ export function hooksCommand(args: string[]): number {
   // A configured destination inside the checkout must not contain tracked files.
   if (within(root, destination)) assert(!git(["ls-files", "--", path.relative(root, destination)]), "Hook destination contains tracked files.");
   const manifestFile = path.join(destination, manifestName);
+  if (!entries.length && !present(manifestFile)) { output({ ok: true, applied: false, destination, changes: [], blockers: [] }); return 0; }
   let previous: Manifest = { schemaVersion: 1, files: {} };
   if (present(manifestFile)) {
     assert(lstatSync(manifestFile).isFile(), "Hook ownership manifest must be a regular file.");
@@ -96,6 +97,7 @@ export function hooksCommand(args: string[]): number {
     const source = sources.find(source => source.target === change.target)!;
     const temporary = path.join(destination, `.agent-tool-${randomUUID()}`);
     copyFileSync(source.source, temporary);
+    assert(digest(temporary) === source.hash, `Hook source changed during installation: ${source.source}`);
     chmodSync(temporary, source.executable ? 0o755 : 0o644);
     renameSync(temporary, target);
   }

@@ -55,7 +55,7 @@ export function readRegistryState(name: string): RegistryState {
   // A scope registry overrides --registry, so pin the scope as well.
   const result = spawnSync("npm", [
     "view", name, "versions", "dist-tags", "--json",
-    "--registry", registry, `--${name.split("/")[0]}:registry=${registry}`,
+    "--registry", registry, ...(name.startsWith("@") ? [`--${name.split("/")[0]}:registry=${registry}`] : []),
   ], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], timeout: 60_000 });
   if (result.error) throw result.error;
   // A failed view, including a missing package, still prints a JSON error.

@@ -4,8 +4,9 @@ import path from "node:path";
 import { loadConfig } from "../config";
 import { remoteBranchHead, resolveFreshBaseRef, resolveRepositoryGitUrl } from "../git/prContext";
 import { viewCurrentBranchPr } from "../git/currentBranchPr";
-import { assert, clean, currentBranch, flag, git, head, json, mutateGit, oid, output, read, repository } from "./core";
+import { assert, clean, currentBranch, flag, git, head, mutateGit, oid, output, read, repository } from "./core";
 import { pullRequest } from "./pr";
+import { assertStrictBaseFreshness } from "../pr/baseFreshness";
 
 export function repoCommand(args: string[]): number {
   const action = args.shift();
@@ -75,7 +76,7 @@ export function policyCommand(args: string[]): number {
   assert(args.length === 1 && args[0] === "check", "Usage: policy check");
   const repo = repository();
   const branch = repo.defaultBranchRef.name;
-  const rules = json<unknown[][]>(["api", "--paginate", "--slurp", `repos/${repo.nameWithOwner}/rules/branches/${encodeURIComponent(branch)}`]).flat();
+  const rules = read("gh", ["api", "--paginate", `repos/${repo.nameWithOwner}/rules/branches/${encodeURIComponent(branch)}`, "--jq", ".[]"]).split("\n").filter(Boolean).map((line): unknown => JSON.parse(line));
   const protection = spawnSync("gh", ["api", `repos/${repo.nameWithOwner}/branches/${encodeURIComponent(branch)}/protection`], { encoding: "utf8" });
   assert(protection.status === 0 || /HTTP 404/.test(protection.stderr), "Could not read classic branch protection.");
   const classic = protection.status === 0 ? JSON.parse(protection.stdout) as { required_status_checks?: { contexts?: string[]; checks?: { context: string }[]; strict?: boolean } } : null;
@@ -84,8 +85,10 @@ export function policyCommand(args: string[]): number {
   for (const rule of rules as { type: string; parameters?: { required_status_checks?: { context: string }[] } }[]) if (rule.type === "required_status_checks") for (const check of rule.parameters?.required_status_checks ?? []) required.add(check.context);
   const configured = loadConfig().merge;
   const missing = [...required].filter(name => !configured.requiredChecks.some(check => check.name === name));
-  output({ ok: !missing.length, repo: repo.nameWithOwner, branch, configured, classicProtection: classic, effectiveRules: rules, requiredContexts: [...required], missingConfiguredChecks: missing, notes: ["Workflow names and conditional aggregate dependencies require workflow inspection; protection contexts alone do not identify workflows.", "A classic-protection 404 means unavailable or absent; effective rules are queried independently."] });
-  return missing.length ? 1 : 0;
+  const issues = missing.map(name => `Required context '${name}' is absent from merge.requiredChecks.`);
+  if (configured.requireStrictBaseFreshness) { try { assertStrictBaseFreshness(repo.nameWithOwner, branch); } catch (error) { issues.push((error as Error).message); } }
+  output({ ok: !issues.length, repo: repo.nameWithOwner, branch, configured, classicProtection: classic, effectiveRules: rules, requiredContexts: [...required], missingConfiguredChecks: missing, issues, notes: ["Workflow names and conditional aggregate dependencies require workflow inspection; protection contexts alone do not identify workflows.", "A classic-protection 404 means unavailable or absent; effective rules are queried independently."] });
+  return issues.length ? 1 : 0;
 }
 
 export function toolchainCommand(args: string[]): number {

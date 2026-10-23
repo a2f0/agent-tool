@@ -374,64 +374,14 @@ can resolve fork PR bases; `pr open` supports same-repository branches.
 
 ## Development
 
-Development and build/release workflows use the Bun version pinned in
-`.mise.toml` and TypeScript 7.0.2. [mise](https://mise.jdx.dev/) installs the
-same Bun version locally and in CI.
-The compiler is used through `tsc`; this repository does not depend on its removed
-JavaScript compiler API. Runtime consumers still support Bun 1.3.11 or newer;
-CI also runs the installed-package smoke and plan-guard tests on that minimum.
-
-```sh
-mise install
-bun install --frozen-lockfile
-bun run typecheck
-bun test
-bun scripts/testing/smoke-package.ts
-bun run build
-bun scripts/testing/smoke.ts dist/agent-tool
-```
-
-`bun run build` regenerates `src/skills/bundled.ts` from `skills/*/SKILL.md`;
-commit it with skill changes. The package smoke test installs the packed npm
-tarball into a temporary project. The compiled smoke test drives all three
-review adapters through local stubs with Bun and Node absent from `PATH`, and
-makes no model calls. CI runs these checks on Linux and macOS and builds a
-Debian package on Linux.
+See [development guidance](development.md) for the pinned toolchain, source and
+script layout, reproducible validation, and generated skill-bundle requirements.
 
 ## Releases
 
-### npm
-
-`ship-pr` bumps the root `package.json` patch version on each merge, and the
-[publish workflow](../.github/workflows/npm-publish.yml) publishes each version
-newer than npm's `latest` using
-[trusted publishing](https://docs.npmjs.com/trusted-publishers), with
-provenance and no stored npm token. The publish job runs in the `npm`
-environment, which only `main` can deploy to; npm's trusted publisher names
-that environment and `npm-publish.yml`. Runs never overlap, and when merges land
-together only the newest pending run starts, so intermediate versions may never
-reach npm. npm adds a trusted publisher only to an existing package, so the
-first version was published by hand; the workflow fails with that instruction
-when the package is missing from npm.
-
-### Standalone archives and packages
-
-```sh
-# macOS and Linux ARM64/x64 archives, and a Homebrew formula with SHA-256 values:
-bun scripts/release/build.ts a2f0/agent-tool
-
-# A Debian package (Linux with dpkg-deb); substitute the release version:
-scripts/release/package-deb.sh dist/agent-tool-<version>-linux-x64/bin/agent-tool amd64
-sudo apt install ./dist/agent-tool_<version>_amd64.deb
-```
-
-These scripts only create local artifacts. The manually triggered
-`Release artifacts` workflow runs them and uploads the archives, the formula,
-and amd64 and arm64 Debian packages as workflow artifacts. To offer
-`brew install <owner>/<tap>/agent-tool`, host the archives at the formula's
-URLs and publish `agent-tool.rb` in a tap. `apt install agent-tool` by name also
-requires a signed APT repository. Neither a tap nor an APT repository exists
-yet.
+See [shipping and release](development.md#shipping-and-release) for npm trusted
+publishing, exact-commit/tarball verification, standalone archives, Homebrew formula
+and Debian packaging. Artifact workflows do not create a hosted tap or APT repo.
 
 ## Further reading
 

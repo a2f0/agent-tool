@@ -66,6 +66,7 @@ export function parseConfig(source: string): AgentToolConfig {
     Object.assign(result[section], settings);
   }
   if (input.images !== undefined) result.images = parseImages(input.images);
+  if (input.branch !== undefined && !Object.hasOwn(input.branch as object, "enforce")) result.branch.enforce = true;
   const invalid = (setting: string): never => { throw new Error(`Invalid config setting '${setting}'.`); };
   if (typeof result.subject.conventional !== "boolean") invalid("subject.conventional");
   for (const key of ["lowercaseInitial", "rejectTerminalPeriod", "ignoreGenerated"] as const) if (typeof result.subject[key] !== "boolean") invalid(`subject.${key}`);

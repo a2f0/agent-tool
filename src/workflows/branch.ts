@@ -1,13 +1,14 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { loadConfig, type AgentToolConfig } from "../config";
 import { remoteBranchHead } from "../git/prContext";
 import { gitEnvironment } from "../git/environment";
-import { assert, clean, currentBranch, git, head, mutateGit, nativeBranch, oid, option, output, repository } from "./core";
+import { assert, clean, currentBranch, flag, git, head, mutateGit, nativeBranch, oid, option, output, repository } from "./core";
 
 export function branchErrors(name: string, config: AgentToolConfig): string[] {
   const errors: string[] = [];
   if (!nativeBranch(name)) errors.push("Invalid Git branch ref.");
-  if (config.branch.exempt.includes(name)) return errors;
+  if (!config.branch.enforce || config.branch.exempt.includes(name)) return errors;
   if (config.branch.maxLength !== null && name.length > config.branch.maxLength) errors.push(`Branch exceeds ${config.branch.maxLength} characters.`);
   const match = /^([a-z][a-z0-9-]*)\/([a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*)$/.exec(name);
   if (!match || !(config.branch.types ?? config.subject.types).includes(match[1]!)) errors.push("Expected <type>/<lowercase-topic> using configured branch types.");
@@ -25,8 +26,15 @@ export function branchCommand(args: string[]): number {
   const action = args.shift();
   const config = loadConfig();
   if (action === "check") {
+    const prePush = flag(args, "--pre-push");
+    assert(!prePush || !args.length, "--pre-push reads destination refs from stdin and accepts no names.");
     assert(!args.some(arg => arg.startsWith("-")), "Usage: branch check [name...]");
-    const results = (args.length ? args : [currentBranch()]).map(name => ({ name, errors: branchErrors(name, config) }));
+    const names = prePush ? readFileSync(0, "utf8").split("\n").filter(line => line.trim()).flatMap(line => {
+      const fields = line.trim().split(/\s+/);
+      assert(fields.length === 4 && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(fields[1]!) && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(fields[3]!), "Malformed Git pre-push input.");
+      return /^0+$/.test(fields[1]!) || !fields[2]!.startsWith("refs/heads/") ? [] : [fields[2]!.slice("refs/heads/".length)];
+    }) : args.length ? args : [currentBranch()];
+    const results = names.map(name => ({ name, errors: branchErrors(name, config) }));
     const ok = results.every(result => !result.errors.length);
     output({ ok, branches: results }); return ok ? 0 : 1;
   }
@@ -47,6 +55,8 @@ export function branchCommand(args: string[]): number {
     assert(spawnSync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${name}`], { env: gitEnvironment() }).status === 1, `Local branch '${name}' exists or could not be checked.`);
     const url = remoteUrl(remote);
     assert(!remoteBranchHead(url, name), `Remote branch '${name}' already exists.`);
+    const pushUrl = remoteUrl(remote, true);
+    if (pushUrl !== url) assert(!remoteBranchHead(pushUrl, name), `Push destination branch '${name}' already exists.`);
     const baseOid = remoteBranchHead(url, base);
     assert(baseOid, `Remote base '${base}' does not exist.`);
     git(["fetch", "--no-tags", remote, `refs/heads/${base}`]);

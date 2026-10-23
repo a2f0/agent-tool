@@ -10,16 +10,20 @@ pinned agent-tool and preserve its validation, review, and deployment policy.
 ```sh
 agent-tool branch check "${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
 agent-tool branch check feat/search chore/cleanup
+agent-tool branch check --pre-push < /tmp/push-refs
 agent-tool branch create chore/maintenance --base main --remote origin
 agent-tool branch status
 agent-tool branch push <reviewed-head-oid> --remote origin
 ```
 
-`check` accepts multiple names and checks native Git ref validity before naming
-policy. With no names it checks the attached branch; detached HEAD is an error,
+`check` accepts multiple names and always checks native Git ref validity. Naming
+policy is opt-in: adding a `branch` section enables it unless `enforce: false` is
+explicit. With no section only Git ref rules apply, preserving existing branch
+conventions. Set `enforce: true` when enabling policy in a full `init` config. With no names it checks the attached branch; detached HEAD is an error,
 so CI supplies the actual PR or destination branch without a checkout mutation.
-Pre-push hooks check each non-deleted destination `refs/heads/` name, not just
-the current branch. Policy in `agent-tool.json` is:
+`--pre-push` reads Git's four-field hook stdin, validates every non-deleted
+`refs/heads/` destination, and skips tag refs. Preserve stdin in the hook if other
+guards also need it. Explicit names work for callers that already parse ref tuples. Policy in `agent-tool.json` is:
 
 ```json
 {
@@ -32,7 +36,7 @@ the current branch. Policy in `agent-tool.json` is:
 }
 ```
 
-`types: null` uses `subject.types`. Defaults are `types: null`, exempt
+`types: null` uses `subject.types`. When naming is enabled, defaults are `types: null`, exempt
 `main`/`master`, and 72 characters. Set `maxLength: null` for no policy length
 cap. List custom default branches explicitly in exemptions. Git restrictions
 still apply to exempt names; `feat/foo..bar` and `.lock` segments never pass.
@@ -53,6 +57,7 @@ uses a force push.
 
 ```sh
 agent-tool commits check --range main..HEAD
+agent-tool commits check --message-file .git/COMMIT_EDITMSG
 agent-tool commits check --range "$local_oid" --exclude "$remote_oid" --exclude-remotes origin
 agent-tool checks binaries --staged
 agent-tool checks binaries --range main...HEAD
@@ -89,11 +94,15 @@ repositories permitting human coauthors can set it false and opt into
 `rejectClaudeAttribution`, which rejects Claude/Anthropic attribution lines.
 `subjects` opts into the shared subject validator for each commit, stripping the
 GitHub PR-number suffix before length checks.
+`--message-file` applies the same attribution and optional subject rules to a
+commit-msg hook's file; signature policy applies only to existing commits in a
+range. It never rewrites messages and does not print message contents.
 
 Subject policy retains `conventional`, `maxLength`, and `types`, with optional
 `lowercaseInitial`, `rejectTerminalPeriod`, and `ignoreGenerated` booleans (all
 false by default). `ignoreGenerated` exempts Git's Merge/Revert, fixup!, squash!,
-amend!, and Initial commit subjects. These explicit checks do not execute
+amend!, and Initial commit subjects only in `commits check`; human-authored PR
+titles always use the full subject policy. These explicit checks do not execute
 commitlint configuration; keep any additional project commitlint rules locally.
 
 Binary checks use Git's binary numstat classification and NUL-delimited names,
@@ -135,7 +144,7 @@ and rejects locally edited managed files. Unmanaged targets require explicit
 `--adopt`; replacements and stale managed removals are backed up in a unique
 private directory in the hook directory. Symlinks are backed up as symlinks and
 replaced without writing their targets. Only files owned by this installer are
-pruned. Old installers' manifests are not assumed to establish ownership; remove
+pruned; setting `hooks.files` to an empty array prunes the remaining managed files. Old installers' manifests are not assumed to establish ownership; remove
 their stale hooks only after inspecting them separately.
 
 Repository/worktree `core.hooksPath` is honored. An inherited global path is
@@ -241,7 +250,10 @@ agent-tool release verify @owner/package 1.2.3 <merge-oid> --workflow 'Publish n
 
 Plan reads npm's public registry, pins scoped registry resolution too, and
 publishes only an unpublished stable x.y.z newer than `latest`. It refuses
-private packages and requires first publication to be handled explicitly when
+private packages unless `--allow-private-source` is explicit. That option supports
+private source workspaces whose build generates a publishable consumer manifest;
+the repository must still validate the generated package before publishing. It
+does not rewrite the source or artifact. Plan requires first publication to be handled explicitly when
 no existing registry package is found. `--github-output` appends only
 `publish=true|false` to the Actions output file; without it no file is written.
 The command does not publish. Install the pinned agent-tool before running it;
@@ -279,11 +291,14 @@ Steps run sequentially through the same private-log runner as `run`, preserving
 exit status and hooks. The report records HEAD/tree/branch plus staged, tracked,
 and nonignored untracked content fingerprints before/after, monotonic durations,
 and per-step log receipts. Every step is recorded as running before launch;
-a killed coordinator leaves an incomplete record, never a passed group. Failure
+a killed coordinator leaves an incomplete record, never a passed group. A child
+signal fails its step and finalizes the group report. Group stdout is one JSON
+report containing the per-step receipts. Failure
 stops subsequent steps, and source changes invalidate a zero-exit command.
 Reports are atomically updated under the common Git directory's
 `agent-tool/runs/`, persist across branch cleanup, and are not committed.
-Ignored dependencies/build outputs are excluded from source fingerprints.
+Ignored dependencies/build outputs are excluded from source fingerprints. Dirty
+submodules are refused because a parent Git diff cannot fingerprint their contents.
 Applications must retain richer artifact/test-plan completeness checks; a
 process exit alone does not establish that every expected task ran. Reports
 and private logs have no automatic pruning; remove inspected local artifacts

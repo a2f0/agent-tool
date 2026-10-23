@@ -162,3 +162,58 @@ test("cleanup keeps branches on request and rejects unmerged or moved HEAD", () 
   expect(f.run(["repo", "cleanup", "1", f.commit, "--apply", "--keep-branch"]).status).toBe(0); expect(f.git(["rev-parse", "refs/heads/chore/workflow"])).toBe(f.commit); expect(existsSync(f.stateFile + ".deleted")).toBe(false);
   f.git(["switch", "chore/workflow"]); f.git(["commit", "--allow-empty", "-m", "chore: additional work"]); expect(f.run(["repo", "cleanup", "1", f.commit, "--apply"]).status).toBe(1);
 });
+
+test("private source release plans require explicit opt-in and pin the scoped registry", () => {
+  const f = fixture(); const bin = path.join(f.root, ".git/bin"); mkdirSync(bin);
+  writeFileSync(path.join(bin, "npm"), `#!${process.execPath}\nif(!process.argv.includes('--@owner:registry=https://registry.npmjs.org'))process.exit(8);console.log(JSON.stringify({versions:['1.0.0'],'dist-tags':{latest:'1.0.0'}}));\n`); chmodSync(path.join(bin, "npm"), 0o755);
+  const manifest = path.join(f.root, "package.json"); writeFileSync(manifest, JSON.stringify({ name: "@owner/package", version: "1.0.1", private: true }));
+  const env = { PATH: bin + path.delimiter + process.env.PATH, GITHUB_OUTPUT: path.join(f.root, ".git/output") };
+  expect(f.run(["release", "plan", manifest], env).status).toBe(1);
+  const result = f.run(["release", "plan", manifest, "--allow-private-source", "--github-output"], env); expect(result.status).toBe(0); expect(JSON.parse(result.stdout)).toMatchObject({ publish: true, privateSource: true }); expect(readFileSync(env.GITHUB_OUTPUT, "utf8")).toBe("publish=true\n");
+});
+test("hook installation uses the common Git directory from a linked worktree", () => {
+  const f = hooksFixture(); const linked = path.join(f.root, ".git/linked"); f.git(["worktree", "add", "-b", "chore/linked", linked]);
+  const result = spawnSync(process.execPath, [cli, "hooks", "install", "--apply"], { cwd: linked, env: f.env, encoding: "utf8" }); if (result.status !== 0) throw new Error(result.stderr); expect(result.status).toBe(0); expect(JSON.parse(result.stdout).destination).toBe(realpathSync(path.join(f.root, ".git/hooks")));
+});
+
+test("subject checks enforce configured style while preserving generated Git subjects", () => {
+  const f = fixture({ subject: { lowercaseInitial: true, rejectTerminalPeriod: true, ignoreGenerated: true }, commits: { subjects: true } });
+  for (const [subject, expected] of [["fix: Uppercase", 1], ["fix: lower.", 1], ["Merge branch 'main'", 0]] as const) {
+    f.git(["commit", "--allow-empty", "-m", subject]); expect(f.run(["commits", "check", "--range", "HEAD^..HEAD"]).status).toBe(expected);
+  }
+});
+
+test("unconfigured branch names remain compatible while explicit policy is enforced", () => {
+  const f = fixture(); expect(f.run(["branch", "check", "codex/ABC-123"]).status).toBe(0);
+  writeFileSync(path.join(f.root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, branch: { maxLength: null } })); expect(f.run(["branch", "check", "codex/ABC-123"]).status).toBe(1);
+});
+test("pre-push branch checks validate destinations and skip deletion/tag tuples", () => {
+  const f = fixture({ branch: { types: ["feat"], maxLength: null } }); const commit = f.git(["rev-parse", "HEAD"]); const zero = "0".repeat(40);
+  const run = (input: string) => spawnSync(process.execPath, [cli, "branch", "check", "--pre-push"], { cwd: f.root, env: f.env, encoding: "utf8", input });
+  expect(run(`refs/heads/local ${commit} refs/heads/feat/good ${zero}\n`).status).toBe(0);
+  expect(run(`refs/heads/local ${commit} refs/heads/feat/foo..bar ${zero}\n`).status).toBe(1);
+  expect(run(`(delete) ${zero} refs/heads/old-legacy ${commit}\nrefs/tags/v1 ${commit} refs/tags/v1 ${zero}\n`).status).toBe(0);
+  expect(run("malformed\n").status).toBe(1);
+});
+test("signalled group steps finalize a failure receipt instead of killing the coordinator", () => {
+  const f = fixture(); const plan = path.join(f.root, "plan.json"); writeFileSync(plan, JSON.stringify({ label: "signal", steps: [{ label: "terminated", command: [process.execPath, "-e", "process.kill(process.pid,'SIGTERM')"] }] }));
+  const result = f.run(["run-group", plan]); expect(result.signal).toBeNull(); expect(result.status).toBe(143); const receipt = JSON.parse(result.stdout); expect(receipt.status).toBe("failed"); expect(receipt.steps[0].receipt.signal).toBe("SIGTERM");
+});
+test("empty hook policy removes owned hooks without touching user hooks", () => {
+  const f = hooksFixture(); expect(f.run(["hooks", "install", "--apply"]).status).toBe(0); writeFileSync(path.join(f.root, ".git/hooks/pre-commit"), "user hook"); writeFileSync(path.join(f.root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, hooks: { files: [] } }));
+  expect(f.run(["hooks", "install", "--apply"]).status).toBe(0); expect(existsSync(path.join(f.root, ".git/hooks/pre-push"))).toBe(false); expect(readFileSync(path.join(f.root, ".git/hooks/pre-commit"), "utf8")).toBe("user hook");
+});
+test("required skipped and neutral checks fail immediately instead of waiting", () => {
+  const f = githubFixture(); f.save({ checks: [{ name: "test", state: "NEUTRAL", workflow: "CI" }] }); let result = f.run(["pr", "checks", "--wait", "--timeout", "0"]); expect(result.status).toBe(1); expect(JSON.parse(result.stdout).waiting).toBe(false);
+  writeFileSync(path.join(f.root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, merge: { requiredChecks: [{ name: "test", workflow: "CI" }] } })); f.save({ checks: [{ name: "test", state: "SKIPPED", workflow: "CI" }] }); result = f.run(["pr", "checks", "--wait", "--timeout", "0"]); expect(result.status).toBe(1); expect(JSON.parse(result.stdout).waiting).toBe(false);
+});
+test("toolchain diagnostics read pinned numeric mise versions", () => {
+  const f = fixture(); writeFileSync(path.join(f.root, ".mise.toml"), `[tools]\nbun = "${Bun.version}"\n`);
+  const result = f.run(["toolchain", "check"], { PATH: path.dirname(process.execPath) + path.delimiter + process.env.PATH }); expect(result.status).toBe(0); expect(JSON.parse(result.stdout).tools[0].actual).toBe(Bun.version);
+});
+
+test("commit-msg checks share attribution policy while allowing human coauthors when configured", () => {
+  const f = fixture({ commits: { rejectCoauthors: false, rejectClaudeAttribution: true, subjects: true, signatures: "present" } }); const file = path.join(f.root, ".git/COMMIT_EDITMSG");
+  writeFileSync(file, "fix: human change\n\nCo-authored-by: Human <human@example.com>\n"); expect(f.run(["commits", "check", "--message-file", file]).status).toBe(0);
+  writeFileSync(file, "fix: attributed change\n\nCo-authored-by: Claude <claude@anthropic.com>\n"); expect(f.run(["commits", "check", "--message-file", file]).status).toBe(1);
+});
