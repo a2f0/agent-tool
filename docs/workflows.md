@@ -90,7 +90,9 @@ establish cryptographic validity even when the local trust level is unknown.
 `signatureHeaderFallback: true` additionally accepts N only when the raw commit
 contains a nonempty gpgsig or gpgsig-sha256 header; this preserves existing
 presence-only policies on machines without signature verifier configuration.
-It never accepts B. `rejectCoauthors` defaults to true and reads Git trailers;
+It never accepts B. Machine-readable commit checks suppress signature display
+regardless of `log.showSignature`; signature verification still runs.
+`rejectCoauthors` defaults to true and reads Git trailers;
 repositories permitting human coauthors can set it false and opt into
 `rejectClaudeAttribution`, which rejects Claude/Anthropic attribution lines.
 `subjects` opts into the shared subject validator for each commit, stripping the

@@ -168,6 +168,23 @@ describe("PR CLI flows ported from a2f0.net", () => {
     expect(created.args).not.toContain(body);
   });
 
+  test("default PR titles ignore signature display on signed commits", () => {
+    const key = path.join(temporary, "signing-key");
+    execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", key], { stdio: "ignore" });
+    const allowed = path.join(temporary, "allowed-signers");
+    writeFileSync(allowed, `test@example.com ${readFileSync(key + ".pub", "utf8")}`);
+    git("config", "gpg.format", "ssh"); git("config", "user.signingkey", key);
+    git("config", "gpg.ssh.allowedSignersFile", allowed); git("config", "log.showSignature", "true");
+    git("-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=true", "commit", "--allow-empty", "-qm", "fix: signed title");
+    head = git("rev-parse", "HEAD");
+    git("push", "-q", path.join(temporary, "remote.git"), "feature");
+    expect(git("log", "-1", "--format=%s")).toContain('Good "git" signature');
+    const result = invoke("missing", ["pr", "open"], "Details\n");
+    expect(result.status).toBe(0);
+    const created = JSON.parse(readFileSync(path.join(fixture, "created.json"), "utf8"));
+    expect(created.args[created.args.indexOf("--title") + 1]).toBe("fix: signed title");
+  });
+
   test("preserves the consumer's title length and branding policy", () => {
     const title = `feat: ${"x".repeat(80)}`;
     expect(invoke("missing", ["openPr", title], "Details\n").status).toBe(0);

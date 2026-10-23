@@ -274,3 +274,31 @@ test("release verify CLI polls the selected workflow and commit before verifying
   const result = spawnSync(process.execPath, ["--preload", preload, cli, "release", "verify", manifest.name, manifest.version, f.commit, "--workflow", "Publish fixture", "--timeout", "10", "--interval", "1"], { cwd: f.root, env: { ...f.env, PATH: f.bin + path.delimiter + process.env.PATH, API_STATE: f.stateFile }, encoding: "utf8", timeout: 15000 }); if (result.status !== 0) throw new Error(result.stderr); expect(JSON.parse(result.stdout).ok).toBe(true); expect(Number(readFileSync(f.stateFile + ".polls", "utf8"))).toBe(3);
   const calls = readFileSync(f.stateFile + ".calls", "utf8").trim().split("\n").map(line => JSON.parse(line)); expect(calls.filter(call => call[0] === "run")).toEqual(Array(3).fill(["run", "list", "-R", "o/r", "--workflow", "Publish fixture", "--commit", f.commit, "--limit", "100", "--json", "databaseId,status,conclusion,headSha,url"]));
 });
+
+test("signed commit checks ignore signature display without weakening trust or message policy", () => {
+  const f = fixture({ commits: { signatures: "verified", rejectCoauthors: true, rejectClaudeAttribution: true, subjects: true } });
+  const key = path.join(f.root, ".git/signing-key");
+  execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", key], { stdio: "ignore" });
+  const allowed = path.join(f.root, ".git/allowed-signers");
+  writeFileSync(allowed, `test@example.com ${readFileSync(key + ".pub", "utf8")}`);
+  f.git(["config", "gpg.format", "ssh"]); f.git(["config", "user.signingkey", key]);
+  f.git(["config", "gpg.ssh.allowedSignersFile", allowed]); f.git(["config", "commit.gpgsign", "true"]);
+  f.git(["config", "log.showSignature", "true"]);
+  f.git(["commit", "--allow-empty", "-m", "fix: valid signed change"]);
+  // Establish the real Git behavior that previously polluted all formatted reads.
+  expect(f.git(["show", "--no-patch", "--format=%G?", "HEAD"])).toContain('Good "git" signature');
+  let result = f.run(["commits", "check", "--range", "HEAD^..HEAD"]);
+  expect(result.status).toBe(0); expect(JSON.parse(result.stdout).findings).toEqual([]);
+  expect(f.run(["commits", "check", "--range", "HEAD^..HEAD"], { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "log.showSignature", GIT_CONFIG_VALUE_0: "true" }).status).toBe(0);
+  writeFileSync(path.join(f.root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, commits: { signatures: "present", rejectCoauthors: true, subjects: true } }));
+  expect(f.run(["commits", "check", "--range", "HEAD^..HEAD"]).status).toBe(0);
+  f.git(["commit", "--allow-empty", "-m", "fix: attributed change\n\nCo-authored-by: Human <human@example.com>"]);
+  result = f.run(["commits", "check", "--range", "HEAD^..HEAD"]);
+  expect(result.status).toBe(1); expect(JSON.parse(result.stdout).findings[0].errors).toEqual(["Co-authored-by trailer is forbidden."]);
+  f.git(["commit", "--allow-empty", "-m", "invalid subject"]);
+  result = f.run(["commits", "check", "--range", "HEAD^..HEAD"]);
+  expect(result.status).toBe(1); expect(JSON.parse(result.stdout).findings[0].errors).toHaveLength(1);
+  f.git(["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "fix: unsigned change"]);
+  result = f.run(["commits", "check", "--range", "HEAD^..HEAD"]);
+  expect(result.status).toBe(1); expect(JSON.parse(result.stdout).findings[0].errors).toEqual(["Signature does not meet 'present' policy (N)."]);
+});
