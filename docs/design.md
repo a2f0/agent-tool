@@ -37,7 +37,8 @@ validated, so settings have an explicit contract.
 `skills/` contains portable workflow instructions. The build generates one
 embedded bundle; installation copies it into harness discovery directories.
 The manifest distinguishes tool-managed files from local edits. It does not
-rewrite AGENTS.md, CLAUDE.md, opencode.json, auth files, or hooks. The library is
+rewrite AGENTS.md, CLAUDE.md, opencode.json, or auth files. Hook installation
+is a separate explicit operation with its own ownership manifest. The library is
 project-scoped today. A future global installer needs explicit discovery scope
 and separate ownership tracking, rather than treating the home directory as a
 project.
@@ -79,16 +80,16 @@ packages provide the initial apt route. Named apt installation additionally
 requires signed repository metadata, hosting, and repository-source setup. No
 public distribution infrastructure is created as part of this extraction.
 
-## Follow-up boundaries
+## Workflow boundaries
 
-The next useful work is migrating one representative project and comparing
-review/ship behavior against its existing skill flow. Configure its CI/title
-policy first, preserve local skill additions, then replace repository-local
-launcher references with the installed binary. Expand to other projects once
-that migration passes.
+The shared workflow modules normalize branch/ref policy, copied-hook ownership,
+commit trust, CI waiting and aggregate evaluation, review-thread pagination,
+post-merge cleanup, release decisions/verification, validation evidence, and
+read-only diagnostics. Existing tested review, version, and merge guards remain
+the source of truth; new command interfaces reuse them.
 
-Stronger process isolation should be a separate, tested platform layer. The
-macOS-only credential-free preflight in `stealth` is useful evidence, but not yet
-a Linux-compatible runtime contract. Likewise, merge protection policy, fork PR
-creation, custom skill packs, and global skill scope need deliberate APIs rather
-than hidden repository assumptions.
+Application build/test plans, source classification, infrastructure execution,
+platform release lanes, and deployment health checks remain repository-owned.
+Their commands can be grouped and captured without replacing project semantics.
+Stronger process isolation, custom skill packs, and global skill installation
+still require deliberate APIs rather than hidden repository assumptions.

@@ -2,12 +2,12 @@
 set -eu
 umask 022
 if [ "$#" -ne 2 ]; then
-  echo "Usage: scripts/package-deb.sh <linux-binary> <amd64|arm64>" >&2
+  echo "Usage: scripts/release/package-deb.sh <linux-binary> <amd64|arm64>" >&2
   exit 1
 fi
 case "$2" in amd64|arm64) ;; *) echo "Unsupported Debian architecture" >&2; exit 1 ;; esac
 binary=$(realpath "$1")
-project=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+project=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 version=$(bun -e 'console.log(JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).version)' "$project/package.json")
 stage=$(mktemp -d)
 chmod 755 "$stage"

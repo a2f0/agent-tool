@@ -16,16 +16,40 @@ import { squashMerge } from "./pr/squashMerge";
 import metadata from "../package.json";
 import { runCommand } from "./commands/run";
 import { inspectLog } from "./commands/output";
+import { runGroup, listRuns } from "./commands/group";
+import { branchCommand } from "./workflows/branch";
+import { commitsCommand, binariesCommand, gateCommand } from "./workflows/checks";
+import { hooksCommand } from "./workflows/hooks";
+import { repoCommand, policyCommand, toolchainCommand } from "./workflows/repository";
+import { prWorkflowCommand } from "./workflows/pr";
+import { releaseCommand } from "./release/commands";
 
 export const HELP = `agent-tool ${metadata.version}
 
 Usage: agent-tool [--repo <directory>] [--config <file>] <command>
 
   run [--label text] [--max-bytes N] [--tail-lines N] -- <command> [args...]
+  run-group <plan.json>                  Sequential checks with durable source-bound receipts
+  runs list [--head oid] [--branch name] [--since ISO-date]
+  branch check [name...|--pre-push] | status
+  branch create <name> [--base branch] [--remote origin]
+  branch push <reviewed-head> [--remote origin]
+  commits check --range <range> [--exclude ref] [--exclude-remotes remote]
+  commits check --message-file <file>    Commit-msg attribution and subject policy
+  checks binaries [--staged|--all|--range range|--from-upstream]
+  hooks install [--apply] [--adopt] | check
+  repo context [--fetch] | cleanup <PR> <shipped-head> [--apply] [--keep-branch]
+  policy check | toolchain check
+  ci gate <needs.json|-> [--policy policy.json]
+  release plan <package.json> [--github-output] [--allow-private-source]
+  release verify <package> <version> <merge-oid> --workflow name [--timeout seconds]
   logs <file> [--max-bytes N] [--tail-lines N]  Bounded local log tail
   review <claude|codex|opencode> [effort] [--base <local-ref>]
   pr open [title]                       Body from stdin; branch already pushed
   pr merge <subject-or-empty> <head-oid> <base-branch>
+  pr context | checks [--wait] [--head oid] [--timeout seconds]
+  pr preflight <reviewed-head> <base-branch> <reviewed-base>
+  pr threads list | reply <comment-id> [--body-file file] | resolve <thread-id>
   versions <plan|bump|check|prepare> <base-oid>
   versions resolve-conflicts
   dependencies check-terraform-plan <json-file>  Read-only destructive-plan check
@@ -67,6 +91,8 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
   }
   if (command === "--version") { usage(args.length === 0, "Unexpected version arguments."); writeSync(1, `${metadata.version}\n`); return 0; }
   if (command === "run") return runCommand(args);
+  if (command === "ci") { usage(args.shift() === "gate", "Usage: ci gate <needs.json|-> [--policy policy.json]"); return gateCommand(args); }
+  if (command === "release") return releaseCommand(args);
   if (command === "logs") return inspectLog(args);
   if (command === "dependencies") {
     usage(args.length === 2 && args[0] === "check-terraform-plan", "Usage: agent-tool dependencies check-terraform-plan <json-file>");
@@ -124,6 +150,15 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
   const root = gitRoot();
   process.chdir(root);
   loadConfig(root); // Validate policy before running a reviewer or mutating GitHub.
+  if (command === "branch") return branchCommand(args);
+  if (command === "commits") return commitsCommand(args);
+  if (command === "hooks") return hooksCommand(args);
+  if (command === "repo") return repoCommand(args);
+  if (command === "policy") return policyCommand(args);
+  if (command === "toolchain") return toolchainCommand(args);
+  if (command === "run-group") return runGroup(args);
+  if (command === "runs") return listRuns(args);
+  if (command === "checks") { usage(args.shift() === "binaries", "Usage: checks binaries [--staged|--all|--range range|--from-upstream]"); return binariesCommand(args); }
   if (command === "review") {
     const name = args.shift(); usage(!!name, "Usage: agent-tool review <claude|codex|opencode> [effort] [--base ref]");
     let effort: string | undefined, base: string | undefined;
@@ -135,6 +170,7 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
     return review(root, name!, effort, base);
   }
   if (command === "pr") {
+    if (["context", "checks", "preflight", "threads"].includes(args[0]!)) return prWorkflowCommand(args);
     const action = args.shift();
     if (action === "open") { usage(args.length <= 1, "Usage: agent-tool pr open [title]"); return openPr(root, args[0]); }
     usage(action === "merge" && args.length === 3, "Usage: agent-tool pr merge <subject-or-empty> <reviewed-head-oid> <base-branch>");

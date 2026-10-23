@@ -1,5 +1,9 @@
 {
   "schemaVersion": 1,
+  "branch": {
+    "exempt": ["main"],
+    "maxLength": 72
+  },
   "merge": {
     "requiredChecks": [
       {"name": "verify (ubuntu-latest)", "workflow": "CI"},

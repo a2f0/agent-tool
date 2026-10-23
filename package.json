@@ -1,6 +1,6 @@
 {
   "name": "@a2f0/agent-tool",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "packageManager": "bun@1.4.3",
   "type": "module",
   "description": "Portable cross-agent review, PR workflows, and shared skills",
@@ -28,7 +28,7 @@
     "start": "bun src/index.ts",
     "test": "bun test src scripts",
     "typecheck": "tsc --noEmit",
-    "generate": "bun scripts/bundle-skills.ts",
+    "generate": "bun scripts/build/bundle-skills.ts",
     "build": "bun run generate && bun build --compile --minify src/index.ts --outfile dist/agent-tool"
   },
   "devDependencies": {

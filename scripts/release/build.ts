@@ -2,12 +2,12 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import metadata from "../package.json";
+import metadata from "../../package.json";
 
-const root = path.resolve(import.meta.dir, "..");
+const root = path.resolve(import.meta.dir, "../..");
 const targets = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"];
 const repository = process.argv[2];
-if (!repository || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error("Usage: bun scripts/release.ts <owner/repository>");
+if (!repository || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error("Usage: bun scripts/release/build.ts <owner/repository>");
 execFileSync(process.execPath, ["run", "generate"], { cwd: root, stdio: "inherit" });
 const checksums: Record<string, string> = {};
 for (const target of targets) {

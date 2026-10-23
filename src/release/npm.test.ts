@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { decidePublish, parseRegistryState } from "./npm-publish-decision";
+import { decidePublish, parseRegistryState } from "./npm";
 
 const state = { latest: "0.2.0", versions: ["0.1.0", "0.1.1", "0.2.0"] };
 

@@ -108,7 +108,7 @@ export function parsePullRequestMergeTarget(
   return { baseRefName, headOid, id };
 }
 
-function resolvePullRequestMergeTarget(
+export function resolvePullRequestMergeTarget(
   pr: {
     prNumber: string;
     repo: string;

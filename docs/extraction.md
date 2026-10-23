@@ -1,4 +1,4 @@
-# Extraction record
+# Extraction history
 
 The source inventory records selected repository-local `packages/agent-tool`
 implementations and the older `tearleads.old/scripts/agents/tooling/agentTool.ts`
@@ -7,7 +7,7 @@ checked-out commit IDs, and tooling working-tree status. To create a new local
 report for a collection of projects:
 
 ```sh
-python3 scripts/inventory.py ~/github --output /tmp/agent-tool-inventory.json
+python3 scripts/checks/inventory.py ~/github --output /tmp/agent-tool-inventory.json
 ```
 
 The inventory reads known tooling/skill locations and skips dependency, build,
@@ -42,7 +42,7 @@ restrictions. The compiled launcher eliminates running a feature checkout's
 TypeScript tool package. Helper Git operations disable hooks. Executable lookup
 rejects workspace binaries, and modern review checks HEAD after execution.
 
-The five core coordinating skills were rewritten from the existing workflows
+The original five core coordinating skills were rewritten from the existing workflows
 into short harness-neutral instructions. They retain reviewed-head identity,
 blocking-finding repair/re-review, fallback disclosure, CI/base freshness,
 confirmed-merge cleanup, and user-work preservation, while leaving project
@@ -70,9 +70,10 @@ and policy contracts. Copying every project skill into a global installation
 would preserve application coupling rather than remove it.
 
 The legacy Octokit-based CLI also has a broader GitHub management surface:
-issues/sub-issues, labels, review-thread replies/resolution, security alerts,
-workflow reruns/cancellation/artifacts, and Gemini review coordination. Those
-handlers are inventoried but are not part of this initial review/PR extraction.
+issues/sub-issues, labels, security alerts,
+workflow reruns/cancellation/artifacts, and Gemini review coordination. Review-thread replies and resolution are now shared commands with pagination
+and original-thread membership checks. The remaining handlers were inventoried
+but are outside the current review/PR workflow.
 They are suitable candidates for a separate GitHub operations module. Its
 infrastructure wrappers, editor-title changes, project refresh scripts, and
 check-run approval recovery need separate project/operator contracts rather
