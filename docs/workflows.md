@@ -214,13 +214,14 @@ Otherwise it removes the matching local branch, even after a squash merge or
 when the remote branch is already absent, and deletes the matching remote ref
 through GitHub REST, avoiding pre-push hooks. Local pruning uses the confirmed
 PR and exact shipped commit rather than Git's ancestry-based merged-branch test.
-It preserves branches checked out in another worktree. GitHub's DELETE ref API has no
-atomic expected-OID argument: the ref is rechecked immediately before deletion,
+If the feature branch is checked out in another worktree, cleanup fails after
+updating the default branch and preserves both feature refs. GitHub's DELETE ref
+API has no atomic expected-OID argument: the ref is rechecked before deletion,
 but a concurrent update between those calls remains a limitation. Cleanup
 reports completed steps if a later step fails; `deleted-local-branch` records a
 local deletion, while an already absent branch needs no deletion step. Verify the
-local feature ref is absent before reporting pruning complete. Dependency/hook setup and live
-deployment checks remain repository-specific steps after cleanup. Fork cleanup
+local feature ref is absent before reporting pruning complete. Dependency/hook
+setup and live deployment checks remain repository-specific steps after cleanup. Fork cleanup
 requires explicit manual remote handling and is refused by this command.
 
 ## CI aggregate gates

@@ -21,6 +21,9 @@ Pass `--keep-branch` when the user asked to preserve both feature refs.
 Read the receipt's completed steps if a later operation fails; do not claim full
 cleanup from a partial result. Verify the final branch and clean worktree, and
 check that `git branch --list <feature-branch>` is empty unless keeping the branch.
+If the feature branch is checked out in another worktree, shared cleanup reports
+a partial failure after updating the default branch and leaves both feature refs
+in place; preserve that worktree and report the remaining cleanup.
 
 Remote branch deletion uses GitHub REST after checking the live ref to avoid
 pre-push hooks. The API has no atomic expected-OID delete guard; the check and

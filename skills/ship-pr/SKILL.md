@@ -59,14 +59,11 @@ do not reduce test scope, skip checks, silence warnings, or mask failures.
    versions are managed, `agent-tool versions check <base-oid>` must pass for the
    live base. Use the squash-merge skill to merge the exact reviewed HEAD.
 5. After confirmed MERGED, use the reset skill to return to the updated default
-   branch and prune the shipped local feature branch as part of cleanup. Where
-   shared cleanup meets repository policy, preview
-   `agent-tool repo cleanup <PR-number> <shipped-head>`, then run it with `--apply`;
-   it removes the matching local and remote feature refs, including after a
-   squash merge or when GitHub already deleted the remote branch. If the user
-   requested keep-branch, pass `--keep-branch` to preserve both refs. Check the
-   cleanup receipt and verify the local feature ref is absent unless preserved;
-   report incomplete cleanup explicitly. Apply documented dependency/hook setup.
+   branch and prune the shipped local feature branch as part of cleanup, honoring
+   stronger repository cleanup rules. If the user requested keep-branch, preserve
+   both feature refs. Check the cleanup receipt and verify the local feature ref
+   is absent unless preserved; report incomplete cleanup explicitly. Apply
+   documented dependency/hook setup.
 6. When the project publishes npm packages, use `agent-tool release verify
    <package> <version> <merge-oid> --workflow <publish-workflow>` to verify the
    exact workflow and tarball, allowing registry propagation time. When the
