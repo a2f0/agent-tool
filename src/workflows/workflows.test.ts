@@ -166,7 +166,34 @@ test("review listing paginates nested comments and resolution rejects foreign th
 test("cleanup previews without changes, then deletes only exact shipped refs through REST", () => {
   const f = githubFixture(); f.save({ status: "MERGED" });
   expect(f.run(["repo", "cleanup", "1", f.commit]).status).toBe(0); expect(f.git(["branch", "--show-current"])).toBe("chore/workflow"); expect(existsSync(f.stateFile + ".deleted")).toBe(false);
-  const result = f.run(["repo", "cleanup", "1", f.commit, "--apply"]); expect(result.status).toBe(0); expect(JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))).completed).toContain("deleted-remote-branch"); expect(f.git(["branch", "--show-current"])).toBe("main"); expect(existsSync(f.stateFile + ".deleted")).toBe(true);
+  const result = f.run(["repo", "cleanup", "1", f.commit, "--apply"]); expect(result.status).toBe(0);
+  expect(JSON.parse(result.stdout).completed).toEqual(["updated-default", "deleted-local-branch", "deleted-remote-branch"]);
+  expect(f.git(["branch", "--show-current"])).toBe("main"); expect(f.git(["branch", "--list", "chore/workflow"])).toBe(""); expect(existsSync(f.stateFile + ".deleted")).toBe(true);
+  const again = f.run(["repo", "cleanup", "1", f.commit, "--apply"]);
+  expect(again.status).toBe(0); expect(JSON.parse(again.stdout).completed).toEqual(["updated-default"]);
+});
+test("cleanup prunes a squash-merged local branch after GitHub deleted the remote", () => {
+  const f = githubFixture();
+  writeFileSync(path.join(f.root, "tracked"), "shipped change\n"); f.git(["commit", "-am", "feat: shipped change"]);
+  const shipped = f.git(["rev-parse", "HEAD"]); f.git(["push", "origin", "chore/workflow"]);
+  f.git(["switch", "main"]); f.git(["merge", "--squash", "chore/workflow"]); f.git(["commit", "-m", "feat: shipped change (#1)"]);
+  const merge = f.git(["rev-parse", "HEAD"]); f.git(["push", "origin", "main", ":chore/workflow"]);
+  expect(spawnSync("git", ["merge-base", "--is-ancestor", shipped, merge], { cwd: f.root, env: f.env }).status).toBe(1);
+  f.git(["switch", "chore/workflow"]); f.save({ status: "MERGED", apiHead: shipped, commit: merge, liveBase: merge });
+  const result = f.run(["repo", "cleanup", "1", shipped, "--apply"]);
+  expect(result.status).toBe(0); expect(JSON.parse(result.stdout).completed).toEqual(["updated-default", "deleted-local-branch"]);
+  expect(f.git(["branch", "--show-current"])).toBe("main"); expect(f.git(["rev-parse", "HEAD"])).toBe(merge);
+  expect(f.git(["branch", "--list", "chore/workflow"])).toBe(""); expect(f.git(["status", "--porcelain"])).toBe("");
+  expect(existsSync(f.stateFile + ".deleted")).toBe(false);
+});
+test("cleanup preserves a shipped branch checked out in another worktree", () => {
+  const f = githubFixture(); f.save({ status: "MERGED" }); f.git(["switch", "main"]);
+  const linked = path.join(f.root, ".git/linked"); f.git(["worktree", "add", linked, "chore/workflow"]);
+  const result = f.run(["repo", "cleanup", "1", f.commit, "--apply"]);
+  expect(result.status).toBe(1); expect(JSON.parse(result.stdout).completed).toEqual(["updated-default"]);
+  expect(f.git(["rev-parse", "refs/heads/chore/workflow"])).toBe(f.commit);
+  expect(existsSync(f.stateFile + ".deleted")).toBe(false);
+  expect(execFileSync("git", ["branch", "--show-current"], { cwd: linked, env: f.env, encoding: "utf8" }).trim()).toBe("chore/workflow");
 });
 test("cleanup keeps branches on request and rejects unmerged or moved HEAD", () => {
   const f = githubFixture(); expect(f.run(["repo", "cleanup", "1", f.commit, "--apply"]).status).toBe(1); f.save({ status: "MERGED" });

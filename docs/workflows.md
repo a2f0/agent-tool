@@ -210,11 +210,16 @@ at the exact shipped HEAD. It preserves dirty or unrelated branches, rejects
 local/remote feature branches that moved, fetches the default branch, verifies
 it contains the merge commit, and only fast-forwards an existing local default.
 `--keep-branch` updates the checkout while preserving both feature refs.
-Otherwise it removes the matching local branch and deletes the matching remote
-ref through GitHub REST, avoiding pre-push hooks. GitHub's DELETE ref API has no
+Otherwise it removes the matching local branch, even after a squash merge or
+when the remote branch is already absent, and deletes the matching remote ref
+through GitHub REST, avoiding pre-push hooks. Local pruning uses the confirmed
+PR and exact shipped commit rather than Git's ancestry-based merged-branch test.
+It preserves branches checked out in another worktree. GitHub's DELETE ref API has no
 atomic expected-OID argument: the ref is rechecked immediately before deletion,
 but a concurrent update between those calls remains a limitation. Cleanup
-reports completed steps if a later step fails. Dependency/hook setup and live
+reports completed steps if a later step fails; `deleted-local-branch` records a
+local deletion, while an already absent branch needs no deletion step. Verify the
+local feature ref is absent before reporting pruning complete. Dependency/hook setup and live
 deployment checks remain repository-specific steps after cleanup. Fork cleanup
 requires explicit manual remote handling and is refused by this command.
 
