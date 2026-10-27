@@ -1,34 +1,44 @@
 # agent-tool
 
-Shared Git, GitHub, review, validation, and release workflows for repositories
-coordinated by Claude Code, Codex, and OpenCode. Repository policy stays in
-`agent-tool.json`; portable skills coordinate independently reviewed changes.
+agent-tool is a command-line tool and a set of portable skills for repositories
+where Claude Code, Codex, or OpenCode make the changes. It provides shared Git,
+GitHub, review, validation, and release workflows: independent agent reviews of
+a committed branch, guarded pushes and squash merges of the exact reviewed
+commit, package versioning, brand image rendering, and compact output for noisy
+commands. Repository policy stays in `agent-tool.json`; the portable skills
+coordinate independently reviewed changes.
 
-## Install
+## Quick start
+
+Install [Bun](https://bun.sh/) 1.3.11 or newer and Git, then in the project that
+will use agent-tool:
 
 ```sh
 bun add --dev --exact @a2f0/agent-tool
-# npm projects also need Bun on PATH to run the executable:
-npm install --save-dev --save-exact @a2f0/agent-tool
-```
-
-The npm package ships source and embedded skills with no install script. It needs
-Bun 1.3.11 or newer; version preparation needs Bun 1.4 or newer. Git is required,
-and GitHub operations require an authenticated `gh` supporting `pr checks --json`.
-Independent reviews require an authenticated Claude Code, Codex, or OpenCode CLI.
-A compiled standalone executable needs no Bun or Node at runtime.
-
-```sh
 bun run agent-tool init
 bun run agent-tool skills install --apply
 bun run agent-tool doctor
 ```
 
+Restart the agent harness after installing skills if its discovery cache needs
+refreshing.
+
+The npm package ships source and embedded skills with no install script. Bun runs
+the executable, so npm projects also need Bun on PATH:
+
+```sh
+npm install --save-dev --save-exact @a2f0/agent-tool
+```
+
+Version preparation needs Bun 1.4 or newer. GitHub operations require an
+authenticated `gh` supporting `pr checks --json`, and independent reviews require
+an authenticated Claude Code, Codex, or OpenCode CLI. A compiled standalone
+executable needs no Bun or Node at runtime.
+
 Add `"agent-tool": "agent-tool"` to package scripts, or invoke
 `node_modules/.bin/agent-tool` directly. Use the direct executable for an empty
 positional argument. Global `--repo <directory>` and `--config <file>` select a
-checkout and explicit policy file. Restart the agent harness after installing
-skills if its discovery cache needs refreshing.
+checkout and explicit policy file.
 
 ## Normal usage
 
@@ -44,10 +54,26 @@ agent-tool pr preflight <reviewed-head> <base-branch> <reviewed-base>
 agent-tool pr merge 'chore: maintain repository' <reviewed-head> <base-branch>
 ```
 
-Use the `ship-pr` skill for the full validation, versioning, independent review,
-feedback, merge, cleanup, and deployment workflow. A successful review process
-means a complete review was returned; read its final verdict and address blocking
-findings before shipping. Pushing and merging remain explicit authorized actions.
+The bundled `ship-pr` skill runs the full validation, versioning, independent
+review, feedback, merge, cleanup, and deployment workflow from your agent
+harness. The [CLI reference](docs/reference.md#commands) explains what a review
+result means, and [shared workflows](docs/workflows.md) describes each
+repository command's contract.
+
+## Development
+
+To work on agent-tool itself, install [mise](https://mise.jdx.dev/), then run
+from a clone:
+
+```sh
+mise install
+bun install --frozen-lockfile
+bun src/index.ts --help
+bun test
+```
+
+[Development](docs/development.md) covers the source layout, the full
+validation suite, and release procedures.
 
 ## Documentation
 
