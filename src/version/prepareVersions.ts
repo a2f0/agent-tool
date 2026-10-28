@@ -1,7 +1,7 @@
 import { loadConfig } from "../config";
 import { validateCommitSubject } from "../pr/validateCommitSubject";
 import { checkVersions, planVersions, rewriteVersions } from "./bumpVersions";
-import { assertBunLockVersions } from "./lockfileVersions";
+import { assertBunLockVersions, lockedWorkspaceVersions, lostWorkspaceReferences, unresolvedDependencies } from "./lockfileVersions";
 import {
   assertAllowedPaths,
   assertClean,
@@ -69,11 +69,24 @@ export function prepareVersions(rootDir: string, baseOid?: string): number {
   const allowed = [...pending.map((plan) => plan.manifest), ...(lockfile ? [lockfile] : [])];
   let committed = false;
   let lockfileChanged = false;
+  if (lockfile) {
+    // The refresh below is unfrozen; it may record workspace changes, never resolve a hand-added package.
+    const missing = unresolvedDependencies(rootDir);
+    if (missing.length) {
+      throw new Error(`bun.lock does not record ${missing.join(", ")}; add or change third-party packages through agent-tool bun commands, or refresh the lockfile with approval, before preparing versions.`);
+    }
+  }
+  const versionsBefore = lockfile ? lockedWorkspaceVersions(rootDir) : undefined;
   try {
     assertHead(rootDir, startHead);
     rewriteVersions(rootDir, baseCommit);
+    if (versionsBefore) {
+      // A bump can leave a version-pinned reference unsatisfied by its workspace, sending it to the registry.
+      const lost = lostWorkspaceReferences(rootDir, versionsBefore);
+      if (lost.length) throw new Error(`The version bump leaves ${lost.join(", ")} unsatisfied by the workspace, so Bun would fetch it from the registry; use a workspace: spec.`);
+    }
     if (lockfile) {
-      // Also repairs a stale lockfile after a deliberate release or new package.
+      // Records the bumped workspace versions in the lockfile.
       runProjectCommand(rootDir, ["bun", "install", "--lockfile-only", "--ignore-scripts"]);
       assertBunLockVersions(rootDir);
     }

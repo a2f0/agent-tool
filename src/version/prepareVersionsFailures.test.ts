@@ -61,7 +61,8 @@ describe("prepareVersions CLI failures", () => {
       write(rootDir, "packages/windowing/src/app.ts", "export const a = 1;\n");
       if (stage === "install") {
         const root = JSON.parse(read(rootDir, "package.json"));
-        root.dependencies = { missing: "file:missing-package" };
+        // An internal reference passes the third-party lockfile check, then fails in Bun.
+        root.dependencies = { missing: "workspace:*" };
         write(rootDir, "package.json", `${JSON.stringify(root)}\n`);
       } else if (stage === "validation") {
         write(rootDir, "scripts/lint.ts", "process.exit(41);\n");

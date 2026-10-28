@@ -130,6 +130,58 @@ describe("prepareVersions CLI", () => {
     expect(fixture.lintPaths()).toEqual(["bun.lock"]);
   });
 
+  test("refuses to resolve a third-party package added by hand", () => {
+    const fixture = versionPreparationFixture();
+    const { rootDir } = fixture;
+    const base = mainOid(rootDir);
+    write(rootDir, "packages/new/package.json", JSON.stringify({ name: "new", version: "1.2.3", dependencies: { "left-pad": "1.3.0" } }, null, 2) + "\n");
+    const head = commitAll(rootDir, "feat: add workspace with a dependency");
+    const result = fixture.prepare(base);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("bun.lock does not record packages/new: left-pad@1.3.0");
+    expect(git(rootDir, ["rev-parse", "HEAD"])).toBe(head);
+  });
+
+  test("refuses a re-sourced, peer, or catalog declaration the lockfile does not record", () => {
+    const fixture = versionPreparationFixture();
+    const { rootDir } = fixture;
+    const base = mainOid(rootDir);
+    const root = JSON.parse(read(rootDir, "package.json"));
+    root.catalog = { "left-pad": "1.3.0" };
+    root.overrides = { "nested@1.0.0": { child: "2.0.0" } };
+    write(rootDir, "package.json", JSON.stringify(root, null, 2) + "\n");
+    const frontend = JSON.parse(read(rootDir, FRONTEND));
+    frontend.peerDependencies = { react: "^19.0.0" };
+    write(rootDir, FRONTEND, JSON.stringify(frontend, null, 2) + "\n");
+    commitAll(rootDir, "feat: declare unrecorded packages");
+    const result = fixture.prepare(base);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("catalog: left-pad@1.3.0");
+    expect(result.stderr).toContain('overrides: nested@1.0.0@{"child":"2.0.0"}');
+    expect(result.stderr).toMatch(/packages\/windowing: react@\^19\.0\.0/);
+  });
+
+  for (const committed of [false, true]) test(`refuses a ${committed ? "committed" : "prepared"} bump that would send a version-pinned workspace reference to the registry`, () => {
+    const fixture = versionPreparationFixture();
+    const { rootDir } = fixture;
+    const frontend = JSON.parse(read(rootDir, FRONTEND));
+    const root = JSON.parse(read(rootDir, "package.json"));
+    root.dependencies = { [frontend.name]: frontend.version };
+    write(rootDir, "package.json", JSON.stringify(root, null, 2) + "\n");
+    const install = Bun.spawnSync([process.execPath, "install", "--lockfile-only", "--ignore-scripts"], { cwd: rootDir, stdout: "pipe", stderr: "pipe" });
+    expect(install.exitCode).toBe(0);
+    commitAll(rootDir, "chore: pin the frontend by version");
+    const base = commitOnMain(rootDir, { "README.md": "main advanced\n" });
+    mergeMain(rootDir);
+    if (committed) write(rootDir, FRONTEND, JSON.stringify({ ...frontend, version: "0.8.0" }, null, 2) + "\n");
+    else write(rootDir, "packages/windowing/src/app.ts", "export const changed = true;\n");
+    const head = commitAll(rootDir, "feat: change frontend");
+    const result = fixture.prepare(base);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(`The version bump leaves .: ${frontend.name}@${frontend.version} unsatisfied by the workspace`);
+    expect(git(rootDir, ["rev-parse", "HEAD"])).toBe(head);
+  });
+
   test("root-only changes produce no version commit", () => {
     const fixture = versionPreparationFixture();
     write(fixture.rootDir, "README.md", "updated\n");

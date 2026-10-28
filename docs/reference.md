@@ -115,6 +115,12 @@ For repository workflow commands added alongside these interfaces, see
 | `skills list` | List embedded portable skills |
 | `skills install [--harness all\|claude\|codex\|opencode] [--apply]` | Preview by default; install or update managed skills |
 | `skills check [--harness all\|claude\|codex\|opencode]` | Read-only CI check for current managed skills |
+| `bun install [--cwd dir]` | Frozen-lockfile install with the Bun that `.mise.toml` pins; requires an existing lockfile |
+| `bun update <name[@version]>... [--cwd dir]` | Change versions of declared registry dependencies only, keeping each one's section |
+| `bun remove <name>... [--cwd dir]` | Remove declared dependencies only |
+| `bun add <name@version>... [--dev\|--optional\|--peer] [--exact] [--cwd dir]` | Add new dependencies; the one dependency verb that asks for approval |
+| `permissions show\|check [--harness all\|claude\|codex]` | Print, or check in CI, the harness permission rules generated from command classes |
+| `permissions install [--harness all\|claude\|codex] [--apply]` | Preview by default; write the managed rules into `.claude/settings.json` and `.codex/rules/` |
 | `images list [target...]` | List the files each image target writes, without rendering |
 | `images build [target...] [--out dir]` | Render image targets from `assets/brand/*.svg`; `--out` redirects one target |
 | `init` / `config show` | Create or inspect data-only project policy |
@@ -388,6 +394,8 @@ and Debian packaging. Artifact workflows do not create a hosted tap or APT repo.
 - [Design](design.md): component boundaries and implementation choices.
 - [Shared workflows](workflows.md): branch, hook, CI, and shipping contracts.
 - [Images](images.md): brand image sources, targets, and output settings.
+- [Permissions](permissions.md): command classes and the harness rules
+  generated from them.
 - [Development](development.md): reproducible validation and release procedures.
 - [Extraction record](extraction.md): the projects this tool was extracted
   from.
