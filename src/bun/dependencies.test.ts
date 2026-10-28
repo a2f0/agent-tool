@@ -6,6 +6,7 @@ import path from "node:path";
 import { manifestViolations, parseRequested, registrySpec } from "./dependencies";
 
 const cli = path.resolve(import.meta.dir, "../index.ts");
+const LOCK = JSON.stringify({ lockfileVersion: 1, workspaces: {} });
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
@@ -33,9 +34,10 @@ for (const value of names) {
 if (process.env.STUB_EXTRA) (manifest.dependencies ??= {})[process.env.STUB_EXTRA] = "1.0.0";
 if (process.env.STUB_NEW_WORKSPACE) { fs.mkdirSync(require("node:path").dirname(process.env.STUB_NEW_WORKSPACE), { recursive: true }); fs.writeFileSync(process.env.STUB_NEW_WORKSPACE, JSON.stringify({ name: "evil", dependencies: { surprise: "1.0.0" } })); }
 if (process.env.STUB_EXPAND) { const file = require("node:path").join(process.env.STUB_ROOT, "package.json"); const root = JSON.parse(fs.readFileSync(file, "utf8")); root.workspaces.push(process.env.STUB_EXPAND); fs.writeFileSync(file, JSON.stringify(root)); }
+if (process.env.STUB_SIBLING_LOCK) fs.writeFileSync(process.env.STUB_SIBLING_LOCK, "{}");
 if (process.env.STUB_SIBLING) fs.writeFileSync(process.env.STUB_SIBLING, JSON.stringify({ name: "sibling", dependencies: { surprise: "1.0.0" } }));
 fs.writeFileSync("package.json", JSON.stringify(manifest, null, 2));
-fs.writeFileSync(process.env.STUB_NESTED_LOCK ? "bun.lock" : require("node:path").join(process.env.STUB_ROOT, "bun.lock"), "changed");
+fs.writeFileSync(process.env.STUB_NESTED_LOCK ? "bun.lock" : require("node:path").join(process.env.STUB_ROOT, "bun.lock"), JSON.stringify({ lockfileVersion: 1, workspaces: {}, changed: true }));
 process.exit(process.env.STUB_FAIL ? 1 : 0);
 `;
 
@@ -53,7 +55,7 @@ function fixture(manifest: Record<string, unknown>, options: { pin?: string; ins
   }
   writeFileSync(path.join(project, ".mise.toml"), `[tools]\nbun = "${pin}"\n`);
   writeFileSync(path.join(project, "package.json"), `${JSON.stringify({ name: "fixture", ...manifest }, null, 2)}\n`);
-  writeFileSync(path.join(project, "bun.lock"), "original");
+  writeFileSync(path.join(project, "bun.lock"), LOCK);
   spawnSync("git", ["init", "-q"], { cwd: project });
   const run = (args: string[], env: Record<string, string> = {}) => {
     const result = spawnSync(process.execPath, [cli, "bun", ...args], { cwd: project, env: { ...process.env, MISE_DATA_DIR: data, STUB_ROOT: project, ...env }, encoding: "utf8", timeout: 15000 });
@@ -108,8 +110,11 @@ test("dependency commands accept only the root package or a declared workspace",
   expect(JSON.parse(readFileSync(path.join(f.project, "package.json"), "utf8")).workspaces).toEqual(["packages/*"]);
   // Bun treating a workspace as standalone shows up as a nested lockfile, which is refused and removed.
   const nested = f.run(["update", "ms", "--cwd", "packages/web"], { STUB_NESTED_LOCK: "1" });
-  expect(nested.receipt.violations).toEqual(["bun.lock was created beside a workspace package."]);
+  expect(nested.receipt.violations).toEqual(["packages/web/bun.lock changed beside a workspace package."]);
   expect(existsSync(path.join(f.project, "packages/web/bun.lock"))).toBe(false);
+  const siblingLock = f.run(["update", "ms", "--cwd", "packages/web"], { STUB_SIBLING_LOCK: path.join(f.project, "packages/api/bun.lock") });
+  expect(siblingLock.receipt.violations).toEqual(["packages/api/bun.lock changed beside a workspace package."]);
+  expect(existsSync(path.join(f.project, "packages/api/bun.lock"))).toBe(false);
 });
 
 test("update changes only versions, keeping each dependency's section and exact pin, with the pinned Bun", () => {
@@ -145,7 +150,7 @@ test("each verb refuses work outside its permission class before running Bun", (
     expect(result.status).toBe(1);
     expect(result.stderr).toMatch(message);
   }
-  expect(readFileSync(path.join(f.project, "bun.lock"), "utf8")).toBe("original");
+  expect(readFileSync(path.join(f.project, "bun.lock"), "utf8")).toBe(LOCK);
 });
 
 test("add creates only the requested names in one section, and remove deletes only declared names", () => {
@@ -163,7 +168,7 @@ test("unexpected or failed Bun changes are restored, including the lockfile", ()
   expect(extra.status).toBe(1);
   expect(extra.receipt.violations).toEqual(["surprise was unexpectedly added to dependencies."]);
   expect(readFileSync(path.join(f.project, "package.json"), "utf8")).toBe(original);
-  expect(readFileSync(path.join(f.project, "bun.lock"), "utf8")).toBe("original");
+  expect(readFileSync(path.join(f.project, "bun.lock"), "utf8")).toBe(LOCK);
   const grouped = fixture({ dependencies: { ms: "1.0.0" }, devDependencies: { chalk: "^5.0.0" } });
   const early = grouped.run(["update", "ms", "chalk"], { STUB_EXTRA: "surprise" });
   // The second Bun call never runs after the first one's unexpected change.
@@ -210,6 +215,16 @@ test("a bun inside the checkout is never executed", () => {
   const result = f.run(["install"], { PATH: `${bin}${path.delimiter}${process.env.PATH}` });
   expect(result.status).toBe(1);
   expect(existsSync(path.join(f.project, "executed"))).toBe(false);
+});
+
+test("a stale workspace reference stops changes before an unfrozen call", () => {
+  const f = fixture({ workspaces: ["packages/*"], dependencies: { ms: "1.0.0", web: "1.0.0" } });
+  mkdirSync(path.join(f.project, "packages/web"), { recursive: true });
+  writeFileSync(path.join(f.project, "packages/web/package.json"), JSON.stringify({ name: "web", version: "2.0.0" }));
+  writeFileSync(path.join(f.project, "bun.lock"), JSON.stringify({ lockfileVersion: 1, workspaces: { "": { name: "fixture", dependencies: { ms: "1.0.0", web: "1.0.0" } }, "packages/web": { name: "web", version: "1.0.0" } } }));
+  const result = f.run(["update", "ms"]);
+  expect(result.status).toBe(1);
+  expect(result.stderr).toMatch(/\.: web@1\.0\.0 no longer match their workspaces/);
 });
 
 test("install is frozen and requires an existing lockfile", () => {

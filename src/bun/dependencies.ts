@@ -5,6 +5,7 @@ import { createLog } from "../commands/logFile";
 import { DEFAULT_LIMITS, printLogTail } from "../commands/output";
 import { assert, flag, option, output } from "../workflows/core";
 import { pinnedBun, type BunExecutable } from "./toolchain";
+import { lockedWorkspaceVersions, lostWorkspaceReferences } from "../version/lockfileVersions";
 import { packageDirectories, workspacePackage } from "./workspace";
 
 const SECTIONS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"] as const;
@@ -180,14 +181,19 @@ export function bunCommand(args: string[]): number {
   const bunInfo = { path: bun.path, version: bun.version, source: bun.source, pinned: bun.pinned };
   const before = readManifest(file);
   const lockfiles = [path.join(root, "bun.lock"), path.join(root, "bun.lockb")];
-  // A workspace shares the root lockfile; Bun creating one beside the package means it was treated as standalone.
-  const nested = directory === root ? [] : [path.join(directory, "bun.lock"), path.join(directory, "bun.lockb")];
+  // Workspaces share the root lockfile; Bun creating one beside any package means it was treated as standalone.
+  const nested = packageDirectories(root).filter(item => item !== root).flatMap(item => [path.join(item, "bun.lock"), path.join(item, "bun.lockb")]);
   // Without a lockfile, Bun resolves whatever package.json names, including hand-added packages.
   assert(lockfiles.some(item => existsSync(item)), "No bun.lock was found; a first install resolves new packages, so run it directly with approval.");
   // Before a change, the lockfile must already cover every declaration, or Bun would also resolve a hand-added package.
   const preflight = ["install", "--frozen-lockfile", "--lockfile-only"];
   const workspaceNames = new Set(packageDirectories(root).map(item => (JSON.parse(readFileSync(path.join(item, "package.json"), "utf8")) as { name?: string }).name).filter((name): name is string => typeof name === "string"));
   const calls = action === "install" ? [["install", "--frozen-lockfile"]] : [preflight, ...plan(action, before, requested, exact, addSection, workspaceNames)];
+  if (action !== "install" && existsSync(path.join(root, "bun.lock"))) {
+    // A frozen check can accept stale workspace versions; an unfrozen call would then fetch such a reference.
+    const lost = lostWorkspaceReferences(root, lockedWorkspaceVersions(root));
+    assert(!lost.length, `${lost.join(", ")} no longer match their workspaces, so Bun would fetch them from the registry; fix those references before changing dependencies.`);
+  }
   // Lifecycle scripts can touch any workspace manifest; every one but the target must stay as it was.
   const others = packageDirectories(root).map(item => path.join(item, "package.json")).filter(item => item !== file && existsSync(item));
   const othersBefore = new Map(others.map(item => [item, JSON.stringify(readManifest(item))]));
@@ -211,7 +217,7 @@ export function bunCommand(args: string[]): number {
     after = readManifest(file);
     const found = manifestViolations(action, before, after, names, addSection);
     for (const item of others) if (JSON.stringify(readManifest(item)) !== othersBefore.get(item)) found.push(`${path.relative(root, item)} changed outside the target package.`);
-    for (const item of saved.changed().filter(changed => nested.includes(changed))) found.push(`${path.relative(directory, item)} was created beside a workspace package.`);
+    for (const item of saved.changed().filter(changed => nested.includes(changed))) found.push(`${path.relative(root, item)} changed beside a workspace package.`);
     return found;
   };
   try {

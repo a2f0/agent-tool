@@ -60,7 +60,9 @@ per-package changes, and each Bun invocation.
 Every command requires an existing lockfile. Before `update`, `remove`, or `add`
 changes anything, it runs `bun install --frozen-lockfile --lockfile-only` and
 stops if `package.json` declares something the lockfile does not cover, so a
-hand-added package cannot be resolved as a side effect of an allowed change.
+hand-added package cannot be resolved as a side effect of an allowed change. They
+also refuse while a version-pinned workspace reference no longer matches its
+workspace, since Bun would fetch that name from the registry.
 `versions prepare`, which refreshes the lockfile for bumped and new workspace
 packages, likewise refuses when any third-party declaration, in any section of
 any workspace, or a root catalog, override, or patch differs from what
@@ -78,7 +80,7 @@ cannot edit a sibling package or create one for a later call to resolve.
 After each Bun call, the command compares `package.json` with its earlier state. If
 Bun changed anything the verb does not allow (another dependency, another
 section, any field outside the dependency sections, or a workspace root
-manifest, or a new lockfile beside a workspace package), or Bun failed, the
+manifest, or a lockfile beside any workspace package), or Bun failed, the
 command restores `package.json` and the lockfiles and exits 1 with the
 violations. A frozen install may change neither file, which
 also covers the project's own lifecycle scripts. The files are restored too if
