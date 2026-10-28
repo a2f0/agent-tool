@@ -5,6 +5,7 @@ import { createLog } from "../commands/logFile";
 import { DEFAULT_LIMITS, printLogTail } from "../commands/output";
 import { assert, flag, option, output } from "../workflows/core";
 import { pinnedBun, type BunExecutable } from "./toolchain";
+import { workspacePackage } from "./workspace";
 
 const SECTIONS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"] as const;
 type Section = typeof SECTIONS[number];
@@ -47,13 +48,6 @@ function readManifest(file: string): Manifest {
 
 function declarations(manifest: Manifest, name: string): { section: Section; spec: string }[] {
   return SECTIONS.flatMap(section => { const spec = manifest[section]?.[name]; return spec === undefined ? [] : [{ section, spec }]; });
-}
-
-function lockfileDirectory(directory: string): string {
-  for (let current = directory; ; current = path.dirname(current)) {
-    if (existsSync(path.join(current, "bun.lock")) || existsSync(path.join(current, "bun.lockb"))) return current;
-    if (current === path.dirname(current)) return directory;
-  }
 }
 
 /** Compare everything except dependency sections, which callers check entry by entry. */
@@ -165,7 +159,7 @@ function plan(action: "add" | "update" | "remove", manifest: Manifest, requested
     assert(registrySpec(current.spec), `${name} uses a non-registry source (${current.spec}); update it manually.`);
     assert(spec === undefined || registrySpec(spec), `${name} can only be updated to a registry version or tag.`);
     // An explicit version is written as given; moving to latest keeps an exact pin exact.
-    const flags = [...SECTION_FLAGS[current.section], ...(spec === undefined && EXACT.test(current.spec) ? ["--exact"] : [])];
+    const flags = [...SECTION_FLAGS[current.section], ...(EXACT.test(spec ?? current.spec) ? ["--exact"] : [])];
     const key = flags.join(" ");
     groups.set(key, [...(groups.get(key) ?? []), `${name}@${spec ?? "latest"}`]);
   }
@@ -175,21 +169,23 @@ function plan(action: "add" | "update" | "remove", manifest: Manifest, requested
 export function bunCommand(args: string[]): number {
   const action = args.shift();
   assert(action === "install" || action === "add" || action === "update" || action === "remove", USAGE);
-  const directory = path.resolve(option(args, "--cwd") ?? ".");
+  const target = path.resolve(option(args, "--cwd") ?? ".");
+  assert(existsSync(path.join(target, "package.json")), `No package.json in ${target}.`);
+  const { root, directory } = workspacePackage(target);
   const file = path.join(directory, "package.json");
-  assert(existsSync(file), `No package.json in ${directory}.`);
   const { requested, exact, addSection } = parseArgs(action, args);
   const bun = pinnedBun(directory);
   const bunInfo = { path: bun.path, version: bun.version, source: bun.source, pinned: bun.pinned };
   const before = readManifest(file);
-  const root = lockfileDirectory(directory);
   const lockfiles = [path.join(root, "bun.lock"), path.join(root, "bun.lockb")];
+  // A workspace shares the root lockfile; Bun creating one beside the package means it was treated as standalone.
+  const nested = directory === root ? [] : [path.join(directory, "bun.lock"), path.join(directory, "bun.lockb")];
   // Without a lockfile, a frozen install resolves whatever package.json names, including hand-added packages.
   if (action === "install") assert(lockfiles.some(item => existsSync(item)), "No bun.lock was found; a first install resolves new packages, so run it directly with approval.");
   const calls = action === "install" ? [["install", "--frozen-lockfile"]] : plan(action, before, requested, exact, addSection);
   const rootManifest = path.join(root, "package.json");
   const rootBefore = root !== directory && existsSync(rootManifest) ? JSON.stringify(readManifest(rootManifest)) : null;
-  const restored = [...new Set([file, rootManifest, ...lockfiles])];
+  const restored = [...new Set([file, rootManifest, ...lockfiles, ...nested])];
   const saved = snapshot(restored);
   const names = new Set(requested.map(item => item.name));
   const runs = [];
@@ -207,6 +203,7 @@ export function bunCommand(args: string[]): number {
       if (action === "install") violations = saved.changed().map(item => `${path.relative(directory, item) || "package.json"} changed during a frozen install.`);
       else violations = manifestViolations(action, before, after, names, addSection);
       if (!violations.length && rootBefore !== null && JSON.stringify(readManifest(rootManifest)) !== rootBefore) violations.push("The workspace root package.json changed.");
+      for (const item of saved.changed().filter(changed => nested.includes(changed))) violations.push(`${path.relative(directory, item)} was created beside a workspace package.`);
     }
   } catch (error) {
     saved.restore();

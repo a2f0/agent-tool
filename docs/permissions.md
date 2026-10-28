@@ -29,7 +29,10 @@ ask for every frozen install. Treat them as a guard rail, not a sandbox.
 ## Dependency commands
 
 The `bun` commands make the dependency classes enforceable rather than
-conventional. Each runs the Bun that the nearest `.mise.toml` pins, from
+conventional. They work on the checkout's root package or a declared Bun
+workspace, which share the root lockfile; a standalone nested package, which
+would get a lockfile of its own, is refused. Each runs the Bun that the nearest
+`.mise.toml` pins, from
 `$MISE_DATA_DIR/installs/bun/<version>` (default `~/.local/share/mise`), so
 agent shells need no `PATH` prefix. When the pinned install is missing, a `bun`
 on `PATH` is used only if its version matches the pin. Output goes to a private
@@ -41,7 +44,8 @@ per-package changes, and each Bun invocation.
   a registry version to a registry version or tag. It refuses undeclared names,
   workspace, alias, Git, URL, and path sources, and packages declared in more
   than one of those sections. Without a version it moves to `latest`, keeping an
-  exact pin exact; an explicit version is written as given. Peer ranges are a
+  exact pin exact; an explicit version is written as given, exact versions with
+  `--exact`. Peer ranges are a
   compatibility contract and are never rewritten.
 - `bun remove <name>...` removes only declared names.
 - `bun add <name@version>...` adds only names that are not declared, with an
@@ -53,8 +57,9 @@ per-package changes, and each Bun invocation.
 After Bun exits, the command compares `package.json` with its earlier state. If
 Bun changed anything the verb does not allow (another dependency, another
 section, any field outside the dependency sections, or a workspace root
-manifest), or Bun failed, the command restores `package.json` and the lockfile
-and exits 1 with the violations. A frozen install may change neither file, which
+manifest, or a new lockfile beside a workspace package), or Bun failed, the
+command restores `package.json` and the lockfiles and exits 1 with the
+violations. A frozen install may change neither file, which
 also covers the project's own lifecycle scripts. The files are restored too if
 the manifest cannot be read afterward. `node_modules` is not restored; the next frozen
 install rebuilds it. Updating a dependency can still bring new transitive

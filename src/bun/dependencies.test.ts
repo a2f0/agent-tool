@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { manifestViolations, parseRequested, registrySpec } from "./dependencies";
@@ -31,7 +31,7 @@ for (const value of names) {
 }
 if (process.env.STUB_EXTRA) (manifest.dependencies ??= {})[process.env.STUB_EXTRA] = "1.0.0";
 fs.writeFileSync("package.json", JSON.stringify(manifest, null, 2));
-fs.writeFileSync("bun.lock", "changed");
+fs.writeFileSync(process.env.STUB_NESTED_LOCK ? "bun.lock" : require("node:path").join(process.env.STUB_ROOT, "bun.lock"), "changed");
 process.exit(process.env.STUB_FAIL ? 1 : 0);
 `;
 
@@ -50,8 +50,9 @@ function fixture(manifest: Record<string, unknown>, options: { pin?: string; ins
   writeFileSync(path.join(project, ".mise.toml"), `[tools]\nbun = "${pin}"\n`);
   writeFileSync(path.join(project, "package.json"), `${JSON.stringify({ name: "fixture", ...manifest }, null, 2)}\n`);
   writeFileSync(path.join(project, "bun.lock"), "original");
+  spawnSync("git", ["init", "-q"], { cwd: project });
   const run = (args: string[], env: Record<string, string> = {}) => {
-    const result = spawnSync(process.execPath, [cli, "bun", ...args], { cwd: project, env: { ...process.env, MISE_DATA_DIR: data, ...env }, encoding: "utf8", timeout: 15000 });
+    const result = spawnSync(process.execPath, [cli, "bun", ...args], { cwd: project, env: { ...process.env, MISE_DATA_DIR: data, STUB_ROOT: project, ...env }, encoding: "utf8", timeout: 15000 });
     const receipt = result.stdout.startsWith("{") ? JSON.parse(result.stdout) : null;
     for (const item of receipt?.runs ?? []) directories.push(path.dirname(item.log));
     return { ...result, receipt };
@@ -66,6 +67,24 @@ test("an explicit update version is written as given, without forcing an exact p
   expect(result.status).toBe(0);
   expect(result.receipt.runs[0].command).toEqual(["bun", "add", "ms@^2.0.0"]);
   expect(f.read().dependencies).toEqual({ ms: "^2.0.0" });
+  // An explicit exact version stays exact even where the current spec is a range.
+  expect(f.run(["update", "ms@3.0.0"]).receipt.runs[0].command).toEqual(["bun", "add", "--exact", "ms@3.0.0"]);
+});
+
+test("dependency commands accept only the root package or a declared workspace", () => {
+  const f = fixture({ workspaces: ["packages/*"], dependencies: { ms: "1.0.0" } });
+  for (const directory of ["packages/web", "tools/loose"]) {
+    mkdirSync(path.join(f.project, directory), { recursive: true });
+    writeFileSync(path.join(f.project, directory, "package.json"), JSON.stringify({ name: path.basename(directory), dependencies: { ms: "1.0.0" } }));
+  }
+  expect(f.run(["install", "--cwd", "packages/web"]).status).toBe(0);
+  const loose = f.run(["install", "--cwd", "tools/loose"]);
+  expect(loose.status).toBe(1);
+  expect(loose.stderr).toMatch(/root package or a declared workspace/);
+  // Bun treating a workspace as standalone shows up as a nested lockfile, which is refused and removed.
+  const nested = f.run(["update", "ms", "--cwd", "packages/web"], { STUB_NESTED_LOCK: "1" });
+  expect(nested.receipt.violations).toEqual(["bun.lock was created beside a workspace package."]);
+  expect(existsSync(path.join(f.project, "packages/web/bun.lock"))).toBe(false);
 });
 
 test("update changes only versions, keeping each dependency's section and exact pin, with the pinned Bun", () => {
