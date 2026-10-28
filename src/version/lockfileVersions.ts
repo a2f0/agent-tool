@@ -97,7 +97,8 @@ export function unresolvedDependencies(
   const catalogs = field(rootManifest, "catalogs") ?? field(nested, "catalogs");
   const sources: [string, unknown, unknown][] = [
     ["catalog", field(rootManifest, "catalog") ?? field(nested, "catalog"), field(lock, "catalog")],
-    ...entries(catalogs).map(([name]): [string, unknown, unknown] => [`catalogs.${name}`, field(catalogs, name), field(field(lock, "catalogs"), name)]),
+    // Names from both sides, so deleting a whole named catalog is compared too.
+    ...[...new Set([...entries(catalogs), ...entries(field(lock, "catalogs"))].map(([name]) => name))].map((name): [string, unknown, unknown] => [`catalogs.${name}`, field(catalogs, name), field(field(lock, "catalogs"), name)]),
     ["overrides", field(rootManifest, "overrides") ?? field(rootManifest, "resolutions"), field(lock, "overrides")],
     ["patchedDependencies", field(rootManifest, "patchedDependencies"), field(lock, "patchedDependencies")],
   ];

@@ -47,3 +47,8 @@ test("a catalog pin that a bumped workspace no longer satisfies is lost to the r
   expect(lostWorkspaceReferences(directory, new Map([["api", "1.0.0"]]))).toEqual([".: api@catalog:"]);
   expect(lostWorkspaceReferences(directory, new Map([["api", "2.0.0"]]))).toEqual([]);
 });
+
+test("deleting a whole named catalog is unrecorded", () => {
+  const directory = project({}, { workspaces: { "": { name: "root" } }, catalogs: { react: { react: "19.0.0" } } });
+  expect(unresolvedDependencies(directory)).toEqual(["catalogs.react: removed react"]);
+});
