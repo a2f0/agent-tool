@@ -16,11 +16,14 @@ export function packageDirectories(root: string): string[] {
   if (!existsSync(manifest)) return [];
   const value = JSON.parse(readFileSync(manifest, "utf8")) as { workspaces?: unknown };
   const patterns = Array.isArray(value.workspaces) ? value.workspaces : (value.workspaces as { packages?: unknown } | undefined)?.packages;
+  const list = (Array.isArray(patterns) ? patterns : []).filter((pattern): pattern is string => typeof pattern === "string");
+  // `!pattern` entries exclude directories that the other patterns match.
+  const excluded = list.filter(pattern => pattern.startsWith("!")).map(pattern => new Bun.Glob(pattern.slice(1).replace(/\/$/, "")));
   const directories = new Set([root]);
-  for (const pattern of Array.isArray(patterns) ? patterns : []) {
-    if (typeof pattern !== "string" || pattern.startsWith("!")) continue;
+  for (const pattern of list.filter(pattern => !pattern.startsWith("!"))) {
     for (const match of new Bun.Glob(`${pattern.replace(/\/$/, "")}/package.json`).scanSync({ cwd: root, onlyFiles: true })) {
-      if (!match.split("/").includes("node_modules")) directories.add(path.join(root, path.dirname(match)));
+      const relative = path.dirname(match);
+      if (!match.split("/").includes("node_modules") && !excluded.some(glob => glob.match(relative))) directories.add(path.join(root, relative));
     }
   }
   return [...directories];
