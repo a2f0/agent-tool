@@ -97,13 +97,22 @@ function changes(before: Manifest, after: Manifest, names: Set<string>): Depende
   }));
 }
 
-function snapshot(files: string[]): () => void {
+/** Saved bytes for each file, with a way to put them back and to list which ones changed. */
+function snapshot(files: string[]) {
   const saved = files.map(file => ({ file, contents: existsSync(file) ? readFileSync(file) : null }));
-  return () => {
-    for (const { file, contents } of saved) {
-      if (contents) writeFileSync(file, contents);
-      else if (existsSync(file)) unlinkSync(file);
-    }
+  return {
+    restore() {
+      for (const { file, contents } of saved) {
+        if (contents) writeFileSync(file, contents);
+        else if (existsSync(file)) unlinkSync(file);
+      }
+    },
+    changed(): string[] {
+      return saved.filter(({ file, contents }) => {
+        const now = existsSync(file) ? readFileSync(file) : null;
+        return !(now === null ? contents === null : contents !== null && now.equals(contents));
+      }).map(({ file }) => file);
+    },
   };
 }
 
@@ -155,7 +164,8 @@ function plan(action: "add" | "update" | "remove", manifest: Manifest, requested
     const current = installed[0]!;
     assert(registrySpec(current.spec), `${name} uses a non-registry source (${current.spec}); update it manually.`);
     assert(spec === undefined || registrySpec(spec), `${name} can only be updated to a registry version or tag.`);
-    const flags = [...SECTION_FLAGS[current.section], ...(EXACT.test(current.spec) ? ["--exact"] : [])];
+    // An explicit version is written as given; moving to latest keeps an exact pin exact.
+    const flags = [...SECTION_FLAGS[current.section], ...(spec === undefined && EXACT.test(current.spec) ? ["--exact"] : [])];
     const key = flags.join(" ");
     groups.set(key, [...(groups.get(key) ?? []), `${name}@${spec ?? "latest"}`]);
   }
@@ -171,35 +181,39 @@ export function bunCommand(args: string[]): number {
   const { requested, exact, addSection } = parseArgs(action, args);
   const bun = pinnedBun(directory);
   const bunInfo = { path: bun.path, version: bun.version, source: bun.source, pinned: bun.pinned };
-  if (action === "install") {
-    // Without a lockfile, a frozen install resolves whatever package.json names, including hand-added packages.
-    const root = lockfileDirectory(directory);
-    assert(existsSync(path.join(root, "bun.lock")) || existsSync(path.join(root, "bun.lockb")), "No bun.lock was found; a first install resolves new packages, so run it directly with approval.");
-    const run = runBun(bun, directory, ["install", "--frozen-lockfile"]);
-    output({ ok: run.exitCode === 0, action, directory, bun: bunInfo, runs: [run] });
-    if (run.exitCode !== 0) printLogTail(run.log, DEFAULT_LIMITS, 2);
-    return run.exitCode === 0 ? 0 : 1;
-  }
   const before = readManifest(file);
-  const calls = plan(action, before, requested, exact, addSection);
   const root = lockfileDirectory(directory);
+  const lockfiles = [path.join(root, "bun.lock"), path.join(root, "bun.lockb")];
+  // Without a lockfile, a frozen install resolves whatever package.json names, including hand-added packages.
+  if (action === "install") assert(lockfiles.some(item => existsSync(item)), "No bun.lock was found; a first install resolves new packages, so run it directly with approval.");
+  const calls = action === "install" ? [["install", "--frozen-lockfile"]] : plan(action, before, requested, exact, addSection);
   const rootManifest = path.join(root, "package.json");
   const rootBefore = root !== directory && existsSync(rootManifest) ? JSON.stringify(readManifest(rootManifest)) : null;
-  const restored = [...new Set([file, rootManifest, path.join(root, "bun.lock"), path.join(root, "bun.lockb")])];
-  const restore = snapshot(restored);
+  const restored = [...new Set([file, rootManifest, ...lockfiles])];
+  const saved = snapshot(restored);
   const names = new Set(requested.map(item => item.name));
   const runs = [];
   let violations: string[] = [];
-  for (const call of calls) {
-    const run = runBun(bun, directory, call);
-    runs.push(run);
-    if (run.exitCode !== 0) { violations = [`bun ${call[0]} failed with exit ${run.exitCode}.`]; break; }
+  let after = before;
+  try {
+    for (const call of calls) {
+      const run = runBun(bun, directory, call);
+      runs.push(run);
+      if (run.exitCode !== 0) { violations = [`bun ${call[0]} failed with exit ${run.exitCode}.`]; break; }
+    }
+    if (!violations.length) {
+      after = readManifest(file);
+      // Project lifecycle scripts run during installs too; a frozen install may change neither file.
+      if (action === "install") violations = saved.changed().map(item => `${path.relative(directory, item) || "package.json"} changed during a frozen install.`);
+      else violations = manifestViolations(action, before, after, names, addSection);
+      if (!violations.length && rootBefore !== null && JSON.stringify(readManifest(rootManifest)) !== rootBefore) violations.push("The workspace root package.json changed.");
+    }
+  } catch (error) {
+    saved.restore();
+    throw error;
   }
-  const after = violations.length ? before : readManifest(file);
-  if (!violations.length) violations = manifestViolations(action, before, after, names, addSection);
-  if (!violations.length && rootBefore !== null && JSON.stringify(readManifest(rootManifest)) !== rootBefore) violations.push("The workspace root package.json changed.");
   // Leave no partial dependency change behind; node_modules is rebuilt by the next frozen install.
-  if (violations.length) restore();
+  if (violations.length) saved.restore();
   output({ ok: !violations.length, action, directory, bun: bunInfo, changes: violations.length ? [] : changes(before, after, names), ...(violations.length ? { violations, restored: restored.map(item => path.relative(directory, item) || "package.json") } : {}), runs });
   if (runs.at(-1)?.exitCode) printLogTail(runs.at(-1)!.log, DEFAULT_LIMITS, 2);
   return violations.length ? 1 : 0;

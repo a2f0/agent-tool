@@ -54,7 +54,9 @@ After Bun exits, the command compares `package.json` with its earlier state. If
 Bun changed anything the verb does not allow (another dependency, another
 section, any field outside the dependency sections, or a workspace root
 manifest), or Bun failed, the command restores `package.json` and the lockfile
-and exits 1 with the violations. `node_modules` is not restored; the next frozen
+and exits 1 with the violations. A frozen install may change neither file, which
+also covers the project's own lifecycle scripts. The files are restored too if
+the manifest cannot be read afterward. `node_modules` is not restored; the next frozen
 install rebuilds it. Updating a dependency can still bring new transitive
 packages; the lockfile diff is where review sees them.
 

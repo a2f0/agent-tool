@@ -14,8 +14,12 @@ const STUB = `
 const [command, ...rest] = process.argv.slice(2);
 if (command === "--version") { console.log("9.9.9"); process.exit(0); }
 const fs = require("node:fs");
-if (command === "install") process.exit(0);
+if (process.env.STUB_CORRUPT) { fs.writeFileSync("package.json", "{ not json"); process.exit(0); }
 const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
+if (command === "install") {
+  if (process.env.STUB_EXTRA) { (manifest.dependencies ??= {})[process.env.STUB_EXTRA] = "1.0.0"; fs.writeFileSync("package.json", JSON.stringify(manifest, null, 2)); }
+  process.exit(0);
+}
 const flags = rest.filter(item => item.startsWith("-")), names = rest.filter(item => !item.startsWith("-"));
 const section = flags.includes("--dev") ? "devDependencies" : flags.includes("--optional") ? "optionalDependencies" : flags.includes("--peer") ? "peerDependencies" : "dependencies";
 for (const value of names) {
@@ -55,6 +59,14 @@ function fixture(manifest: Record<string, unknown>, options: { pin?: string; ins
   const read = () => JSON.parse(readFileSync(path.join(project, "package.json"), "utf8"));
   return { project, run, read };
 }
+
+test("an explicit update version is written as given, without forcing an exact pin", () => {
+  const f = fixture({ dependencies: { ms: "1.0.0" } });
+  const result = f.run(["update", "ms@^2.0.0"]);
+  expect(result.status).toBe(0);
+  expect(result.receipt.runs[0].command).toEqual(["bun", "add", "ms@^2.0.0"]);
+  expect(f.read().dependencies).toEqual({ ms: "^2.0.0" });
+});
 
 test("update changes only versions, keeping each dependency's section and exact pin, with the pinned Bun", () => {
   const f = fixture({ dependencies: { ms: "1.0.0" }, devDependencies: { "@scope/tool": "^1.0.0" } });
@@ -108,6 +120,13 @@ test("unexpected or failed Bun changes are restored, including the lockfile", ()
   expect(extra.receipt.violations).toEqual(["surprise was unexpectedly added to dependencies."]);
   expect(readFileSync(path.join(f.project, "package.json"), "utf8")).toBe(original);
   expect(readFileSync(path.join(f.project, "bun.lock"), "utf8")).toBe("original");
+  const corrupt = f.run(["update", "ms"], { STUB_CORRUPT: "1" });
+  expect(corrupt.status).toBe(1);
+  expect(readFileSync(path.join(f.project, "package.json"), "utf8")).toBe(original);
+  const install = f.run(["install"], { STUB_EXTRA: "surprise" });
+  expect(install.status).toBe(1);
+  expect(install.receipt.violations).toEqual(["package.json changed during a frozen install."]);
+  expect(readFileSync(path.join(f.project, "package.json"), "utf8")).toBe(original);
   const failed = f.run(["remove", "ms"], { STUB_FAIL: "1" });
   expect(failed.status).toBe(1);
   expect(failed.receipt.violations).toEqual(["bun remove failed with exit 1."]);
