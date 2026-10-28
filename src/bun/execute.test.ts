@@ -90,10 +90,11 @@ test("--cwd cannot reach another checkout", () => {
 test("forwarded arguments that turn a script's last command into one that asks are refused", () => {
   const f = fixture();
   const manifest = JSON.parse(readFileSync(path.join(f.project, "package.json"), "utf8"));
-  Object.assign(manifest.scripts, { preview: "npm publish --dry-run", p: "agent-tool permissions", setup: "npm install" });
+  Object.assign(manifest.scripts, { preview: "npm publish --dry-run", p: "agent-tool permissions", setup: "npm install", nested: "bun run setup" });
   writeFileSync(path.join(f.project, "package.json"), JSON.stringify(manifest));
   expect(f.run(["run", "preview", "--", "--dry-run=false"]).stderr).toMatch(/run a release command/);
   expect(f.run(["run", "p", "--", "install", "--apply"]).stderr).toMatch(/run a policy command/);
   expect(JSON.parse(f.run(["run", "p", "--", "show"]).stdout).args).toEqual(["run", "p", "show"]);
   expect(f.run(["run", "setup", "--", "left-pad"]).stderr).toMatch(/run a intake command/);
+  expect(f.run(["run", "nested", "--", "left-pad"]).stderr).toMatch(/run a intake command/);
 });

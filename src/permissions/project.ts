@@ -21,9 +21,9 @@ function wildcard(pattern: string): RegExp {
 /** Commands that download third-party code, dry run or not. */
 const INTAKE = [
   /\b(?:(?:bun\s+(?:add|a)|pnpm\s+add|yarn\s+add)\b|npm\s+(?:install|i|add)(?:\s+-\S+)*\s+[^-\s&|;])/,
-  // Package runners download what is not installed unless told not to.
-  /^(?!.*--no-install)(?:.*\s)?(?:bunx|npx|bun(?:\s+--\S+)*\s+x)\s/,
 ];
+/** A package runner and its own options, before the executable it runs. */
+const RUNNER_OPTIONS = /(?:^|\s)(?:bunx|npx|bun(?:\s+--\S+)*\s+x)((?:\s+-\S+)*)\s+[^-\s]/;
 /** Commands that change shared state, unless they run as a dry run. */
 const RELEASE = /\b(?:npm\s+publish|bun\s+publish|gh\s+pr\s+merge|gh\s+release\s+create|wrangler\s+(?:deploy|publish|secret)|terraform\s+(?:apply|destroy))\b/;
 /** Whether the last `--dry-run` flag in a command leaves it a dry run. */
@@ -38,6 +38,8 @@ const SHELLS = new Set(["sh", "bash", "zsh", "env", "exec", "eval", "xargs", "no
 
 /** agent-tool's own checkout runs its CLI from source; its bin path counts as agent-tool there. */
 let sourceCli: string | undefined;
+/** The checkout whose run-group plans a classification reads. */
+let planRoot: string | undefined;
 
 /** An agent-tool invocation's words after its global options, or undefined when the command is not agent-tool. */
 function agentToolWords(command: string): string[] | undefined {
@@ -86,10 +88,29 @@ export function commandClass(command: string, last: boolean, executables: Record
   if (tool) return tool;
   const words = agentToolWords(command);
   if (words?.[0] === "bun" && words[1] === "x" && words[2] && Object.hasOwn(executables, words[2]) && CLASSES[executables[words[2]]!].decision === "ask") return executables[words[2]];
+  // `agent-tool run ... -- <command>` and run-group plan steps run commands of their own.
+  if (words?.[0] === "run" && words.includes("--")) return commandClass(words.slice(words.indexOf("--") + 1).join(" "), last, executables);
+  if (words?.[0] === "run-group" && words[1] && planRoot) return planClass(path.resolve(planRoot, words[1]), executables);
   if (INTAKE.some(pattern => pattern.test(command))) return "intake";
+  // Package runners download what is not installed unless their own options say not to.
+  const runner = command.match(RUNNER_OPTIONS);
+  if (runner && !/(?:^|\s)--no-install\b/.test(runner[1]!)) return "intake";
   // Forwarded arguments can override a dry run in last position, such as `--dry-run=false`.
   if ((last || !dryRun(command)) && RELEASE.test(command)) return "release";
   return undefined;
+}
+
+/** The strictest asking class among a run-group plan's steps; a plan that cannot be read asks. */
+function planClass(file: string, executables: Record<string, PermissionClass>): PermissionClass | undefined {
+  try {
+    const plan = JSON.parse(readFileSync(file, "utf8")) as { steps?: { command?: unknown }[] };
+    for (const step of plan.steps ?? []) {
+      if (!Array.isArray(step.command)) return "exec";
+      const value = commandClass(step.command.join(" "), false, executables);
+      if (value) return value;
+    }
+    return undefined;
+  } catch { return "exec"; }
 }
 
 // Leading `NAME=value` assignments, optionally after `env`, do not change which command runs.
@@ -149,6 +170,31 @@ function inherit(classes: Map<string, PermissionClass>, bodies: Map<string, stri
   }
 }
 
+/** Every script body by name across the root package and its workspaces. */
+export function scriptBodies(root: string): Map<string, string[]> {
+  const bodies = new Map<string, string[]>();
+  for (const directory of packageDirectories(root)) for (const [name, body] of scripts(path.join(directory, "package.json"))) bodies.set(name, [...(bodies.get(name) ?? []), body]);
+  return bodies;
+}
+
+/**
+ * The asking class of a command given concrete arguments, following script calls into the
+ * scripts they reach, whose last command receives those arguments.
+ */
+export function expandedClass(root: string, command: string, bodies: Map<string, string[]>, executables: Record<string, PermissionClass>, depth = 0): PermissionClass | undefined {
+  planRoot = root;
+  const value = commandClass(command, false, executables);
+  if (value || depth > 8) return value ?? (depth > 8 ? "exec" : undefined);
+  const tool = agentToolWords(command);
+  const call = tool?.[0] === "bun" && tool[1] === "run" && tool[2] ? [command, tool[2], tool.slice(3).filter(word => word !== "--").join(" ")] : command.match(CALL);
+  if (!call || !bodies.has(call[1]!)) return undefined;
+  for (const body of bodies.get(call[1]!)!) {
+    const nested = expandedClass(root, `${segments(body).at(-1) ?? ""} ${call[2]!.trim()}`.trim(), bodies, executables, depth + 1);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
 /**
  * Commands whose class depends on the repository: package scripts that must ask, and
  * installed executables that `bun x` may run. Unlisted executables keep the harness default.
@@ -158,8 +204,8 @@ export function projectCommands(root: string, config: AgentToolConfig = loadConf
   const rootManifest = (existsSync(manifestFile) ? JSON.parse(readFileSync(manifestFile, "utf8")) : {}) as { name?: string; bin?: unknown };
   const bin = typeof rootManifest.bin === "string" ? rootManifest.bin : (rootManifest.bin as Record<string, unknown> | undefined)?.["agent-tool"];
   sourceCli = rootManifest.name === "@a2f0/agent-tool" && typeof bin === "string" ? bin.replace(/^\.\//, "") : undefined;
-  const bodies = new Map<string, string[]>();
-  for (const directory of packageDirectories(root)) for (const [name, body] of scripts(path.join(directory, "package.json"))) bodies.set(name, [...(bodies.get(name) ?? []), body]);
+  planRoot = root;
+  const bodies = scriptBodies(root);
   for (const name of Object.keys(config.permissions.scripts)) if (!name.includes("*") && !bodies.has(name)) bodies.set(name, []);
   const own = new Map(bodies);
   // Bun runs pre<name> and post<name> around <name>, so their commands count as the script's own.

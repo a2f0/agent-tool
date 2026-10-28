@@ -110,8 +110,8 @@ stays visible, which suits commands whose JSON drives a decision.
 
 `bun run` accepts only scripts declared in the root package or a declared
 workspace, never a file path. When arguments follow `--`, it classifies the
-script's last command with them appended and refuses one that would ask, such as
-`npm install` given a package name. Most scripts are `local`. A script whose name has
+script's last command with them appended, following calls into other scripts,
+and refuses one that would ask, such as `npm install` given a package name. Most scripts are `local`. A script whose name has
 a `deploy`, `publish`, `release`, `destroy`, `apply`, `secret`, `upload`, or
 `submit` segment is `release` and asks. So does one whose commands, split at
 `&&`, `||`, `;`, `|`, `&`, and newlines and read past leading `NAME=value`
@@ -120,7 +120,9 @@ assignments, run an agent-tool command that asks
 for a partial command such as `agent-tool permissions`, the strictest command it
 can become), call a script or executable that asks through `agent-tool bun`, add
 or download a package (`intake`, including `bunx`/`npx` without `--no-install`,
-dry run or not), or publish, merge, or deploy with `npm`, `bun`, `gh`,
+dry run or not, judged by the runner's own options), run such a command through
+`agent-tool run -- <command>` or a `run-group` plan step (an unreadable plan
+asks), or publish, merge, or deploy with `npm`, `bun`, `gh`,
 `wrangler`, or `terraform` (`release`; a `--dry-run` is exempt except in last
 position, where a caller can append `--dry-run=false`), and one that runs
 an asking script with `<manager> run`; a call with arguments to an `exec`

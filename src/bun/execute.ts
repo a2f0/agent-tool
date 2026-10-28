@@ -6,7 +6,7 @@ import { runCommand } from "../commands/run";
 import { assert, flag, option } from "../workflows/core";
 import { CLASSES } from "../permissions/catalog";
 import { checkPermissions } from "../permissions/install";
-import { commandClass, projectCommands, segments } from "../permissions/project";
+import { expandedClass, projectCommands, scriptBodies, segments } from "../permissions/project";
 import { loadConfig } from "../config";
 import { pinnedBun } from "./toolchain";
 import { workspacePackage } from "./workspace";
@@ -56,7 +56,7 @@ export function bunExecute(action: "run" | "test" | "x", args: string[]): number
     // Bun appends these arguments to the script's last command; refuse when that makes it a command that asks.
     if (forwarded.length) {
       const last = segments(String(scripts[name!])).at(-1) ?? "";
-      const value = commandClass(`${last} ${forwarded.join(" ")}`, false, loadConfig(root).permissions.executables);
+      const value = expandedClass(root, `${last} ${forwarded.join(" ")}`, scriptBodies(root), loadConfig(root).permissions.executables);
       assert(!value || CLASSES[value].decision !== "ask", `These arguments make '${name}' run a ${value} command, which needs approval; run it directly instead.`);
     }
     command = ["run", name!, ...forwarded];
