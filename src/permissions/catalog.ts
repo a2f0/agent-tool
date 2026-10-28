@@ -29,6 +29,11 @@ export const CATALOG: CatalogEntry[] = [
   { command: "pr merge", class: "release" },
   { command: "repo cleanup", class: "read", applyClass: "release" },
   { command: "bun add", class: "intake" },
+  // Legacy action names stay classified so a broad user rule cannot reach them unclassified.
+  ...["checkVersions"].map(command => ({ command, class: "read" as const })),
+  ...["bumpVersions", "resolveVersionConflicts", "solicitClaudeCodeReview", "solicitCodexReview", "solicitOpencodeReview"].map(command => ({ command, class: "local" as const })),
+  { command: "openPr", class: "share" },
+  { command: "squashMerge", class: "release" },
 ];
 // `run` and `run-group` execute arbitrary commands, so they stay unclassified and keep the harness default.
 

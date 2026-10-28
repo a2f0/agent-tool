@@ -256,4 +256,5 @@ test("specs and manifest comparisons", () => {
   expect(manifestViolations("update", before, { ...before, dependencies: { a: "github:x/a", b: "1.0.0" } }, new Set(["a"]))).toEqual(["a in dependencies no longer uses a registry version (github:x/a)."]);
   expect(manifestViolations("update", before, { ...before, scripts: { postinstall: "x" } }, new Set(["a"]))).toEqual(["package.json fields outside dependency sections changed."]);
   expect(manifestViolations("remove", before, { name: "x", dependencies: { b: "1.0.0" } }, new Set(["a"]))).toEqual([]);
+  expect(manifestViolations("add", before, before, new Set(["c"]), "dependencies")).toEqual(["c was not added to dependencies."]);
 });

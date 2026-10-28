@@ -17,8 +17,10 @@ the code, rather than in every harness configuration.
 | `intake` | ask | `bun add`, and direct `bun add`, `npm install`, `pnpm add`, `yarn add` |
 | `policy` | ask | `permissions install --apply` |
 
-`run` and `run-group` execute arbitrary commands, so they stay unclassified and
-keep the harness's default decision. `src/permissions/catalog.ts` holds the
+Legacy action names, such as `squashMerge` and `openPr`, carry the class of the
+command they alias. `run` and `run-group` execute arbitrary commands, so they
+stay unclassified and keep the harness's default decision; do not add a broad
+`agent-tool *` allow rule, which would include them. `src/permissions/catalog.ts` holds the
 table; a test checks that every entry names a command the CLI accepts.
 
 The direct package-manager and `gh` spellings are listed so that a raw command

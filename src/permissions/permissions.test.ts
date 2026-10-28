@@ -17,6 +17,7 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
   expect(rules.allow).toEqual(expect.arrayContaining(["Bash(bun run agent-tool bun update *)", "Bash(bun run agent-tool bun remove *)", "Bash(bun run agent-tool bun install *)"]));
   expect(rules.ask).toEqual(expect.arrayContaining(["Bash(bun add *)", "Bash(bun a *)", "Bash(gh pr merge *)", "Bash(bun run agent-tool pr merge *)", "Bash(bun run agent-tool repo cleanup *--apply*)", "Bash(bun run agent-tool permissions install *--apply*)"]));
   expect(rules.allow).toContain("Bash(bun run agent-tool repo cleanup *)");
+  expect(rules.ask).toEqual(expect.arrayContaining(["Bash(bun run agent-tool squashMerge *)", "Bash(agent-tool squashMerge *)"]));
   expect([...rules.allow, ...rules.ask].some(rule => /agent-tool run(?:-group)? /.test(rule))).toBe(false);
   const codex = codexRules();
   expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", ["install", "update", "remove"]], decision="allow"');
@@ -28,7 +29,7 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
 test("every classified command is a real CLI command", () => {
   const lines = HELP.split("\n");
   for (const entry of CATALOG) {
-    const words = entry.command.split(" ").map(word => new RegExp(`(?:^|[\\s<|])${word.replace(/-/g, "\\-")}(?=$|[\\s>|])`));
+    const words = entry.command.split(" ").map(word => new RegExp(`(?:^|[\\s<|])${word.replace(/-/g, "\\-")}(?=$|[\\s>|,.])`));
     expect({ command: entry.command, documented: lines.some(line => words.every(word => word.test(line))) }).toEqual({ command: entry.command, documented: true });
   }
   for (const entry of CATALOG) expect(CLASSES[entry.class]).toBeDefined();

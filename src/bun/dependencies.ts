@@ -66,6 +66,7 @@ function otherFields(manifest: Manifest): string {
 export function manifestViolations(action: "add" | "update" | "remove", before: Manifest, after: Manifest, names: Set<string>, addSection?: Section): string[] {
   const violations: string[] = [];
   if (otherFields(before) !== otherFields(after)) violations.push("package.json fields outside dependency sections changed.");
+  if (action === "add") for (const name of names) if (!(name in (after[addSection!] ?? {}))) violations.push(`${name} was not added to ${addSection}.`);
   for (const section of SECTIONS) {
     const old = before[section] ?? {}, now = after[section] ?? {};
     for (const name of new Set([...Object.keys(old), ...Object.keys(now)])) {
