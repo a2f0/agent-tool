@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { closeSync, existsSync, fstatSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createLog } from "../commands/logFile";
 import { DEFAULT_LIMITS, printLogTail } from "../commands/output";
@@ -97,11 +97,16 @@ function changes(before: Manifest, after: Manifest, names: Set<string>): Depende
 function snapshot(files: string[]) {
   const saved = files.map(file => ({ file, contents: existsSync(file) ? readFileSync(file) : null }));
   return {
+    /** Restore every file even if one fails, recreating directories a script removed. */
     restore() {
+      const failures: string[] = [];
       for (const { file, contents } of saved) {
-        if (contents) writeFileSync(file, contents);
-        else if (existsSync(file)) unlinkSync(file);
+        try {
+          if (contents) { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, contents); }
+          else if (existsSync(file)) unlinkSync(file);
+        } catch (error) { failures.push(`${file}: ${(error as Error).message}`); }
       }
+      if (failures.length) throw new Error(`Could not restore ${failures.join("; ")}`);
     },
     changed(): string[] {
       return saved.filter(({ file, contents }) => {

@@ -34,6 +34,7 @@ for (const value of names) {
 if (process.env.STUB_EXTRA) (manifest.dependencies ??= {})[process.env.STUB_EXTRA] = "1.0.0";
 if (process.env.STUB_NEW_WORKSPACE) { fs.mkdirSync(require("node:path").dirname(process.env.STUB_NEW_WORKSPACE), { recursive: true }); fs.writeFileSync(process.env.STUB_NEW_WORKSPACE, JSON.stringify({ name: "evil", dependencies: { surprise: "1.0.0" } })); }
 if (process.env.STUB_EXPAND) { const file = require("node:path").join(process.env.STUB_ROOT, "package.json"); const root = JSON.parse(fs.readFileSync(file, "utf8")); root.workspaces.push(process.env.STUB_EXPAND); fs.writeFileSync(file, JSON.stringify(root)); }
+if (process.env.STUB_REMOVE_DIR) fs.rmSync(process.env.STUB_REMOVE_DIR, { recursive: true, force: true });
 if (process.env.STUB_SIBLING_LOCK) fs.writeFileSync(process.env.STUB_SIBLING_LOCK, "{}");
 if (process.env.STUB_SIBLING) fs.writeFileSync(process.env.STUB_SIBLING, JSON.stringify({ name: "sibling", dependencies: { surprise: "1.0.0" } }));
 fs.writeFileSync("package.json", JSON.stringify(manifest, null, 2));
@@ -103,6 +104,12 @@ test("dependency commands accept only the root package or a declared workspace",
   const failedCreate = f.run(["update", "ms", "--cwd", "packages/web"], { STUB_NEW_WORKSPACE: created, STUB_FAIL: "1" });
   expect(failedCreate.receipt.violations).toEqual(["bun add failed with exit 1."]);
   expect(existsSync(created)).toBe(false);
+  // A script deleting a workspace is rolled back too, and the root lockfile still restored.
+  const lockBefore = readFileSync(path.join(f.project, "bun.lock"), "utf8");
+  const deleted = f.run(["update", "ms", "--cwd", "packages/web"], { STUB_REMOVE_DIR: path.join(f.project, "packages/api") });
+  expect(deleted.status).toBe(1);
+  expect(readFileSync(sibling, "utf8")).toBe(JSON.stringify({ name: "api" }));
+  expect(readFileSync(path.join(f.project, "bun.lock"), "utf8")).toBe(lockBefore);
   // Widening the globs to a standalone package that already existed is refused without deleting it.
   const widened = f.run(["update", "ms", "--cwd", "packages/web"], { STUB_EXPAND: "tools/*" });
   expect(widened.receipt.violations).toEqual(["tools/loose/package.json appeared during the change."]);

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { claudePermissions, codexRules, type ClaudePermissions } from "./catalog";
 
@@ -33,7 +33,9 @@ function destination(root: string, relative: string): string {
 function atomicWrite(file: string, contents: string): void {
   mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.agent-tool-${process.pid}.tmp`;
-  try { writeFileSync(temporary, contents, { flag: "wx", mode: 0o644 }); renameSync(temporary, file); }
+  // Keep an existing file's mode: settings can hold private environment values.
+  const mode = existsSync(file) ? statSync(file).mode & 0o777 : 0o644;
+  try { writeFileSync(temporary, contents, { flag: "wx", mode }); chmodSync(temporary, mode); renameSync(temporary, file); }
   finally { try { unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; } }
 }
 

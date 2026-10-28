@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CATALOG, CLASSES, claudePermissions, codexRules } from "./catalog";
@@ -60,6 +60,14 @@ test("install keeps unrelated Claude settings and replaces only managed rules", 
   const updated = JSON.parse(readFileSync(path.join(root, ".claude/settings.json"), "utf8"));
   expect(updated.permissions.allow).not.toContain("Bash(agent-tool retired *)");
   expect(updated.permissions.allow).toContain("Bash(make test)");
+});
+
+test("install keeps a private settings file private", () => {
+  const root = project();
+  mkdirSync(path.join(root, ".claude"));
+  writeFileSync(path.join(root, ".claude/settings.json"), JSON.stringify({ env: { TOKEN_NAME: "x" } }), { mode: 0o600 });
+  installPermissions(root, "claude", true);
+  expect(statSync(path.join(root, ".claude/settings.json")).mode & 0o777).toBe(0o600);
 });
 
 test("edited or unmanaged Codex rules are preserved", () => {
