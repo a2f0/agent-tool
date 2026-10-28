@@ -67,7 +67,9 @@ function agentToolClass(command: string, last: boolean): PermissionClass | undef
   const words = agentToolWords(command);
   if (!words?.length) return undefined;
   const matches = CATALOG.filter(entry => entry.command.split(" ").every((word, index) => words[index] === word));
-  const values = matches.map(entry => last ? strictest(entry) : entry.applyClass && words.includes("--apply") ? entry.applyClass : entry.class);
+  // In last position a partial command such as `agent-tool permissions` can become any command it prefixes.
+  const reachable = last && !matches.length ? CATALOG.filter(entry => words.every((word, index) => entry.command.split(" ")[index] === word)) : [];
+  const values = [...matches, ...reachable].map(entry => last ? strictest(entry) : entry.applyClass && words.includes("--apply") ? entry.applyClass : entry.class);
   return values.find(value => CLASSES[value].decision === "ask");
 }
 
@@ -77,8 +79,11 @@ function commandClass(command: string, last: boolean, executables: Record<string
   if (forwards && CLASSES[forwards].decision === "ask") return forwards;
   const tool = agentToolClass(command, last);
   if (tool) return tool;
+  const words = agentToolWords(command);
+  if (words?.[0] === "bun" && words[1] === "x" && words[2] && Object.hasOwn(executables, words[2]) && CLASSES[executables[words[2]]!].decision === "ask") return executables[words[2]];
   if (INTAKE.some(pattern => pattern.test(command))) return "intake";
-  if (!DRY_RUN.test(command) && RELEASE.test(command)) return "release";
+  // Forwarded arguments can override a dry run in last position, such as `--dry-run=false`.
+  if ((last || !DRY_RUN.test(command)) && RELEASE.test(command)) return "release";
   return undefined;
 }
 
@@ -120,7 +125,9 @@ function inherit(classes: Map<string, PermissionClass>, bodies: Map<string, stri
       for (const body of list) {
         const commands = segments(body);
         for (const [index, command] of commands.entries()) {
-          const call = command.match(CALL);
+          // `agent-tool bun run <script>` calls a script too.
+          const tool = agentToolWords(command);
+          const call = tool?.[0] === "bun" && tool[1] === "run" && tool[2] ? [command, tool[2], tool.slice(3).filter(word => word !== "--").join(" ")] : command.match(CALL);
           if (value || !call || call[1] === name || !classes.has(call[1]!)) continue;
           const callee = classes.get(call[1]!)!, args = call[2]!.trim(), last = index === commands.length - 1;
           if (callee !== "exec") { if (CLASSES[callee].decision === "ask") value = callee; continue; }

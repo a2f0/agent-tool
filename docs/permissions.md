@@ -113,10 +113,13 @@ workspace, never a file path. Most scripts are `local`. A script whose name has
 a `deploy`, `publish`, `release`, `destroy`, `apply`, `secret`, `upload`, or
 `submit` segment is `release` and asks. So does one whose commands, split at
 `&&`, `||`, `;`, `|`, `&`, and newlines, run an agent-tool command that asks
-(in last position, where a caller can append `--apply`, its stricter form), add
+(in last position, where a caller can append arguments, its stricter form or,
+for a partial command such as `agent-tool permissions`, the strictest command it
+can become), call a script or executable that asks through `agent-tool bun`, add
 or download a package (`intake`, including `bunx`/`npx` without `--no-install`,
 dry run or not), or publish, merge, or deploy with `npm`, `bun`, `gh`,
-`wrangler`, or `terraform` outside a `--dry-run` (`release`), and one that runs
+`wrangler`, or `terraform` (`release`; a `--dry-run` is exempt except in last
+position, where a caller can append `--dry-run=false`), and one that runs
 an asking script with `<manager> run`; a call with arguments to an `exec`
 script is classified as the command it expands to, or whose `pre` or `post` hook asks, by its
 commands or by configuration. Bun appends a script's arguments to its last command, so a script ending
