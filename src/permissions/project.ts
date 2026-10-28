@@ -17,15 +17,16 @@ function wildcard(pattern: string): RegExp {
   return new RegExp(`^${pattern.split("*").map(part => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`);
 }
 
-/** Commands in a script body that put it in an asking class whatever the script is called. */
+// Options, with or without values, may sit between a tool and its subcommand: `npm --prefix web install x`.
+const OPTS = String.raw`(?:\s+--?[\w-]+(?:[= ](?!-)\S+)?)*`;
 /** Commands that download third-party code, dry run or not. */
 const INTAKE = [
-  /\b(?:(?:bun\s+(?:add|a)|pnpm\s+add|yarn\s+add)\b|npm\s+(?:install|i|add)(?:\s+-\S+)*\s+[^-\s&|;])/,
+  new RegExp(String.raw`\b(?:(?:bun|pnpm|yarn)${OPTS}\s+(?:add|a)\b|npm${OPTS}\s+(?:install|i|add)(?:\s+-\S+)*\s+[^-\s&|;])`),
 ];
 /** A package runner and its own options, before the executable it runs. */
 const RUNNER_OPTIONS = /(?:^|\s)(?:bunx|npx|bun(?:\s+--\S+)*\s+x)((?:\s+-\S+)*)\s+[^-\s]/;
 /** Commands that change shared state, unless they run as a dry run. */
-const RELEASE = /\b(?:npm\s+publish|bun\s+publish|gh\s+pr\s+merge|gh\s+release\s+create|wrangler\s+(?:deploy|publish|secret)|terraform\s+(?:apply|destroy))\b/;
+const RELEASE = new RegExp(String.raw`\b(?:(?:npm|bun|pnpm|yarn)${OPTS}\s+publish|gh${OPTS}\s+(?:pr\s+merge|release\s+create)|wrangler${OPTS}\s+(?:deploy|publish|secret)|terraform${OPTS}\s+(?:apply|destroy))\b`);
 /** Whether the last `--dry-run` flag in a command leaves it a dry run. */
 function dryRun(command: string): boolean {
   const flags = [...command.matchAll(/--dry-run(?:=(\S+))?(?=\s|$)/g)];
@@ -142,7 +143,7 @@ export function scriptClass(name: string, configured: Record<string, PermissionC
  * `exec` script runs that script's last command with the call's arguments, so classify the
  * expanded command; called last without arguments, it forwards the caller's own.
  */
-function inherit(classes: Map<string, PermissionClass>, bodies: Map<string, string[]>, own: Map<string, string[]>, executables: Record<string, PermissionClass>): void {
+function inherit(root: string, classes: Map<string, PermissionClass>, bodies: Map<string, string[]>, own: Map<string, string[]>, executables: Record<string, PermissionClass>): void {
   for (let changed = true; changed;) {
     changed = false;
     for (const [name, list] of bodies) {
@@ -162,7 +163,8 @@ function inherit(classes: Map<string, PermissionClass>, bodies: Map<string, stri
           const callee = classes.get(call[1]!)!, args = call[2]!.trim(), last = index === commands.length - 1;
           if (callee !== "exec") { if (CLASSES[callee].decision === "ask") value = callee; continue; }
           if (!args) { if (last) value = "exec"; continue; }
-          value = (own.get(call[1]!) ?? []).map(calleeBody => commandClass(`${segments(calleeBody).at(-1) ?? ""} ${args}`, last, executables)).find(item => item !== undefined);
+          // Follow chains of forwarding scripts; expandedClass treats runaway depth as `exec`.
+          value = (own.get(call[1]!) ?? []).map(calleeBody => commandClass(`${segments(calleeBody).at(-1) ?? ""} ${args}`, last, executables) ?? expandedClass(root, `${segments(calleeBody).at(-1) ?? ""} ${args}`, own, executables)).find(item => item !== undefined);
         }
       }
       if (value) { classes.set(name, value); changed = true; }
@@ -173,8 +175,25 @@ function inherit(classes: Map<string, PermissionClass>, bodies: Map<string, stri
 /** Every script body by name across the root package and its workspaces. */
 export function scriptBodies(root: string): Map<string, string[]> {
   const bodies = new Map<string, string[]>();
-  for (const directory of packageDirectories(root)) for (const [name, body] of scripts(path.join(directory, "package.json"))) bodies.set(name, [...(bodies.get(name) ?? []), body]);
+  for (const directory of packageDirectories(root)) {
+    for (const [name, body] of scripts(path.join(directory, "package.json"))) {
+      // A run-group plan's steps are the script's commands too, so calls and hooks in them are followed.
+      const steps = segments(body).flatMap(command => {
+        const words = agentToolWords(command);
+        return words?.[0] === "run-group" && words[1] ? planSteps(path.resolve(directory, words[1])) : [];
+      });
+      bodies.set(name, [...(bodies.get(name) ?? []), body, ...(steps.length ? [steps.join(" && ")] : [])]);
+    }
+  }
   return bodies;
+}
+
+/** A plan's step commands; an unreadable plan or step stands for an arbitrary command. */
+function planSteps(file: string): string[] {
+  try {
+    const steps = (JSON.parse(readFileSync(file, "utf8")) as { steps?: { command?: unknown }[] }).steps ?? [];
+    return steps.map(step => Array.isArray(step.command) ? step.command.join(" ") : "agent-tool");
+  } catch { return ["agent-tool"]; }
 }
 
 /**
@@ -212,7 +231,7 @@ export function projectCommands(root: string, config: AgentToolConfig = loadConf
   for (const [name, list] of [...bodies]) bodies.set(name, [...list, ...(own.get(`pre${name}`) ?? []), ...(own.get(`post${name}`) ?? [])]);
   const classes = new Map([...bodies].map(([name, list]) => [name, scriptClass(name, config.permissions.scripts, list, config.permissions.executables)]));
   // Configured classes are deliberate; only defaults inherit from the scripts they call.
-  inherit(classes, new Map([...bodies].filter(([name]) => !Object.hasOwn(config.permissions.scripts, name) && !Object.keys(config.permissions.scripts).some(key => key.includes("*") && wildcard(key).test(name)))), own, config.permissions.executables);
+  inherit(root, classes, new Map([...bodies].filter(([name]) => !Object.hasOwn(config.permissions.scripts, name) && !Object.keys(config.permissions.scripts).some(key => key.includes("*") && wildcard(key).test(name)))), own, config.permissions.executables);
   const entries: CatalogEntry[] = [];
   for (const name of [...bodies.keys()].sort()) {
     const value = classes.get(name)!;

@@ -136,6 +136,10 @@ test("forwarded flags, wrapper arguments, and dry-run downloads keep their appro
   expect(scriptClass("try", {}, ["npx --yes some-package --dry-run"])).toBe("intake");
   expect(scriptClass("p", {}, ["agent-tool permissions"])).toBe("policy");
   expect(scriptClass("try", {}, ["npx --yes some-package -- --no-install"])).toBe("intake");
+  expect(scriptClass("web", {}, ["npm --prefix packages/web install left-pad && bun test"])).toBe("intake");
+  expect(scriptClass("web", {}, ["bun --cwd web add left-pad && bun test"])).toBe("intake");
+  expect(scriptClass("ship", {}, ["npm --workspace web publish && bun test"])).toBe("release");
+  expect(scriptClass("setup", {}, ["npm --prefix web install && bun test"])).toBe("local");
   expect(scriptClass("lint", {}, ["bunx --bun --no-install biome check"])).toBe("local");
   expect(scriptClass("wrap", {}, ["agent-tool run --label x -- agent-tool permissions install --apply && bun test"])).toBe("policy");
   expect(scriptClass("sync", {}, ["CI=1 agent-tool permissions install --apply && bun test"])).toBe("policy");
@@ -147,8 +151,8 @@ test("forwarded flags, wrapper arguments, and dry-run downloads keep their appro
   expect(scriptClass("preview", {}, ["npm publish --dry-run --dry-run=false && bun test"])).toBe("release");
   expect(scriptClass("cf", {}, ["agent-tool bun x wrangler -- deploy"], { wrangler: "release" })).toBe("release");
   const root = project();
-  writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { tool: "agent-tool", sync: "bun run tool permissions install --apply", check: "bun run tool skills check", merge: "npm run tool -- pr merge '' abc main", ship: "bun run deploy", deploy: "wrangler deploy", format: "bun --bun run lint && bun --bun run --cwd web ship", lint: "biome check", nested: "agent-tool bun run deploy && bun test", posttool: "npm publish", hooked: "bun run tool skills check" } }));
-  expect(projectCommands(root).map(entry => `${entry.command}:${entry.class}`)).toEqual(["bun run check:release", "bun run deploy:release", "bun run format:release", "bun run hooked:release", "bun run merge:release", "bun run nested:release", "bun run posttool:release", "bun run ship:release", "bun run sync:release", "bun run tool:exec"]);
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { tool: "agent-tool", sync: "bun run tool permissions install --apply", check: "bun run tool skills check", merge: "npm run tool -- pr merge '' abc main", ship: "bun run deploy", deploy: "wrangler deploy", wrap: "bun run tool", chain: "bun run wrap permissions install --apply", format: "bun --bun run lint && bun --bun run --cwd web ship", lint: "biome check", nested: "agent-tool bun run deploy && bun test", posttool: "npm publish", hooked: "bun run tool skills check" } }));
+  expect(projectCommands(root).map(entry => `${entry.command}:${entry.class}`)).toEqual(["bun run chain:release", "bun run check:release", "bun run deploy:release", "bun run format:release", "bun run hooked:release", "bun run merge:release", "bun run nested:release", "bun run posttool:release", "bun run ship:release", "bun run sync:release", "bun run tool:exec", "bun run wrap:release"]);
 });
 
 test("run-group plan steps are classified, and an unreadable plan asks", () => {
@@ -156,8 +160,9 @@ test("run-group plan steps are classified, and an unreadable plan asks", () => {
   mkdirSync(path.join(root, "scripts"));
   writeFileSync(path.join(root, "scripts/verify.json"), JSON.stringify({ label: "verify", steps: [{ label: "tests", command: ["bun", "test"] }] }));
   writeFileSync(path.join(root, "scripts/ship.json"), JSON.stringify({ label: "ship", steps: [{ label: "publish", command: ["npm", "publish"] }] }));
-  writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { check: "agent-tool run-group scripts/verify.json", ship: "agent-tool run-group scripts/ship.json", missing: "agent-tool run-group scripts/none.json" } }));
-  expect(projectCommands(root).map(entry => `${entry.command}:${entry.class}`)).toEqual(["bun run missing:exec", "bun run ship:release"]);
+  writeFileSync(path.join(root, "scripts/calls.json"), JSON.stringify({ label: "calls", steps: [{ label: "deploy", command: ["bun", "run", "deploy"] }] }));
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { check: "agent-tool run-group scripts/verify.json", ship: "agent-tool run-group scripts/ship.json", missing: "agent-tool run-group scripts/none.json", calls: "agent-tool run-group scripts/calls.json", deploy: "wrangler deploy" } }));
+  expect(projectCommands(root).map(entry => `${entry.command}:${entry.class}`)).toEqual(["bun run calls:release", "bun run deploy:release", "bun run missing:exec", "bun run ship:release"]);
 });
 
 test("a script that calls an asking script asks too, unless configured", () => {
