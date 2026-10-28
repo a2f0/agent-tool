@@ -25,11 +25,11 @@ receipts belong in the PR; private logs and generated artifacts remain local.
 ## Validation
 
 ```sh
-bun src/index.ts run --label typecheck -- bun run typecheck
-bun src/index.ts run --label tests -- bun test
-bun src/index.ts run --label package-smoke -- bun scripts/testing/smoke-package.ts
-bun src/index.ts run --label build -- bun run build
-bun src/index.ts run --label compiled-smoke -- bun scripts/testing/smoke.ts dist/agent-tool
+bun run agent:run --label typecheck -- bun run typecheck
+bun run agent:run --label tests -- bun test
+bun run agent:run --label package-smoke -- bun scripts/testing/smoke-package.ts
+bun run agent:run --label build -- bun run build
+bun run agent:run --label compiled-smoke -- bun scripts/testing/smoke.ts dist/agent-tool
 ```
 
 Build regenerates `src/skills/bundled.ts`; commit it with canonical skill changes.
@@ -44,8 +44,10 @@ tests the minimum supported Bun runtime, and builds Debian packaging on Linux.
 Local source integration tests use disposable Git repositories, bare remotes,
 and API stubs to check guard behavior without mutating GitHub.
 
-Inspect the runner's bounded log tail or targeted searches for warnings, timings,
-and required artifacts. A zero exit does not prove an absence of warnings. Keep
+The `agent:run` and `agent:logs` package scripts run the source CLI's `run` and
+`logs` commands. Inspect the runner's bounded failure tail,
+`bun run agent:logs <log>`, or targeted searches for warnings, timings, and
+required artifacts. A zero exit does not prove an absence of warnings. Keep
 review findings, version decisions, and policy diagnostics directly visible.
 
 ## Shipping and release

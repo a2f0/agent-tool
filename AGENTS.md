@@ -27,9 +27,6 @@ Validate changes with `bun run typecheck`, `bun test`,
 from `skills/*/SKILL.md`; commit `src/skills/bundled.ts` with skill changes.
 CI also verifies Linux Debian packaging. Preserve the review snapshot,
 read-only tool permissions, pinned-base checks, and exact-head merge behavior.
-Run noisy local checks through `bun src/index.ts run --label <check> -- <command>`;
-inspect required diagnostics with `bun src/index.ts logs <log>` or targeted
-searches. Keep review findings and version receipts directly visible.
 
 When handling review feedback, reply in its original review thread through
 `POST /repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies`
@@ -37,3 +34,24 @@ and resolve only fully addressed findings. Each merge that bumps the version
 deploys it to npm as `@a2f0/agent-tool`; after merging, verify the
 "Publish npm package" workflow run for the merge commit and that npm lists the
 version.
+
+## Output capture
+
+Run finite, noisy commands, such as installs, builds, tests, linters, and Git
+commands that run hooks, through
+`bun run agent:run --label <name> -- <command> [args...]`. It keeps complete
+output in a private log, preserves the exit status, and prints a compact
+receipt, with a bounded excerpt of the log on failure. Read more with
+`bun run agent:logs <log-path>`, raising `--tail-lines` or `--max-bytes` as
+needed, or with a targeted search of the log. A zero exit does not rule out
+warnings: inspect required warnings, timings, and artifacts before accepting a
+check. Run reviews, version preparation, audits, infrastructure previews, and
+run-group checks directly so their results stay visible, and run interactive
+tools and servers directly too. Never narrow a suite or silence warnings to
+reduce output.
+
+Both scripts run this checkout's source CLI, `bun src/index.ts run` and
+`bun src/index.ts logs`, so they use the harness under development rather than
+an installed release. [Development guidance](docs/development.md#validation)
+lists each validation check in this form, for example
+`bun run agent:run --label tests -- bun test`.
