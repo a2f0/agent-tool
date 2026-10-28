@@ -85,7 +85,9 @@ export function unresolvedDependencies(
         if (removed.has(name)) missing.add(`${key || "."}: ${name}@${spec} (its workspace was removed)`);
         // A workspace's name with a version spec can still resolve from the registry; only `workspace:` is local.
         if (spec.startsWith("workspace:")) continue;
-        const covered = recorded === undefined ? known.has(`${name}@${spec}`) : field(field(recorded, section), name) === spec;
+        // A relative source names different code from a new directory, so only position-independent specs carry over.
+        const relative = /^(?:file:|link:|[./~])/.test(spec);
+        const covered = recorded === undefined ? !relative && known.has(`${name}@${spec}`) : field(field(recorded, section), name) === spec;
         if (!covered) missing.add(`${key || "."}: ${name}@${spec}`);
       }
     }

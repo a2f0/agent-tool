@@ -35,7 +35,8 @@ would get a lockfile of its own, is refused. Each runs the Bun that the nearest
 `.mise.toml` pins, from
 `$MISE_DATA_DIR/installs/bun/<version>` (default `~/.local/share/mise`), so
 agent shells need no `PATH` prefix. When the pinned install is missing, a `bun`
-on `PATH` is used only if its version matches the pin, and a `bun` inside the
+on `PATH` is used only if its version matches the pin (the mise install must
+report the pinned version too), and a `bun` inside the
 checkout, such as one in `node_modules/.bin`, is never run. Output goes to a private
 log, as with `run`, and stdout is one JSON receipt with the resolved Bun, the
 per-package changes, and each Bun invocation.
@@ -63,7 +64,8 @@ hand-added package cannot be resolved as a side effect of an allowed change.
 packages, likewise refuses when any third-party declaration, in any section of
 any workspace, or a root catalog, override, or patch differs from what
 `bun.lock` records, in either direction for root entries; a new workspace may
-use only third-party specs the lockfile already records, only `workspace:`
+use only position-independent third-party specs the lockfile already records
+(never a relative `file:` or `link:` source), only `workspace:`
 specs count as local, and a dependency on a removed workspace is refused because
 it would now resolve from the registry. After bumping, it also refuses when a
 version-pinned reference that the workspace satisfied at its locked version no

@@ -185,6 +185,13 @@ test("a manifest the lockfile does not cover stops every change before Bun resol
   expect(f.run(["update", "ms"]).stderr).toMatch(/No bun.lock/);
 });
 
+test("a mise install that reports another version is refused", () => {
+  const f = fixture({ dependencies: { ms: "1.0.0" } }, { pin: "9.9.8" });
+  const result = f.run(["install"]);
+  expect(result.status).toBe(1);
+  expect(result.stderr).toMatch(/reports Bun 9\.9\.9, not the pinned 9\.9\.8/);
+});
+
 test("a bun inside the checkout is never executed", () => {
   const f = fixture({ dependencies: { ms: "1.0.0" } }, { pin: "0.0.1", install: false });
   const bin = path.join(f.project, "node_modules/.bin");

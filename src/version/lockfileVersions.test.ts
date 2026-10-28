@@ -35,3 +35,9 @@ test("a dependency on a removed workspace would resolve from the registry", () =
   const directory = project({ dependencies: { api: "1.0.0" } }, lock);
   expect(unresolvedDependencies(directory)).toEqual([".: api@1.0.0 (its workspace was removed)"]);
 });
+
+test("a new workspace cannot reuse a relative source recorded elsewhere", () => {
+  const lock = { workspaces: { "": { name: "root", dependencies: { vendor: "file:./vendor", ms: "1.0.0" } } } };
+  const directory = project({ dependencies: { vendor: "file:./vendor", ms: "1.0.0" } }, lock, { "packages/new": { name: "new", dependencies: { vendor: "file:./vendor", ms: "1.0.0" } } });
+  expect(unresolvedDependencies(directory)).toEqual(["packages/new: vendor@file:./vendor"]);
+});

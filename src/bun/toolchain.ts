@@ -43,7 +43,11 @@ export function pinnedBun(directory: string, root: string): BunExecutable {
   if (pin) {
     const data = process.env.MISE_DATA_DIR || path.join(process.env.XDG_DATA_HOME || path.join(homedir(), ".local/share"), "mise");
     const candidate = path.join(data, "installs", "bun", pin, "bin", "bun");
-    if (runnable(candidate) && !inside(candidate)) return { path: candidate, version: versionOf(candidate), source: "mise", pinned: pin };
+    if (runnable(candidate) && !inside(candidate)) {
+      const version = versionOf(candidate);
+      assert(version === pin || version.startsWith(`${pin}.`), `${candidate} reports Bun ${version}, not the pinned ${pin}; reinstall it with mise.`);
+      return { path: candidate, version, source: "mise", pinned: pin };
+    }
   }
   // A `bun` inside the checkout (node_modules/.bin is on PATH under `bun run`) is repository code; never run it.
   const found = outsideExecutable("bun", process.env, root)?.candidate;
