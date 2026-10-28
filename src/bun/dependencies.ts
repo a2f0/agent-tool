@@ -199,14 +199,11 @@ export function bunCommand(args: string[]): number {
   let after = before;
   // Validate after every Bun call: a lifecycle script in one call must not feed the next.
   const known = new Set([file, ...others]);
-  const created: string[] = [];
-  // A lifecycle script can create a workspace whose dependencies a later call would resolve.
-  const discover = (): string[] => {
-    const appeared = packageDirectories(root).map(item => path.join(item, "package.json")).filter(item => !known.has(item) && !created.includes(item) && existsSync(item));
-    created.push(...appeared);
-    return appeared;
-  };
-  const removeCreated = () => { discover(); for (const item of created) if (existsSync(item)) unlinkSync(item); };
+  // A lifecycle script can create a workspace, or widen the globs to one, for a later call to resolve.
+  const discover = (): string[] => packageDirectories(root).map(item => path.join(item, "package.json")).filter(item => !known.has(item) && existsSync(item));
+  // Call after restoring the root manifest: under the original globs, every manifest that existed
+  // before is known, so anything else was created during the change. Widened globs never delete.
+  const removeCreated = () => { for (const item of discover()) unlinkSync(item); };
   const validate = (call: string[]): string[] => {
     const appeared = discover();
     if (appeared.length) return appeared.map(item => `${path.relative(root, item)} appeared during the change.`);

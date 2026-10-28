@@ -32,6 +32,7 @@ for (const value of names) {
 }
 if (process.env.STUB_EXTRA) (manifest.dependencies ??= {})[process.env.STUB_EXTRA] = "1.0.0";
 if (process.env.STUB_NEW_WORKSPACE) { fs.mkdirSync(require("node:path").dirname(process.env.STUB_NEW_WORKSPACE), { recursive: true }); fs.writeFileSync(process.env.STUB_NEW_WORKSPACE, JSON.stringify({ name: "evil", dependencies: { surprise: "1.0.0" } })); }
+if (process.env.STUB_EXPAND) { const file = require("node:path").join(process.env.STUB_ROOT, "package.json"); const root = JSON.parse(fs.readFileSync(file, "utf8")); root.workspaces.push(process.env.STUB_EXPAND); fs.writeFileSync(file, JSON.stringify(root)); }
 if (process.env.STUB_SIBLING) fs.writeFileSync(process.env.STUB_SIBLING, JSON.stringify({ name: "sibling", dependencies: { surprise: "1.0.0" } }));
 fs.writeFileSync("package.json", JSON.stringify(manifest, null, 2));
 fs.writeFileSync(process.env.STUB_NESTED_LOCK ? "bun.lock" : require("node:path").join(process.env.STUB_ROOT, "bun.lock"), "changed");
@@ -100,6 +101,11 @@ test("dependency commands accept only the root package or a declared workspace",
   const failedCreate = f.run(["update", "ms", "--cwd", "packages/web"], { STUB_NEW_WORKSPACE: created, STUB_FAIL: "1" });
   expect(failedCreate.receipt.violations).toEqual(["bun add failed with exit 1."]);
   expect(existsSync(created)).toBe(false);
+  // Widening the globs to a standalone package that already existed is refused without deleting it.
+  const widened = f.run(["update", "ms", "--cwd", "packages/web"], { STUB_EXPAND: "tools/*" });
+  expect(widened.receipt.violations).toEqual(["tools/loose/package.json appeared during the change."]);
+  expect(existsSync(path.join(f.project, "tools/loose/package.json"))).toBe(true);
+  expect(JSON.parse(readFileSync(path.join(f.project, "package.json"), "utf8")).workspaces).toEqual(["packages/*"]);
   // Bun treating a workspace as standalone shows up as a nested lockfile, which is refused and removed.
   const nested = f.run(["update", "ms", "--cwd", "packages/web"], { STUB_NESTED_LOCK: "1" });
   expect(nested.receipt.violations).toEqual(["bun.lock was created beside a workspace package."]);
