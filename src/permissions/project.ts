@@ -83,6 +83,8 @@ function agentToolClass(command: string, last: boolean): PermissionClass | undef
 
 /** The asking class of one command, if any; `last` marks the command that receives forwarded arguments. */
 export function commandClass(command: string, last: boolean, executables: Record<string, PermissionClass>): PermissionClass | undefined {
+  // Command substitution decides at run time what runs, which no rule can see.
+  if (/\$\(|`|\$\{/.test(command)) return "exec";
   const forwards = last ? forwarded(command, executables) : undefined;
   if (forwards && CLASSES[forwards].decision === "ask") return forwards;
   const tool = agentToolClass(command, last);
@@ -115,9 +117,20 @@ function planClass(file: string, executables: Record<string, PermissionClass>): 
 }
 
 // Leading `NAME=value` assignments, optionally after `env`, do not change which command runs.
-export const segments = (body: string) => body.split(/&&|\|\||[;|&\n]/).map(command => command.trim().replace(/^(?:env\s+)?(?:[A-Za-z_]\w*=\S*\s+)*/, "")).filter(Boolean);
+/**
+ * One command as it runs: leading `NAME=value` assignments (optionally after `env`) dropped,
+ * simple quotes and escapes removed from single words, and `agent-tool run ... -- <command>`
+ * unwrapped to the command it runs.
+ */
+function normalize(command: string): string {
+  let text = command.trim().replace(/^(?:env\s+)?(?:[A-Za-z_]\w*=\S*\s+)*/, "");
+  text = text.replace(/"([^"\s$`\\]*)"|'([^'\s]*)'|\\(\S)/g, (_, double, single, escaped) => double ?? single ?? escaped);
+  const words = agentToolWords(text);
+  return words?.[0] === "run" && words.includes("--") ? normalize(words.slice(words.indexOf("--") + 1).join(" ")) : text;
+}
+export const segments = (body: string) => body.split(/&&|\|\||[;|&\n]/).map(normalize).filter(Boolean);
 // `<manager> [options] run [options] <script> [args]`; `--cwd`, `--filter`, and `-F` take a value.
-const CALL = /^(?:bun|npm|pnpm|yarn)(?:\s+-[-\w]+)*\s+run(?:\s+(?:(?:--cwd|--filter|-F)(?:=\S+|\s+\S+)|-[-\w]+(?:=\S+)?))*\s+([\w@.:/+-]+)(?:\s+--)?((?:\s+.*)?)$/;
+const CALL = new RegExp(String.raw`^(?:bun|npm|pnpm|yarn)${OPTS}\s+run(?:\s+(?:(?:--cwd|--filter|-F)(?:=\S+|\s+\S+)|-[-\w]+(?:=\S+)?))*\s+([\w@.:/+-]+)(?:\s+--)?((?:\s+.*)?)$`);
 
 /**
  * Exact names win over wildcard patterns. An unconfigured script then asks when its command
