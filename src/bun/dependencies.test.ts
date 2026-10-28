@@ -283,3 +283,34 @@ test("specs and manifest comparisons", () => {
   expect(manifestViolations("remove", before, { name: "x", dependencies: { b: "1.0.0" } }, new Set(["a"]))).toEqual([]);
   expect(manifestViolations("add", before, before, new Set(["c"]), "dependencies")).toEqual(["c was not added to dependencies."]);
 });
+
+test("with real Bun, a hand-added dependency stops an allowed change, and a covered one proceeds", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "bun-dependencies-real-")); directories.push(root);
+  for (const name of ["a", "b"]) {
+    mkdirSync(path.join(root, "vendor", name), { recursive: true });
+    writeFileSync(path.join(root, "vendor", name, "package.json"), JSON.stringify({ name: `local-${name}`, version: "1.0.0" }));
+  }
+  const manifest = (dependencies: Record<string, string>) => writeFileSync(path.join(root, "package.json"), `${JSON.stringify({ name: "real", private: true, dependencies }, null, 2)}\n`);
+  manifest({ "local-a": "file:./vendor/a" });
+  spawnSync("git", ["init", "-q"], { cwd: root });
+  // No pin: the Bun running these tests resolves from PATH, outside the checkout.
+  const env = { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH}` };
+  expect(spawnSync(process.execPath, ["install"], { cwd: root, env, encoding: "utf8" }).status).toBe(0);
+  const run = (args: string[]) => {
+    const result = spawnSync(process.execPath, [cli, "bun", ...args], { cwd: root, env, encoding: "utf8", timeout: 60000 });
+    const receipt = result.stdout.startsWith("{") ? JSON.parse(result.stdout) : null;
+    for (const item of receipt?.runs ?? []) directories.push(path.dirname(item.log));
+    return { ...result, receipt };
+  };
+  manifest({ "local-a": "file:./vendor/a", "local-b": "file:./vendor/b" });
+  const lock = readFileSync(path.join(root, "bun.lock"), "utf8");
+  const refused = run(["remove", "local-a"]);
+  expect(refused.status).toBe(1);
+  expect(refused.receipt.violations).toEqual(["package.json and the lockfile disagree; resolve that difference with approval before changing dependencies."]);
+  expect(readFileSync(path.join(root, "bun.lock"), "utf8")).toBe(lock);
+  expect(existsSync(path.join(root, "node_modules/local-b"))).toBe(false);
+  manifest({ "local-a": "file:./vendor/a" });
+  const removed = run(["remove", "local-a"]);
+  expect(removed.status).toBe(0);
+  expect(removed.receipt.changes).toEqual([{ name: "local-a", section: "dependencies", from: "file:./vendor/a", to: null }]);
+});
