@@ -127,10 +127,11 @@ script's last command with them appended, following calls into other scripts,
 and refuses one that would ask, such as `npm install` given a package name. Most scripts are `local`. A script whose name has
 a `deploy`, `publish`, `release`, `destroy`, `apply`, `secret`, `upload`, or
 `submit` segment is `release` and asks. So does one whose commands, split at
-`&&`, `||`, `;`, `|`, `&`, and newlines, read past leading `NAME=value`
+`&&`, `||`, `;`, `|`, `&`, newlines, and `( )`/`{ }` groups, read past leading `NAME=value`
 assignments, simple quotes, and a tool's own options before its subcommand,
 unwrapping `agent-tool run -- <command>`, with `run-group` plan steps counted as
-commands and command substitution treated as `exec`, run an agent-tool command that asks
+commands and command substitution treated as `exec` (as is any script that
+calls one using it), run an agent-tool command that asks
 (in last position, where a caller can append arguments, its stricter form or,
 for a partial command such as `agent-tool permissions`, the strictest command it
 can become), call a script or executable that asks through `agent-tool bun`, add

@@ -131,7 +131,8 @@ function normalize(command: string): string {
   const words = agentToolWords(text);
   return words?.[0] === "run" && words.includes("--") ? normalize(words.slice(words.indexOf("--") + 1).join(" ")) : text;
 }
-export const segments = (body: string) => body.split(/&&|\|\||[;|&\n]/).map(normalize).filter(Boolean);
+// Groups and subshells, `( ... )` and `{ ...; }`, run their commands like any other separator.
+export const segments = (body: string) => body.split(/&&|\|\||[;|&\n(){}]/).map(normalize).filter(Boolean);
 // `<manager> [options] run [options] <script> [args]`; `--cwd`, `--filter`, and `-F` take a value.
 const CALL = new RegExp(String.raw`^(?:bun|npm|pnpm|yarn)${OPTS}\s+run(?:\s+(?:(?:--cwd|--filter|-F)(?:=\S+|\s+\S+)|-[-\w]+(?:=\S+)?))*\s+([\w@.:/+-]+)(?:\s+--)?((?:\s+.*)?)$`);
 
@@ -143,6 +144,8 @@ export function scriptClass(name: string, configured: Record<string, PermissionC
   if (Object.hasOwn(configured, name)) return configured[name]!;
   const pattern = Object.keys(configured).filter(key => key.includes("*") && wildcard(key).test(name)).sort((a, b) => b.length - a.length)[0];
   if (pattern) return configured[pattern]!;
+  // Command substitution decides at run time what runs; check whole bodies before splitting at parentheses.
+  if (bodies.some(body => /\$\(|`|\$\{/.test(body))) return "exec";
   for (const body of bodies) {
     const commands = segments(body);
     for (const [index, command] of commands.entries()) {
@@ -160,6 +163,7 @@ export function scriptClass(name: string, configured: Record<string, PermissionC
  * expanded command; called last without arguments, it forwards the caller's own.
  */
 function inherit(root: string, classes: Map<string, PermissionClass>, bodies: Map<string, string[]>, own: Map<string, string[]>, executables: Record<string, PermissionClass>): void {
+  const opaque = new Set([...own].filter(([, list]) => list.some(body => /\$\(|`|\$\{/.test(body))).map(([name]) => name));
   for (let changed = true; changed;) {
     changed = false;
     for (const [name, list] of bodies) {
@@ -177,6 +181,8 @@ function inherit(root: string, classes: Map<string, PermissionClass>, bodies: Ma
           value = [`pre${call[1]}`, `post${call[1]}`].map(item => classes.get(item)).find(item => item !== undefined && CLASSES[item].decision === "ask");
           if (value) continue;
           const callee = classes.get(call[1]!)!, args = call[2]!.trim(), last = index === commands.length - 1;
+          // A script that is `exec` by its own command substitution can run anything, called any way.
+          if (opaque.has(call[1]!)) { value = "exec"; continue; }
           if (CLASSES[callee].decision === "ask" && callee !== "exec") { value = callee; continue; }
           if (!args) { if (last && callee === "exec") value = "exec"; continue; }
           // Arguments reach the called script's last command, whatever its class, so classify the result.
