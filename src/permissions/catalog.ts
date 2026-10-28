@@ -10,6 +10,7 @@ export const CLASSES = {
   release: { decision: "ask", description: "Merges into a shared branch, publishes a package, or deletes remote state." },
   intake: { decision: "ask", description: "Brings new third-party code into the repository." },
   policy: { decision: "ask", description: "Changes the permissions agents run with." },
+  exec: { decision: "ask", description: "Runs whatever command its arguments name." },
 } as const;
 export type PermissionClass = keyof typeof CLASSES;
 export type Decision = "allow" | "ask";

@@ -16,6 +16,7 @@ the code, rather than in every harness configuration.
 | `release` | ask | `pr merge`, `repo cleanup --apply`, release-named scripts, and direct `gh pr merge`, `npm publish`, `bun publish` |
 | `intake` | ask | `bun add`, and direct `bun add`, `npm install`, `pnpm add`, `yarn add`, and `bunx`, `bun x`, `npx`, which can download a package |
 | `policy` | ask | `permissions install --apply` |
+| `exec` | ask | Package scripts that run whatever their arguments name, such as `agent:run` (`agent-tool run`) or a bare `agent-tool` |
 
 Legacy action names, such as `squashMerge` and `openPr`, carry the class of the
 command they alias. `run` and `run-group` execute arbitrary commands, so they
@@ -110,11 +111,17 @@ stays visible, which suits commands whose JSON drives a decision.
 `bun run` accepts only scripts declared in the root package or a declared
 workspace, never a file path. Most scripts are `local`. A script whose name has
 a `deploy`, `publish`, `release`, `destroy`, `apply`, `secret`, `upload`, or
-`submit` segment is `release` and asks. So does one whose command, ignoring
-`--dry-run` steps, runs `permissions install` (`policy`), adds a package
-(`intake`), or publishes, merges, or deploys with `npm`, `bun`, `gh`,
-`wrangler`, or `terraform` (`release`), and one that runs an asking script with
-`<manager> run`. A script name has one rule across all workspaces, so any
+`submit` segment is `release` and asks. So does one whose commands, split at
+`&&`, `||`, `;`, `|`, `&`, and newlines and ignoring `--dry-run` steps, run an
+agent-tool command that asks, add or download a package (`intake`, including
+`bunx`/`npx` without `--no-install`), or publish, merge, or deploy with `npm`,
+`bun`, `gh`, `wrangler`, or `terraform` (`release`), and one that runs an
+asking script with `<manager> run`, including through its `pre` and `post`
+hooks. Bun appends a script's arguments to its last command, so a script ending
+in a bare agent-tool, `agent-tool run` without a `--` command, a bare
+`run-group`, or a bare shell or interpreter is `exec`, as is one that ends by
+running such a script without arguments; one ending in another bare CLI takes
+that CLI's class from `permissions.executables`. A script name has one rule across all workspaces, so any
 workspace's definition can make it ask. `agent-tool.json` overrides all of
 this. `bun x` runs only an executable installed in this checkout's
 `node_modules/.bin` (`bun x --no-install`, never Bun's global cache), and only

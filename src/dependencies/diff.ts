@@ -5,7 +5,7 @@ type Entries = Map<string, string>;
 export interface DependencyEntry { manifest: string; section: string; name: string }
 
 function manifests(commit: string): Map<string, Entries> {
-  const files = git(["ls-tree", "-r", "--name-only", "-z", commit]).split("\0").filter(file => /(?:^|\/)package\.json$/.test(file) && !file.split("/").includes("node_modules"));
+  const files = git(["ls-tree", "-r", "--full-tree", "--name-only", "-z", commit]).split("\0").filter(file => /(?:^|\/)package\.json$/.test(file) && !file.split("/").includes("node_modules"));
   const result = new Map<string, Entries>();
   for (const file of files) {
     let value: Record<string, unknown>;

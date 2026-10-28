@@ -387,4 +387,6 @@ test("dependency diff reports declared changes in every manifest and names new t
   expect(diff.removed).toEqual([{ manifest: "package.json", section: "dependencies", name: "chalk", spec: "5.0.0" }]);
   expect(diff.changed).toEqual([{ manifest: "package.json", section: "dependencies", name: "ms", from: "1.0.0", to: "2.0.0" }]);
   expect(f.run(["dependencies", "diff", "--base", "--output=x"]).status).toBe(1);
+  const nested = spawnSync(process.execPath, [cli, "dependencies", "diff", "--base", base], { cwd: path.join(f.root, "packages/web"), env: f.env, encoding: "utf8" });
+  expect(JSON.parse(nested.stdout).newPackages).toEqual(JSON.parse(f.run(["dependencies", "diff", "--base", base]).stdout).newPackages);
 });
