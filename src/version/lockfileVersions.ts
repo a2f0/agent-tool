@@ -70,7 +70,6 @@ export function unresolvedDependencies(
     key: path.relative(root, directory).split(path.sep).join("/"),
     manifest: JSON.parse(readFileSync(path.join(directory, "package.json"), "utf8")) as Record<string, unknown>,
   }));
-  const internal = new Set(manifests.map(({ manifest }) => manifest.name));
   const known = new Set<string>();
   for (const [, workspace] of entries(workspaces).length ? Object.entries(workspaces as object) : []) {
     for (const section of SECTIONS) for (const [name, spec] of entries(field(workspace, section))) known.add(`${name}@${spec}`);
@@ -80,7 +79,8 @@ export function unresolvedDependencies(
     const recorded = field(workspaces, key);
     for (const section of SECTIONS) {
       for (const [name, spec] of entries(manifest[section])) {
-        if (internal.has(name) || spec.startsWith("workspace:")) continue;
+        // A workspace's name with a version spec can still resolve from the registry; only `workspace:` is local.
+        if (spec.startsWith("workspace:")) continue;
         const covered = recorded === undefined ? known.has(`${name}@${spec}`) : field(field(recorded, section), name) === spec;
         if (!covered) missing.add(`${key || "."}: ${name}@${spec}`);
       }
@@ -96,8 +96,9 @@ export function unresolvedDependencies(
     ["patchedDependencies", field(rootManifest, "patchedDependencies"), field(lock, "patchedDependencies")],
   ];
   for (const [label, declared, recorded] of sources) {
-    // Nested overrides are objects on both sides; compare them as JSON.
+    // Nested overrides are objects on both sides; compare them as JSON, in both directions.
     for (const [name, spec] of entries(declared)) if (entries(recorded).find(([key]) => key === name)?.[1] !== spec) missing.add(`${label}: ${name}@${spec}`);
+    for (const [name] of entries(recorded)) if (!entries(declared).some(([key]) => key === name)) missing.add(`${label}: removed ${name}`);
   }
   return [...missing].sort();
 }

@@ -18,7 +18,7 @@ if (process.env.STUB_CORRUPT) { fs.writeFileSync("package.json", "{ not json"); 
 const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
 if (command === "install") {
   if (process.env.STUB_OUT_OF_SYNC) process.exit(1);
-  if (process.env.STUB_EXTRA) { (manifest.dependencies ??= {})[process.env.STUB_EXTRA] = "1.0.0"; fs.writeFileSync("package.json", JSON.stringify(manifest, null, 2)); }
+  if (process.env.STUB_EXTRA && !rest.includes("--lockfile-only")) { (manifest.dependencies ??= {})[process.env.STUB_EXTRA] = "1.0.0"; fs.writeFileSync("package.json", JSON.stringify(manifest, null, 2)); }
   process.exit(0);
 }
 const flags = rest.filter(item => item.startsWith("-")), names = rest.filter(item => !item.startsWith("-"));
@@ -147,6 +147,11 @@ test("unexpected or failed Bun changes are restored, including the lockfile", ()
   expect(extra.receipt.violations).toEqual(["surprise was unexpectedly added to dependencies."]);
   expect(readFileSync(path.join(f.project, "package.json"), "utf8")).toBe(original);
   expect(readFileSync(path.join(f.project, "bun.lock"), "utf8")).toBe("original");
+  const grouped = fixture({ dependencies: { ms: "1.0.0" }, devDependencies: { chalk: "^5.0.0" } });
+  const early = grouped.run(["update", "ms", "chalk"], { STUB_EXTRA: "surprise" });
+  // The second Bun call never runs after the first one's unexpected change.
+  expect(early.receipt.runs.map((item: { command: string[] }) => item.command[1])).toEqual(["install", "add"]);
+  expect(early.receipt.violations).toEqual(["surprise was unexpectedly added to dependencies."]);
   const corrupt = f.run(["update", "ms"], { STUB_CORRUPT: "1" });
   expect(corrupt.status).toBe(1);
   expect(readFileSync(path.join(f.project, "package.json"), "utf8")).toBe(original);

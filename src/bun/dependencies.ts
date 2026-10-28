@@ -194,19 +194,22 @@ export function bunCommand(args: string[]): number {
   const runs = [];
   let violations: string[] = [];
   let after = before;
+  // Validate after every Bun call: a lifecycle script in one call must not feed the next.
+  const validate = (call: string[]): string[] => {
+    if (call === preflight || action === "install") return saved.changed().map(item => `${path.relative(directory, item) || "package.json"} changed during a frozen install.`);
+    after = readManifest(file);
+    const found = manifestViolations(action, before, after, names, addSection);
+    for (const item of others) if (JSON.stringify(readManifest(item)) !== othersBefore.get(item)) found.push(`${path.relative(root, item)} changed outside the target package.`);
+    for (const item of saved.changed().filter(changed => nested.includes(changed))) found.push(`${path.relative(directory, item)} was created beside a workspace package.`);
+    return found;
+  };
   try {
     for (const call of calls) {
       const run = runBun(bun, directory, call);
       runs.push(run);
       if (run.exitCode !== 0) { violations = [call === preflight ? "package.json and the lockfile disagree; resolve that difference with approval before changing dependencies." : `bun ${call[0]} failed with exit ${run.exitCode}.`]; break; }
-    }
-    if (!violations.length) {
-      after = readManifest(file);
-      // Project lifecycle scripts run during installs too; a frozen install may change neither file.
-      if (action === "install") violations = saved.changed().map(item => `${path.relative(directory, item) || "package.json"} changed during a frozen install.`);
-      else violations = manifestViolations(action, before, after, names, addSection);
-      for (const item of others) if (!violations.length && JSON.stringify(readManifest(item)) !== othersBefore.get(item)) violations.push(`${path.relative(root, item)} changed outside the target package.`);
-      for (const item of saved.changed().filter(changed => nested.includes(changed))) violations.push(`${path.relative(directory, item)} was created beside a workspace package.`);
+      violations = validate(call);
+      if (violations.length) break;
     }
   } catch (error) {
     saved.restore();

@@ -62,11 +62,12 @@ hand-added package cannot be resolved as a side effect of an allowed change.
 `versions prepare`, which refreshes the lockfile for bumped and new workspace
 packages, likewise refuses when any third-party declaration, in any section of
 any workspace, or a root catalog, override, or patch differs from what
-`bun.lock` records; a new workspace may use only third-party specs the lockfile
-already records. Every other workspace manifest must stay
+`bun.lock` records, in either direction for root entries; a new workspace may
+use only third-party specs the lockfile already records, and only `workspace:`
+specs count as local. Every other workspace manifest must stay
 unchanged too, so a lifecycle script cannot edit a sibling package.
 
-After Bun exits, the command compares `package.json` with its earlier state. If
+After each Bun call, the command compares `package.json` with its earlier state. If
 Bun changed anything the verb does not allow (another dependency, another
 section, any field outside the dependency sections, or a workspace root
 manifest, or a new lockfile beside a workspace package), or Bun failed, the
