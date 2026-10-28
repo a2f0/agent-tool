@@ -26,7 +26,12 @@ const INTAKE = [
 ];
 /** Commands that change shared state, unless they run as a dry run. */
 const RELEASE = /\b(?:npm\s+publish|bun\s+publish|gh\s+pr\s+merge|gh\s+release\s+create|wrangler\s+(?:deploy|publish|secret)|terraform\s+(?:apply|destroy))\b/;
-const DRY_RUN = /--dry-run(?:=(?:true|1))?(?=\s|$)/;
+/** Whether the last `--dry-run` flag in a command leaves it a dry run. */
+function dryRun(command: string): boolean {
+  const flags = [...command.matchAll(/--dry-run(?:=(\S+))?(?=\s|$)/g)];
+  const value = flags.at(-1)?.[1];
+  return flags.length > 0 && (value === undefined || value === "true" || value === "1");
+}
 
 const RUNNER = /^(?:(?:bun\s+run|bunx(?:\s+--\S+)*|npx(?:\s+--\S+)*|bun\s+x(?:\s+--\S+)*)\s+)?/;
 const SHELLS = new Set(["sh", "bash", "zsh", "env", "exec", "eval", "xargs", "node", "bun", "deno", "python", "python3"]);
@@ -74,7 +79,7 @@ function agentToolClass(command: string, last: boolean): PermissionClass | undef
 }
 
 /** The asking class of one command, if any; `last` marks the command that receives forwarded arguments. */
-function commandClass(command: string, last: boolean, executables: Record<string, PermissionClass>): PermissionClass | undefined {
+export function commandClass(command: string, last: boolean, executables: Record<string, PermissionClass>): PermissionClass | undefined {
   const forwards = last ? forwarded(command, executables) : undefined;
   if (forwards && CLASSES[forwards].decision === "ask") return forwards;
   const tool = agentToolClass(command, last);
@@ -83,11 +88,12 @@ function commandClass(command: string, last: boolean, executables: Record<string
   if (words?.[0] === "bun" && words[1] === "x" && words[2] && Object.hasOwn(executables, words[2]) && CLASSES[executables[words[2]]!].decision === "ask") return executables[words[2]];
   if (INTAKE.some(pattern => pattern.test(command))) return "intake";
   // Forwarded arguments can override a dry run in last position, such as `--dry-run=false`.
-  if ((last || !DRY_RUN.test(command)) && RELEASE.test(command)) return "release";
+  if ((last || !dryRun(command)) && RELEASE.test(command)) return "release";
   return undefined;
 }
 
-const segments = (body: string) => body.split(/&&|\|\||[;|&\n]/).map(command => command.trim()).filter(Boolean);
+// Leading `NAME=value` assignments, optionally after `env`, do not change which command runs.
+export const segments = (body: string) => body.split(/&&|\|\||[;|&\n]/).map(command => command.trim().replace(/^(?:env\s+)?(?:[A-Za-z_]\w*=\S*\s+)*/, "")).filter(Boolean);
 // `<manager> [options] run [options] <script> [args]`; `--cwd`, `--filter`, and `-F` take a value.
 const CALL = /^(?:bun|npm|pnpm|yarn)(?:\s+-[-\w]+)*\s+run(?:\s+(?:(?:--cwd|--filter|-F)(?:=\S+|\s+\S+)|-[-\w]+(?:=\S+)?))*\s+([\w@.:/+-]+)(?:\s+--)?((?:\s+.*)?)$/;
 
@@ -129,6 +135,9 @@ function inherit(classes: Map<string, PermissionClass>, bodies: Map<string, stri
           const tool = agentToolWords(command);
           const call = tool?.[0] === "bun" && tool[1] === "run" && tool[2] ? [command, tool[2], tool.slice(3).filter(word => word !== "--").join(" ")] : command.match(CALL);
           if (value || !call || call[1] === name || !classes.has(call[1]!)) continue;
+          // The called script's own pre and post hooks run with it.
+          value = [`pre${call[1]}`, `post${call[1]}`].map(item => classes.get(item)).find(item => item !== undefined && CLASSES[item].decision === "ask");
+          if (value) continue;
           const callee = classes.get(call[1]!)!, args = call[2]!.trim(), last = index === commands.length - 1;
           if (callee !== "exec") { if (CLASSES[callee].decision === "ask") value = callee; continue; }
           if (!args) { if (last) value = "exec"; continue; }

@@ -135,14 +135,17 @@ test("forwarded flags, wrapper arguments, and dry-run downloads keep their appro
   expect(scriptClass("preview", {}, ["agent-tool permissions install && bun test"])).toBe("local");
   expect(scriptClass("try", {}, ["npx --yes some-package --dry-run"])).toBe("intake");
   expect(scriptClass("p", {}, ["agent-tool permissions"])).toBe("policy");
+  expect(scriptClass("sync", {}, ["CI=1 agent-tool permissions install --apply && bun test"])).toBe("policy");
+  expect(scriptClass("sync", {}, ["env CI=1 FOO=bar npm publish && bun test"])).toBe("release");
   expect(scriptClass("p", {}, ["agent-tool pr"])).toBe("release");
   expect(scriptClass("p", {}, ["agent-tool pr checks"])).toBe("local");
   expect(scriptClass("preview", {}, ["npm publish --dry-run"])).toBe("release");
   expect(scriptClass("preview", {}, ["npm publish --dry-run && bun test"])).toBe("local");
+  expect(scriptClass("preview", {}, ["npm publish --dry-run --dry-run=false && bun test"])).toBe("release");
   expect(scriptClass("cf", {}, ["agent-tool bun x wrangler -- deploy"], { wrangler: "release" })).toBe("release");
   const root = project();
-  writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { tool: "agent-tool", sync: "bun run tool permissions install --apply", check: "bun run tool skills check", merge: "npm run tool -- pr merge '' abc main", ship: "bun run deploy", deploy: "wrangler deploy", format: "bun --bun run lint && bun --bun run --cwd web ship", lint: "biome check", nested: "agent-tool bun run deploy && bun test" } }));
-  expect(projectCommands(root).map(entry => `${entry.command}:${entry.class}`)).toEqual(["bun run deploy:release", "bun run format:release", "bun run merge:release", "bun run nested:release", "bun run ship:release", "bun run sync:policy", "bun run tool:exec"]);
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { tool: "agent-tool", sync: "bun run tool permissions install --apply", check: "bun run tool skills check", merge: "npm run tool -- pr merge '' abc main", ship: "bun run deploy", deploy: "wrangler deploy", format: "bun --bun run lint && bun --bun run --cwd web ship", lint: "biome check", nested: "agent-tool bun run deploy && bun test", posttool: "npm publish", hooked: "bun run tool skills check" } }));
+  expect(projectCommands(root).map(entry => `${entry.command}:${entry.class}`)).toEqual(["bun run check:release", "bun run deploy:release", "bun run format:release", "bun run hooked:release", "bun run merge:release", "bun run nested:release", "bun run posttool:release", "bun run ship:release", "bun run sync:release", "bun run tool:exec"]);
 });
 
 test("a script that calls an asking script asks too, unless configured", () => {

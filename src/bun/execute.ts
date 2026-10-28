@@ -6,7 +6,8 @@ import { runCommand } from "../commands/run";
 import { assert, flag, option } from "../workflows/core";
 import { CLASSES } from "../permissions/catalog";
 import { checkPermissions } from "../permissions/install";
-import { projectCommands } from "../permissions/project";
+import { commandClass, projectCommands, segments } from "../permissions/project";
+import { loadConfig } from "../config";
 import { pinnedBun } from "./toolchain";
 import { workspacePackage } from "./workspace";
 
@@ -52,6 +53,12 @@ export function bunExecute(action: "run" | "test" | "x", args: string[]): number
     const scripts = existsSync(manifest) ? (JSON.parse(readFileSync(manifest, "utf8")) as { scripts?: Record<string, unknown> }).scripts ?? {} : {};
     // `bun run <file>` executes a file; only declared scripts are accepted.
     assert(Object.hasOwn(scripts, name!), `No '${name}' script in ${manifest}.`);
+    // Bun appends these arguments to the script's last command; refuse when that makes it a command that asks.
+    if (forwarded.length) {
+      const last = segments(String(scripts[name!])).at(-1) ?? "";
+      const value = commandClass(`${last} ${forwarded.join(" ")}`, false, loadConfig(root).permissions.executables);
+      assert(!value || CLASSES[value].decision !== "ask", `These arguments make '${name}' run a ${value} command, which needs approval; run it directly instead.`);
+    }
     command = ["run", name!, ...forwarded];
   } else if (action === "x") {
     assert(EXECUTABLE.test(name!), `Name an installed executable, not a package or version: '${name}'.`);

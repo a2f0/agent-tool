@@ -109,10 +109,13 @@ writes output to a private log and prints a `run` receipt; without it, output
 stays visible, which suits commands whose JSON drives a decision.
 
 `bun run` accepts only scripts declared in the root package or a declared
-workspace, never a file path. Most scripts are `local`. A script whose name has
+workspace, never a file path. When arguments follow `--`, it classifies the
+script's last command with them appended and refuses one that would ask, such as
+`npm install` given a package name. Most scripts are `local`. A script whose name has
 a `deploy`, `publish`, `release`, `destroy`, `apply`, `secret`, `upload`, or
 `submit` segment is `release` and asks. So does one whose commands, split at
-`&&`, `||`, `;`, `|`, `&`, and newlines, run an agent-tool command that asks
+`&&`, `||`, `;`, `|`, `&`, and newlines and read past leading `NAME=value`
+assignments, run an agent-tool command that asks
 (in last position, where a caller can append arguments, its stricter form or,
 for a partial command such as `agent-tool permissions`, the strictest command it
 can become), call a script or executable that asks through `agent-tool bun`, add
@@ -121,7 +124,8 @@ dry run or not), or publish, merge, or deploy with `npm`, `bun`, `gh`,
 `wrangler`, or `terraform` (`release`; a `--dry-run` is exempt except in last
 position, where a caller can append `--dry-run=false`), and one that runs
 an asking script with `<manager> run`; a call with arguments to an `exec`
-script is classified as the command it expands to, or whose `pre` or `post` hook asks, by its
+script is classified as the command it expands to, and a called script's own
+`pre` and `post` hooks count, or whose `pre` or `post` hook asks, by its
 commands or by configuration. Bun appends a script's arguments to its last command, so a script ending
 in a bare agent-tool, `agent-tool run` without a `--` command, a bare
 `run-group`, or a bare shell or interpreter is `exec`, as is one that ends by
