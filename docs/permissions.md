@@ -116,12 +116,13 @@ a `deploy`, `publish`, `release`, `destroy`, `apply`, `secret`, `upload`, or
 agent-tool command that asks, add or download a package (`intake`, including
 `bunx`/`npx` without `--no-install`), or publish, merge, or deploy with `npm`,
 `bun`, `gh`, `wrangler`, or `terraform` (`release`), and one that runs an
-asking script with `<manager> run`, including through its `pre` and `post`
-hooks. Bun appends a script's arguments to its last command, so a script ending
+asking script with `<manager> run`, or whose `pre` or `post` hook asks, by its
+commands or by configuration. Bun appends a script's arguments to its last command, so a script ending
 in a bare agent-tool, `agent-tool run` without a `--` command, a bare
 `run-group`, or a bare shell or interpreter is `exec`, as is one that ends by
 running such a script without arguments; one ending in another bare CLI takes
-that CLI's class from `permissions.executables`. A script name has one rule across all workspaces, so any
+that CLI's class from `permissions.executables`. In agent-tool's own checkout,
+its `bin` source path counts as agent-tool. A script name has one rule across all workspaces, so any
 workspace's definition can make it ask. `agent-tool.json` overrides all of
 this. `bun x` runs only an executable installed in this checkout's
 `node_modules/.bin` (`bun x --no-install`, never Bun's global cache), and only

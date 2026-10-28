@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { loadConfig, type AgentToolConfig } from "../config";
 import { packageDirectories } from "../bun/workspace";
@@ -29,9 +29,13 @@ const REFERENCE = /\b(?:bun|npm|pnpm|yarn)\s+run\s+(?:--[\w-]+(?:[= ]\S+)?\s+)*(
 const RUNNER = /^(?:(?:bun\s+run|bunx(?:\s+--\S+)*|npx(?:\s+--\S+)*|bun\s+x(?:\s+--\S+)*)\s+)?/;
 const SHELLS = new Set(["sh", "bash", "zsh", "env", "exec", "eval", "xargs", "node", "bun", "deno", "python", "python3"]);
 
+/** agent-tool's own checkout runs its CLI from source; its bin path counts as agent-tool there. */
+let sourceCli: string | undefined;
+
 /** An agent-tool invocation's words after its global options, or undefined when the command is not agent-tool. */
 function agentToolWords(command: string): string[] | undefined {
-  const words = command.replace(RUNNER, "").split(/\s+/).filter(Boolean);
+  let words = command.replace(RUNNER, "").split(/\s+/).filter(Boolean);
+  if (sourceCli && ["bun", "node"].includes(words[0]!) && words[1]?.replace(/^\.\//, "") === sourceCli) words = ["agent-tool", ...words.slice(2)];
   if (words[0]?.split("/").pop() !== "agent-tool") return undefined;
   let index = 1;
   while (words[index] === "--repo" || words[index] === "--config") index += 2;
@@ -86,6 +90,9 @@ function inherit(classes: Map<string, PermissionClass>, bodies: Map<string, stri
     changed = false;
     for (const [name, list] of bodies) {
       if (CLASSES[classes.get(name)!].decision === "ask") continue;
+      // Bun runs pre<name> and post<name> with <name>, so an asking hook, configured or not, makes it ask.
+      const hook = [`pre${name}`, `post${name}`].find(item => classes.has(item) && CLASSES[classes.get(item)!].decision === "ask");
+      if (hook) { classes.set(name, classes.get(hook)!); changed = true; continue; }
       // An `exec` script called with fixed arguments runs those, which the caller's own body rules
       // classify; called last with none, it receives the caller's arguments, so the caller forwards too.
       const forwarding = list.map(body => body.split(/&&|\|\||[;|&\n]/).map(command => command.trim()).filter(Boolean).at(-1)?.match(/^(?:bun|npm|pnpm|yarn)\s+run\s+(?:--\S+\s+)*([\w@.:/+-]+)(?:\s+-\S+)*$/)?.[1]).find(item => item !== undefined && item !== name && classes.get(item) === "exec");
@@ -100,6 +107,10 @@ function inherit(classes: Map<string, PermissionClass>, bodies: Map<string, stri
  * installed executables that `bun x` may run. Unlisted executables keep the harness default.
  */
 export function projectCommands(root: string, config: AgentToolConfig = loadConfig(root)): CatalogEntry[] {
+  const manifestFile = path.join(root, "package.json");
+  const rootManifest = (existsSync(manifestFile) ? JSON.parse(readFileSync(manifestFile, "utf8")) : {}) as { name?: string; bin?: unknown };
+  const bin = typeof rootManifest.bin === "string" ? rootManifest.bin : (rootManifest.bin as Record<string, unknown> | undefined)?.["agent-tool"];
+  sourceCli = rootManifest.name === "@a2f0/agent-tool" && typeof bin === "string" ? bin.replace(/^\.\//, "") : undefined;
   const bodies = new Map<string, string[]>();
   for (const directory of packageDirectories(root)) for (const [name, body] of scripts(path.join(directory, "package.json"))) bodies.set(name, [...(bodies.get(name) ?? []), body]);
   for (const name of Object.keys(config.permissions.scripts)) if (!name.includes("*") && !bodies.has(name)) bodies.set(name, []);

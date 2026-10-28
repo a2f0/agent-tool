@@ -123,6 +123,13 @@ test("callers of a forwarding script are classified by the arguments they pass",
   expect(projectCommands(root).map(entry => `${entry.command}:${entry.class}`)).toEqual(["bun run agent-tool:exec", "bun run agent:run:exec", "bun run ship:release", "bun run wrap:exec"]);
 });
 
+test("agent-tool's own source CLI wrappers forward, and a configured hook class reaches its script", () => {
+  const root = project();
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "@a2f0/agent-tool", bin: { "agent-tool": "src/index.ts" }, scripts: { "agent:run": "bun src/index.ts run", start: "bun src/index.ts", "agent:logs": "bun src/index.ts logs", build: "bun build.ts", postbuild: "bun scripts/upload.ts" } }));
+  writeFileSync(path.join(root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { scripts: { postbuild: "release" } } }));
+  expect(projectCommands(root).map(entry => `${entry.command}:${entry.class}`)).toEqual(["bun run agent:run:exec", "bun run build:release", "bun run postbuild:release", "bun run start:exec"]);
+});
+
 test("a script that calls an asking script asks too, unless configured", () => {
   const root = project();
   writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { ship: "bun run check && bun run publish:npm", check: "bun test", "publish:npm": "npm publish", all: "npm run ship", safe: "bun run publish:npm --dry-run" } }));
