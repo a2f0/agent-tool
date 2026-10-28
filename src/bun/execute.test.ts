@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -32,25 +32,6 @@ function fixture() {
   return { project, bin, run };
 }
 
-test("run executes declared scripts of the root or a workspace with the pinned Bun first on PATH", () => {
-  const f = fixture();
-  const root = f.run(["run", "check", "--", "--bail"]);
-  expect(root.status).toBe(0);
-  expect(JSON.parse(root.stdout)).toMatchObject({ args: ["run", "check", "--bail"], firstPath: f.bin });
-  const workspace = f.run(["run", "build", "--cwd", "packages/web"]);
-  expect(JSON.parse(workspace.stdout).args).toEqual(["run", "build"]);
-  expect(f.run(["run", "check"], { STUB_EXIT: "3" }).status).toBe(3);
-});
-
-test("run refuses files, undeclared scripts, packages outside the workspaces, and options before the script", () => {
-  const f = fixture();
-  writeFileSync(path.join(f.project, "evil.ts"), "");
-  expect(f.run(["run", "evil.ts"]).stderr).toMatch(/No 'evil.ts' script/);
-  expect(f.run(["run", "deploy", "--cwd", "tools/loose"]).stderr).toMatch(/root package or a declared workspace/);
-  expect(f.run(["run", "--cwd", "packages/web", "build"]).stderr).toMatch(/Name the script first/);
-  expect(f.run(["run", "check", "--bail"]).stderr).toMatch(/after --/);
-});
-
 test("x runs installed executables without fetching, and test forwards its arguments", () => {
   const f = fixture();
   expect(f.run(["x", "biome"]).stderr).toMatch(/not installed in this checkout/);
@@ -61,40 +42,31 @@ test("x runs installed executables without fetching, and test forwards its argum
   expect(JSON.parse(f.run(["test", "--", "src/a.test.ts"]).stdout).args).toEqual(["test", "src/a.test.ts"]);
 });
 
-test("--log captures output in a private log and prints a receipt", () => {
+test("--log captures output in a private log and prints a receipt, with the pinned Bun first on PATH", () => {
   const f = fixture();
-  const result = f.run(["run", "check", "--log"]);
+  expect(JSON.parse(f.run(["test"]).stdout).firstPath).toBe(f.bin);
+  const result = f.run(["test", "--log"]);
   expect(result.status).toBe(0);
   const receipt = JSON.parse(result.stdout);
   directories.push(path.dirname(receipt.log));
-  expect(receipt).toMatchObject({ status: "passed", label: "bun run check", exitCode: 0 });
+  expect(receipt).toMatchObject({ status: "passed", label: "bun test", exitCode: 0 });
+  expect(f.run(["test"], { STUB_EXIT: "3" }).status).toBe(3);
 });
 
-test("a script that asks is refused while the generated rules predate it, and runs once they are current", () => {
+test("an executable that asks is refused while the generated rules predate its class, and runs once they are current", () => {
   const f = fixture();
+  mkdirSync(path.join(f.project, "node_modules/.bin"), { recursive: true });
+  writeFileSync(path.join(f.project, "node_modules/.bin/wrangler"), "");
   expect(spawnSync(process.execPath, [cli, "permissions", "install", "--apply"], { cwd: f.project, encoding: "utf8" }).status).toBe(0);
-  const manifest = JSON.parse(readFileSync(path.join(f.project, "package.json"), "utf8"));
-  manifest.scripts.deploy = "wrangler deploy";
-  writeFileSync(path.join(f.project, "package.json"), JSON.stringify(manifest));
-  expect(f.run(["run", "deploy"]).stderr).toMatch(/Permission rules predate 'bun run deploy'/);
-  expect(f.run(["run", "check"]).status).toBe(0);
+  writeFileSync(path.join(f.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
+  expect(f.run(["x", "wrangler"]).stderr).toMatch(/Permission rules predate 'bun x wrangler'/);
   expect(spawnSync(process.execPath, [cli, "permissions", "install", "--apply"], { cwd: f.project, encoding: "utf8" }).status).toBe(0);
-  expect(JSON.parse(f.run(["run", "deploy"]).stdout).args).toEqual(["run", "deploy"]);
+  expect(JSON.parse(f.run(["x", "wrangler", "--", "deploy"]).stdout).args).toEqual(["x", "--no-install", "wrangler", "deploy"]);
 });
 
-test("--cwd cannot reach another checkout", () => {
+test("--cwd cannot reach another checkout, and options must precede --", () => {
   const f = fixture(), other = fixture();
-  expect(f.run(["run", "check", "--cwd", other.project]).stderr).toMatch(/--cwd must name a package in this checkout/);
-});
-
-test("forwarded arguments that turn a script's last command into one that asks are refused", () => {
-  const f = fixture();
-  const manifest = JSON.parse(readFileSync(path.join(f.project, "package.json"), "utf8"));
-  Object.assign(manifest.scripts, { preview: "npm publish --dry-run", p: "agent-tool permissions", setup: "npm install", nested: "bun run setup" });
-  writeFileSync(path.join(f.project, "package.json"), JSON.stringify(manifest));
-  expect(f.run(["run", "preview", "--", "--dry-run=false"]).stderr).toMatch(/run a release command/);
-  expect(f.run(["run", "p", "--", "install", "--apply"]).stderr).toMatch(/run a policy command/);
-  expect(JSON.parse(f.run(["run", "p", "--", "show"]).stdout).args).toEqual(["run", "p", "show"]);
-  expect(f.run(["run", "setup", "--", "left-pad"]).stderr).toMatch(/run a intake command/);
-  expect(f.run(["run", "nested", "--", "left-pad"]).stderr).toMatch(/run a intake command/);
+  expect(f.run(["test", "--cwd", other.project]).stderr).toMatch(/--cwd must name a package in this checkout/);
+  expect(f.run(["test", "src"]).stderr).toMatch(/after --/);
+  expect(f.run(["x", "--log", "biome"]).stderr).toMatch(/Name the executable first/);
 });

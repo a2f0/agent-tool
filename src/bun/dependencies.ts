@@ -21,7 +21,6 @@ const USAGE = `Usage:
   agent-tool bun add <name@version>... [--dev|--optional|--peer] [--exact] [--cwd <dir>]
   agent-tool bun update <name[@version]>... [--cwd <dir>]
   agent-tool bun remove <name>... [--cwd <dir>]
-  agent-tool bun run <script> [--cwd <dir>] [--log] [-- args...]
   agent-tool bun test [--cwd <dir>] [--log] [-- args...]
   agent-tool bun x <executable> [--cwd <dir>] [--log] [-- args...]`;
 
@@ -181,7 +180,7 @@ function plan(action: "add" | "update" | "remove", manifest: Manifest, requested
 
 export function bunCommand(args: string[]): number | Promise<number> {
   const action = args.shift();
-  if (action === "run" || action === "test" || action === "x") return bunExecute(action, args);
+  if (action === "test" || action === "x") return bunExecute(action, args);
   assert(action === "install" || action === "add" || action === "update" || action === "remove", USAGE);
   const target = path.resolve(option(args, "--cwd") ?? ".");
   assert(existsSync(path.join(target, "package.json")), `No package.json in ${target}.`);

@@ -6,20 +6,19 @@ import { runCommand } from "../commands/run";
 import { assert, flag, option } from "../workflows/core";
 import { CLASSES } from "../permissions/catalog";
 import { checkPermissions } from "../permissions/install";
-import { expandedClass, projectCommands, scriptBodies, segments, withinCheckout } from "../permissions/project";
-import { loadConfig } from "../config";
+import { projectCommands } from "../permissions/project";
 import { pinnedBun } from "./toolchain";
 import { workspacePackage } from "./workspace";
 
 const USAGE = `Usage:
-  agent-tool bun run <script> [--cwd <dir>] [--log] [-- args...]
   agent-tool bun test [--cwd <dir>] [--log] [-- args...]
   agent-tool bun x <executable> [--cwd <dir>] [--log] [-- args...]`;
 const EXECUTABLE = /^[\w.+-][\w.+-]*$/;
 
 /**
- * A command whose class asks relies on a generated ask rule. If the recorded rules predate it,
- * the generic allowance could run it without approval, so refuse until they are regenerated.
+ * An executable whose class asks relies on a generated ask rule. If the recorded rules predate
+ * its classification, an older allowance could run it without approval, so refuse until they
+ * are regenerated.
  */
 function assertCurrentRules(root: string, command: string): void {
   if (!existsSync(path.join(root, ".agent-tool-permissions.json"))) return;
@@ -32,43 +31,29 @@ function assertCurrentRules(root: string, command: string): void {
 }
 
 /**
- * Run a package script, the test runner, or an installed executable with the pinned Bun.
- * The script or executable name comes first and options precede `--`, so a harness
- * rule can classify the command by its prefix.
+ * Run the test runner or an installed executable with the pinned Bun. The executable name comes
+ * first and options precede `--`, so a harness rule can classify the command by its prefix.
  */
-export function bunExecute(action: "run" | "test" | "x", args: string[]): number | Promise<number> {
+export function bunExecute(action: "test" | "x", args: string[]): number | Promise<number> {
   const separator = args.indexOf("--");
   const options = separator === -1 ? args : args.slice(0, separator);
   const forwarded = separator === -1 ? [] : args.slice(separator + 1);
-  const name = action === "test" ? undefined : options.shift();
-  assert(action === "test" || (name && !name.startsWith("-")), `Name the ${action === "run" ? "script" : "executable"} first.\n${USAGE}`);
+  const name = action === "x" ? options.shift() : undefined;
+  assert(action === "test" || (name && !name.startsWith("-")), `Name the executable first.\n${USAGE}`);
   const target = path.resolve(option(options, "--cwd") ?? ".");
   const log = flag(options, "--log");
   assert(!options.length, `Unexpected bun ${action} argument '${options[0]}'; pass the command's own arguments after --.\n${USAGE}`);
-  let command: string[];
-  // Harness rules are generated from these packages' scripts; others would bypass them.
   const { root, directory } = workspacePackage(target);
-  if (action === "run") {
-    const manifest = path.join(directory, "package.json");
-    const scripts = existsSync(manifest) ? (JSON.parse(readFileSync(manifest, "utf8")) as { scripts?: Record<string, unknown> }).scripts ?? {} : {};
-    // `bun run <file>` executes a file; only declared scripts are accepted.
-    assert(Object.hasOwn(scripts, name!), `No '${name}' script in ${manifest}.`);
-    // Bun appends these arguments to the script's last command; refuse when that makes it a command that asks.
-    if (forwarded.length) {
-      const last = segments(withinCheckout(String(scripts[name!]), directory, root)).at(-1) ?? "";
-      const value = expandedClass(root, `${last} ${forwarded.join(" ")}`, scriptBodies(root), loadConfig(root).permissions.executables);
-      assert(!value || CLASSES[value].decision !== "ask", `These arguments make '${name}' run a ${value} command, which needs approval; run it directly instead.`);
-    }
-    command = ["run", name!, ...forwarded];
-  } else if (action === "x") {
+  let command: string[];
+  if (action === "x") {
     assert(EXECUTABLE.test(name!), `Name an installed executable, not a package or version: '${name}'.`);
     // `--no-install` still accepts Bun's global cache; require this checkout's own installation.
     assert([directory, root].some(item => existsSync(path.join(item, "node_modules/.bin", name!))), `${name} is not installed in this checkout's node_modules/.bin.`);
+    assertCurrentRules(root, `bun x ${name}`);
     command = ["x", "--no-install", name!, ...forwarded];
   } else command = ["test", ...forwarded];
-  if (action !== "test") assertCurrentRules(root, `bun ${action} ${name}`);
   const bun = pinnedBun(directory, root);
-  // Scripts that call bun themselves get the pinned version too.
+  // Tests and executables that call bun themselves get the pinned version too.
   const env = { ...process.env, PATH: [path.dirname(bun.path), process.env.PATH].filter(Boolean).join(path.delimiter) };
   if (log) {
     process.chdir(directory);

@@ -121,7 +121,7 @@ For repository workflow commands added alongside these interfaces, see
 | `bun update <name[@version]>... [--cwd dir]` | Change versions of declared registry dependencies only, keeping each one's section |
 | `bun remove <name>... [--cwd dir]` | Remove declared dependencies only |
 | `bun add <name@version>... [--dev\|--optional\|--peer] [--exact] [--cwd dir]` | Add new dependencies; the one dependency verb that asks for approval |
-| `bun run <script>\|test\|x <executable> [--cwd dir] [--log] [-- args...]` | Run a declared script, the test runner, or an installed executable with the pinned Bun; `--log` captures output like `run` |
+| `bun test\|x <executable> [--cwd dir] [--log] [-- args...]` | Run the test runner or an installed executable with the pinned Bun; `--log` captures output like `run` |
 | `permissions show\|check [--harness all\|claude\|codex]` | Print, or check in CI, the harness permission rules generated from command classes |
 | `permissions install [--harness all\|claude\|codex] [--apply]` | Preview by default; write the managed rules into `.claude/settings.json` and `.codex/rules/` |
 | `images list [target...]` | List the files each image target writes, without rendering |

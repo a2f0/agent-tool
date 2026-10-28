@@ -11,11 +11,10 @@ the code, rather than in every harness configuration.
 The rules keep a cooperating agent from taking a consequential step (merging,
 publishing, deploying, adding third-party code, or changing its own permissions)
 without the user seeing it first. They are not a sandbox. An allowed command
-still runs repository code: tests, builds, and scripts can do anything their
-source says, and an agent that edits that source can change what an allowed
-command does. Script classification reads the commands a script names,
-including the scripts, hooks, plans, and wrappers it reaches; it cannot see
-inside programs those commands run, such as a shell or TypeScript file. Review
+still runs repository code: tests and tools can do anything their source says,
+and an agent that edits that source can change what an allowed command does.
+Classes describe agent-tool's own commands and the executables a repository
+classifies; they cannot see inside the programs those run. Review
 such code like any other change, and keep credentials for consequential systems
 out of agent sessions where that matters.
 
@@ -24,12 +23,12 @@ out of agent sessions where that matters.
 | Class | Decision | Commands |
 | --- | --- | --- |
 | `read` | allow | Context, checks, listings, previews, diagnostics, and logs |
-| `local` | allow | `bun install\|update\|remove\|test`, `bun run` for scripts that do not ask, `branch create`, `versions`, `images build`, `review`, and applied skill or hook installs |
+| `local` | allow | `bun install\|update\|remove\|test`, `bun x` for executables classified `local`, `branch create`, `versions`, `images build`, `review`, and applied skill or hook installs |
 | `share` | allow | `branch push`, `pr open`, `pr threads reply\|resolve` |
-| `release` | ask | `pr merge`, `repo cleanup --apply`, release-named scripts, and direct `gh pr merge`, `npm publish`, `bun publish` |
+| `release` | ask | `pr merge`, `repo cleanup --apply`, and direct `gh pr merge`, `npm publish`, `bun publish` |
 | `intake` | ask | `bun add`, and direct `bun add`, `npm install`, `pnpm add`, `yarn add`, and `bunx`, `bun x`, `npx`, which can download a package |
 | `policy` | ask | `permissions install --apply` |
-| `exec` | ask | Package scripts that run whatever their arguments name, such as `agent:run` (`agent-tool run`) or a bare `agent-tool` |
+| `exec` | ask | Executables classified `exec`: ones that run whatever file or command they are given |
 
 Legacy action names, such as `squashMerge` and `openPr`, carry the class of the
 command they alias. `run` and `run-group` execute arbitrary commands, so they
@@ -105,76 +104,40 @@ the manifest cannot be read afterward. `node_modules` is not restored; the next 
 install rebuilds it. Updating a dependency can still bring new transitive
 packages; the lockfile diff is where review sees them.
 
-## Scripts and executables
+## Tests and executables
 
 ```sh
-agent-tool bun run check --log
-agent-tool bun run build --cwd packages/web -- --mode staging
 agent-tool bun test --log -- src/app.test.ts
 agent-tool bun x biome -- check src
 ```
 
-`bun run`, `bun test`, and `bun x` use the pinned Bun and put its directory
-first on `PATH`, so a script that calls `bun` gets the same version. The script
-or executable comes first and options precede `--`, so harness rules can match
-the name as a prefix; arguments for the command itself follow `--`. `--log`
-writes output to a private log and prints a `run` receipt; without it, output
-stays visible, which suits commands whose JSON drives a decision.
+`bun test` and `bun x` use the pinned Bun and put its directory first on `PATH`,
+so a test or tool that calls `bun` gets the same version. The executable comes
+first and options precede `--`, so harness rules can match its name as a
+prefix; arguments for the command itself follow `--`. `--log` writes output to a
+private log and prints a `run` receipt; without it, output stays visible.
 
-`bun run` accepts only scripts declared in the root package or a declared
-workspace, never a file path. When arguments follow `--`, it classifies the
-script's last command with them appended, following calls into other scripts,
-and refuses one that would ask, such as `npm install` given a package name. Most scripts are `local`. A script whose name has
-a `deploy`, `publish`, `release`, `destroy`, `apply`, `secret`, `upload`, or
-`submit` segment is `release` and asks. So does one whose commands, split at
-`&&`, `||`, `;`, `|`, `&`, newlines, and `( )`/`{ }` groups, read past leading `NAME=value`
-assignments, simple quotes, and a tool's own options before its subcommand,
-unwrapping `agent-tool run -- <command>`, with `run-group` plan steps counted as
-commands and command substitution treated as `exec` (as is any script that
-calls one using it), run an agent-tool command that asks
-(in last position, where a caller can append arguments, its stricter form or,
-for a partial command such as `agent-tool permissions`, the strictest command it
-can become), call a script or executable that asks through `agent-tool bun`, add
-or download a package (`intake`, including `bunx`/`npx` without `--no-install`,
-dry run or not, judged by the runner's own options), run such a command through
-`agent-tool run -- <command>` or a `run-group` plan step (an unreadable plan
-asks), or publish, merge, or deploy with `npm`, `bun`, `gh`,
-`wrangler`, or `terraform` (`release`; a `--dry-run` is exempt except in last
-position, where a caller can append `--dry-run=false`), and one that runs
-an asking script with `<manager> run`; a call with arguments to an `exec`
-script is classified as the command it expands to, and a called script's own
-`pre` and `post` hooks count, or whose `pre` or `post` hook asks, by its
-commands or by configuration. Bun appends a script's arguments to its last command, so a script ending
-in a bare agent-tool, `agent-tool run` without a `--` command, a bare
-`run-group`, an incomplete runner such as `bun run` or `npm exec`, or a bare
-shell or interpreter is `exec`, as is one that ends by
-running such a script without arguments; one ending in another bare CLI takes
-that CLI's class from `permissions.executables`. In agent-tool's own checkout,
-its `bin` source path counts as agent-tool. `agent-tool --repo <dir>` that
-leaves this checkout is `exec`, since its scripts and plans were never read
-here; a `--repo` that resolves inside it, such as `../..` from a workspace, is
-the same checkout. A script name has one rule across all workspaces, so any
-workspace's definition can make it ask. `agent-tool.json` overrides all of
-this. `bun x` runs only an executable installed in this checkout's
-`node_modules/.bin` (`bun x --no-install`, never Bun's global cache), and only
-executables that `agent-tool.json` classifies get a rule; any other one keeps
-the harness default.
+`bun x` runs only an executable installed in this checkout's `node_modules/.bin`
+(`bun x --no-install`, never Bun's global cache), and only executables that
+`permissions.executables` in `agent-tool.json` classifies get a rule; any other
+one keeps the harness default. Classify a whole executable by its riskiest
+subcommand, and use `exec` for one that runs whatever file or command it is
+given, such as `tsx`. While the recorded rules predate an asking class, `bun x`
+refuses that executable until they are regenerated.
 
 ```json
 {
   "schemaVersion": 1,
   "permissions": {
-    "scripts": { "build:*": "local", "db:reset": "release" },
-    "executables": { "biome": "local", "tsc": "read", "wrangler": "release" }
+    "executables": { "biome": "local", "tsc": "read", "wrangler": "release", "tsx": "exec" }
   }
 }
 ```
 
-An exact script name wins over a `*` pattern, and a longer pattern over a
-shorter one. Classify a whole executable by its riskiest subcommand; to allow a
-safe subcommand of a risky tool, wrap it in a script. `permissions install`
-reads every declared script, so adding one that asks makes `permissions check`
-fail until the rules are regenerated.
+Package scripts are not classified yet. A script can run anything its commands,
+hooks, and the scripts it calls name, and arguments a caller appends can change
+what its last command does, so a rule that allowed scripts by default could not
+be trusted. `bun run` and `agent:run` therefore keep the harness default.
 
 ## Generated rules
 

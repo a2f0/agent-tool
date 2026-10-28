@@ -65,7 +65,6 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   bun add <name@version>... [--dev|--optional|--peer] [--exact] [--cwd <dir>]
   bun update <name[@version]>... [--cwd <dir>]  Change versions of declared dependencies only
   bun remove <name>... [--cwd <dir>]    Remove declared dependencies only
-  bun run <script> [--cwd <dir>] [--log] [-- args...]  Package script with the pinned Bun
   bun test [--cwd <dir>] [--log] [-- args...]
   bun x <executable> [--cwd <dir>] [--log] [-- args...]  Installed executables only, never fetched
   permissions show [--harness <all|claude|codex>]

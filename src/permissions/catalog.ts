@@ -10,7 +10,7 @@ export const CLASSES = {
   release: { decision: "ask", description: "Merges into a shared branch, publishes a package, or deletes remote state." },
   intake: { decision: "ask", description: "Brings new third-party code into the repository." },
   policy: { decision: "ask", description: "Changes the permissions agents run with." },
-  exec: { decision: "ask", description: "Runs whatever command its arguments name." },
+  exec: { decision: "ask", description: "Runs whatever command or file its arguments name." },
 } as const;
 export type PermissionClass = keyof typeof CLASSES;
 export type Decision = "allow" | "ask";
@@ -21,7 +21,7 @@ export interface CatalogEntry { command: string; class: PermissionClass; applyCl
 export const CATALOG: CatalogEntry[] = [
   ...["--help", "--version", "logs", "runs list", "doctor", "config show", "branch check", "branch status", "commits check", "checks binaries", "repo context", "policy check", "toolchain check", "ci gate", "release plan", "release verify", "pr context", "pr checks", "pr logs", "pr preflight", "pr threads list", "versions plan", "versions check", "dependencies check-terraform-plan", "dependencies diff", "skills list", "skills check", "hooks check", "images list", "permissions show", "permissions check"]
     .map(command => ({ command, class: "read" as const })),
-  ...["bun install", "bun update", "bun remove", "bun run", "bun test", "branch create", "versions bump", "versions prepare", "versions resolve-conflicts", "images build", "review", "init"]
+  ...["bun install", "bun update", "bun remove", "bun test", "branch create", "versions bump", "versions prepare", "versions resolve-conflicts", "images build", "review", "init"]
     .map(command => ({ command, class: "local" as const })),
   { command: "skills install", class: "read", applyClass: "local" },
   { command: "hooks install", class: "read", applyClass: "local" },
@@ -37,8 +37,8 @@ export const CATALOG: CatalogEntry[] = [
   { command: "squashMerge", class: "release" },
 ];
 // `run` and `run-group` execute arbitrary commands, so they stay unclassified and keep the harness default.
-// `bun x` runs only executables that `permissions.executables` classifies; project.ts adds those
-// and the package scripts whose class asks, ahead of the generic `bun run` allowance.
+// `bun x` runs only executables that `permissions.executables` classifies; project.ts adds those.
+// Package scripts are not classified, so `bun run` keeps the harness default.
 
 /** Direct spellings of classified actions. Asking here keeps a raw command from bypassing its agent-tool form. */
 export const GUARDS: { command: string; class: PermissionClass }[] = [

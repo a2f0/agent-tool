@@ -17,7 +17,7 @@ export interface AgentToolConfig extends WorkflowConfig {
   versions: { packages: string[] | null; bundles: string[]; lockfile: "bun.lock" | null; validate: string[][]; commitMessage: string };
   pr: { rejectClaudeBranding: boolean };
   images: ImagesConfig;
-  permissions: { scripts: Record<string, PermissionClass>; executables: Record<string, PermissionClass> };
+  permissions: { executables: Record<string, PermissionClass> };
 }
 
 export const DEFAULT_CONFIG: AgentToolConfig = {
@@ -36,7 +36,7 @@ export const DEFAULT_CONFIG: AgentToolConfig = {
   versions: { packages: null, bundles: [], lockfile: "bun.lock", validate: [], commitMessage: "chore: bump package versions" },
   pr: { rejectClaudeBranding: false },
   images: { targets: {} },
-  permissions: { scripts: {}, executables: {} },
+  permissions: { executables: {} },
 };
 
 function object(value: unknown, name: string): Record<string, unknown> {
@@ -100,10 +100,8 @@ export function parseConfig(source: string): AgentToolConfig {
   if (typeof result.versions.commitMessage !== "string" || !result.versions.commitMessage.trim() || /[\r\n]/.test(result.versions.commitMessage)) invalid("versions.commitMessage");
   if (typeof result.pr.rejectClaudeBranding !== "boolean") invalid("pr.rejectClaudeBranding");
   // Names become literal tokens in harness rules, so keep them free of rule syntax.
-  for (const [key, pattern] of [["scripts", /^[\w@.:/+-]+(?:\*[\w@.:/+-]*)*$|^\*$/], ["executables", /^[\w.+-]+$/]] as const) {
-    const entries = object(result.permissions[key], `permissions.${key}`);
-    for (const [name, value] of Object.entries(entries)) if (!pattern.test(name) || !(typeof value === "string" && Object.hasOwn(CLASSES, value))) invalid(`permissions.${key}.${name}`);
-  }
+  const executables = object(result.permissions.executables, "permissions.executables");
+  for (const [name, value] of Object.entries(executables)) if (!/^[\w.+-]+$/.test(name) || !(typeof value === "string" && Object.hasOwn(CLASSES, value))) invalid(`permissions.executables.${name}`);
   validateWorkflowConfig(result);
   return result;
 }
