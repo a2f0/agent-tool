@@ -85,6 +85,8 @@ validation suite, and release procedures.
 - [Development](docs/development.md): setup, source layout, validation, and release
   procedures for this package.
 - [Images](docs/images.md): declarative brand sources and generated outputs.
+- [Permissions](docs/permissions.md): which commands run without approval in
+  Claude Code and Codex, and the dependency commands that enforce it.
 - [Dependency maintenance](docs/dependency-upgrades.md): active compatibility
   constraints and the dependency-update workflow.
 - [Design](docs/design.md) and [extraction history](docs/extraction.md): component

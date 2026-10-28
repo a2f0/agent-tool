@@ -8,6 +8,8 @@ import { review } from "./harnesses";
 import { runAgentToolAction } from "./runAgentToolAction";
 import { BUNDLED_SKILLS } from "./skills/bundled";
 import { checkSkills, installSkills } from "./skills/install";
+import { bunCommand } from "./bun/dependencies";
+import { checkPermissions, installPermissions, showPermissions } from "./permissions/install";
 import { bumpVersions, checkVersions, planVersions } from "./version/bumpVersions";
 import { prepareVersions } from "./version/prepareVersions";
 import { resolveVersionConflicts } from "./version/resolveVersionConflicts";
@@ -56,6 +58,13 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   skills list
   skills install [--harness <all|claude|codex|opencode>] [--apply]
   skills check [--harness <all|claude|codex|opencode>]
+  bun install [--cwd <dir>]             Frozen-lockfile install with the pinned Bun
+  bun add <name@version>... [--dev|--optional|--peer] [--exact] [--cwd <dir>]
+  bun update <name[@version]>... [--cwd <dir>]  Change versions of declared dependencies only
+  bun remove <name>... [--cwd <dir>]    Remove declared dependencies only
+  permissions show [--harness <all|claude|codex>]
+  permissions install [--harness <all|claude|codex>] [--apply]
+  permissions check [--harness <all|claude|codex>]
   images list [target...]               JSON files each image target writes
   images build [target...] [--out <dir>]  Render assets/brand/*.svg per agent-tool.json
   init                                  Create agent-tool.json without overwriting
@@ -146,6 +155,25 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
       output({ ok, changes }); return ok ? 0 : 1;
     }
     output({ applied: apply, changes: installSkills(process.cwd(), target, apply) }); return 0;
+  }
+  if (command === "bun") return bunCommand(args);
+  if (command === "permissions") {
+    const action = args.shift();
+    usage(action === "show" || action === "install" || action === "check", "Usage: agent-tool permissions <show|install|check> [--harness <all|claude|codex>] [--apply]");
+    let target = "all", apply = false;
+    while (args.length) {
+      const flag = args.shift();
+      if (flag === "--apply") { usage(action === "install" && !apply, "--apply applies once, to permissions install."); apply = true; }
+      else if (flag === "--harness") { const value = args.shift(); usage(!!value, "--harness requires a name."); target = value!; }
+      else throw new Error(`Unknown permissions ${action} argument '${flag}'.`);
+    }
+    if (action === "show") { writeSync(1, showPermissions(target)); return 0; }
+    if (action === "check") {
+      const changes = checkPermissions(process.cwd(), target);
+      const ok = changes.every(change => change.status === "unchanged");
+      output({ ok, changes }); return ok ? 0 : 1;
+    }
+    output({ applied: apply, changes: installPermissions(process.cwd(), target, apply) }); return 0;
   }
   const root = gitRoot();
   process.chdir(root);
