@@ -161,6 +161,26 @@ describe("prepareVersions CLI", () => {
     expect(result.stderr).toMatch(/packages\/windowing: react@\^19\.0\.0/);
   });
 
+  test("refuses a bump that would send a version-pinned workspace reference to the registry", () => {
+    const fixture = versionPreparationFixture();
+    const { rootDir } = fixture;
+    const frontend = JSON.parse(read(rootDir, FRONTEND));
+    const root = JSON.parse(read(rootDir, "package.json"));
+    root.dependencies = { [frontend.name]: frontend.version };
+    write(rootDir, "package.json", JSON.stringify(root, null, 2) + "\n");
+    const install = Bun.spawnSync([process.execPath, "install", "--lockfile-only", "--ignore-scripts"], { cwd: rootDir, stdout: "pipe", stderr: "pipe" });
+    expect(install.exitCode).toBe(0);
+    commitAll(rootDir, "chore: pin the frontend by version");
+    const base = commitOnMain(rootDir, { "README.md": "main advanced\n" });
+    mergeMain(rootDir);
+    write(rootDir, "packages/windowing/src/app.ts", "export const changed = true;\n");
+    const head = commitAll(rootDir, "feat: change frontend");
+    const result = fixture.prepare(base);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(`The version bump leaves .: ${frontend.name}@${frontend.version} unsatisfied by the workspace`);
+    expect(git(rootDir, ["rev-parse", "HEAD"])).toBe(head);
+  });
+
   test("root-only changes produce no version commit", () => {
     const fixture = versionPreparationFixture();
     write(fixture.rootDir, "README.md", "updated\n");

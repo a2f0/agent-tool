@@ -106,3 +106,36 @@ export function unresolvedDependencies(
   }
   return [...missing].sort();
 }
+
+/** Each workspace's package name and version, by name. */
+export function workspaceVersions(rootDir: string): Map<string, string> {
+  const root = realpathSync(rootDir);
+  const versions = new Map<string, string>();
+  for (const directory of packageDirectories(root)) {
+    const manifest = JSON.parse(readFileSync(path.join(directory, "package.json"), "utf8")) as Record<string, unknown>;
+    if (typeof manifest.name === "string" && typeof manifest.version === "string") versions.set(manifest.name, manifest.version);
+  }
+  return versions;
+}
+
+/**
+ * Declarations that a workspace satisfied before a version bump but no longer
+ * does, so Bun would resolve them from the registry instead of the workspace.
+ */
+export function lostWorkspaceReferences(rootDir: string, before: ReadonlyMap<string, string>): string[] {
+  const root = realpathSync(rootDir);
+  const after = workspaceVersions(root);
+  const lost = new Set<string>();
+  for (const directory of packageDirectories(root)) {
+    const manifest = JSON.parse(readFileSync(path.join(directory, "package.json"), "utf8")) as Record<string, unknown>;
+    const key = path.relative(root, directory).split(path.sep).join("/") || ".";
+    for (const section of SECTIONS) {
+      for (const [name, spec] of entries(manifest[section])) {
+        const old = before.get(name), now = after.get(name);
+        if (spec.startsWith("workspace:") || old === undefined || now === undefined) continue;
+        if (Bun.semver.satisfies(old, spec) && !Bun.semver.satisfies(now, spec)) lost.add(`${key}: ${name}@${spec}`);
+      }
+    }
+  }
+  return [...lost].sort();
+}

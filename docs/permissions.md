@@ -65,7 +65,9 @@ any workspace, or a root catalog, override, or patch differs from what
 `bun.lock` records, in either direction for root entries; a new workspace may
 use only third-party specs the lockfile already records, only `workspace:`
 specs count as local, and a dependency on a removed workspace is refused because
-it would now resolve from the registry. Every other workspace manifest must stay
+it would now resolve from the registry. After bumping, it also refuses when a
+version-pinned reference to a workspace no longer matches that workspace's new
+version, for the same reason. Every other workspace manifest must stay
 unchanged too, and no new workspace manifest may appear, so a lifecycle script
 cannot edit a sibling package or create one for a later call to resolve.
 

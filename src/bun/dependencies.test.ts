@@ -94,6 +94,9 @@ test("dependency commands accept only the root package or a declared workspace",
   const appeared = f.run(["update", "ms", "--cwd", "packages/web"], { STUB_NEW_WORKSPACE: created });
   expect(appeared.receipt.violations).toEqual(["packages/evil/package.json appeared during the change."]);
   expect(existsSync(created)).toBe(false);
+  const failedCreate = f.run(["update", "ms", "--cwd", "packages/web"], { STUB_NEW_WORKSPACE: created, STUB_FAIL: "1" });
+  expect(failedCreate.receipt.violations).toEqual(["bun add failed with exit 1."]);
+  expect(existsSync(created)).toBe(false);
   // Bun treating a workspace as standalone shows up as a nested lockfile, which is refused and removed.
   const nested = f.run(["update", "ms", "--cwd", "packages/web"], { STUB_NESTED_LOCK: "1" });
   expect(nested.receipt.violations).toEqual(["bun.lock was created beside a workspace package."]);

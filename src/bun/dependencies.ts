@@ -197,10 +197,15 @@ export function bunCommand(args: string[]): number {
   // Validate after every Bun call: a lifecycle script in one call must not feed the next.
   const known = new Set([file, ...others]);
   const created: string[] = [];
-  const validate = (call: string[]): string[] => {
-    // A lifecycle script can create a workspace whose dependencies a later call would resolve.
-    const appeared = packageDirectories(root).map(item => path.join(item, "package.json")).filter(item => !known.has(item) && existsSync(item));
+  // A lifecycle script can create a workspace whose dependencies a later call would resolve.
+  const discover = (): string[] => {
+    const appeared = packageDirectories(root).map(item => path.join(item, "package.json")).filter(item => !known.has(item) && !created.includes(item) && existsSync(item));
     created.push(...appeared);
+    return appeared;
+  };
+  const removeCreated = () => { discover(); for (const item of created) if (existsSync(item)) unlinkSync(item); };
+  const validate = (call: string[]): string[] => {
+    const appeared = discover();
     if (appeared.length) return appeared.map(item => `${path.relative(root, item)} appeared during the change.`);
     if (call === preflight || action === "install") return saved.changed().map(item => `${path.relative(directory, item) || "package.json"} changed during a frozen install.`);
     after = readManifest(file);
@@ -219,12 +224,13 @@ export function bunCommand(args: string[]): number {
     }
   } catch (error) {
     saved.restore();
+    removeCreated();
     throw error;
   }
   // Leave no partial dependency change behind; node_modules is rebuilt by the next frozen install.
   if (violations.length) {
     saved.restore();
-    for (const item of created) if (existsSync(item)) unlinkSync(item);
+    removeCreated();
   }
   output({ ok: !violations.length, action, directory, bun: bunInfo, changes: violations.length ? [] : changes(before, after, names), ...(violations.length ? { violations, restored: restored.map(item => path.relative(directory, item) || "package.json") } : {}), runs });
   if (runs.at(-1)?.exitCode) printLogTail(runs.at(-1)!.log, DEFAULT_LIMITS, 2);
