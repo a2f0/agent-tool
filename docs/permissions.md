@@ -146,10 +146,14 @@ script is classified as the command it expands to, and a called script's own
 `pre` and `post` hooks count, or whose `pre` or `post` hook asks, by its
 commands or by configuration. Bun appends a script's arguments to its last command, so a script ending
 in a bare agent-tool, `agent-tool run` without a `--` command, a bare
-`run-group`, or a bare shell or interpreter is `exec`, as is one that ends by
+`run-group`, an incomplete runner such as `bun run` or `npm exec`, or a bare
+shell or interpreter is `exec`, as is one that ends by
 running such a script without arguments; one ending in another bare CLI takes
 that CLI's class from `permissions.executables`. In agent-tool's own checkout,
-its `bin` source path counts as agent-tool. A script name has one rule across all workspaces, so any
+its `bin` source path counts as agent-tool. `agent-tool --repo <dir>` that
+leaves this checkout is `exec`, since its scripts and plans were never read
+here; a `--repo` that resolves inside it, such as `../..` from a workspace, is
+the same checkout. A script name has one rule across all workspaces, so any
 workspace's definition can make it ask. `agent-tool.json` overrides all of
 this. `bun x` runs only an executable installed in this checkout's
 `node_modules/.bin` (`bun x --no-install`, never Bun's global cache), and only

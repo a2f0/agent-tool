@@ -139,6 +139,9 @@ test("forwarded flags, wrapper arguments, and dry-run downloads keep their appro
   expect(scriptClass("web", {}, ["npm --prefix packages/web install left-pad && bun test"])).toBe("intake");
   expect(scriptClass("w", {}, ["env -- agent-tool permissions install --apply && bun test"])).toBe("policy");
   expect(scriptClass("g", {}, ["(agent-tool permissions install --apply) && bun test"])).toBe("policy");
+  for (const body of ["bun run", "npm run", "bun --bun run", "npm exec", "pnpm dlx", "bun x", "bunx", "npx --yes"]) expect({ body, value: scriptClass("runner", {}, [body]) }).toEqual({ body, value: "exec" });
+  expect(scriptClass("other", {}, ["agent-tool --repo ../other run-group scripts/verify.json && bun test"])).toBe("exec");
+  expect(scriptClass("other", {}, ["bun run agent-tool --repo ../other pr checks && bun test"])).toBe("exec");
   expect(scriptClass("g", {}, ["{ npm publish; } && bun test"])).toBe("release");
   expect(scriptClass("w", {}, ["env -i PATH=/bin timeout 60 nice -n 5 npm publish && bun test"])).toBe("release");
   expect(scriptClass("q", {}, [`agent-tool permissions "install" --apply && bun test`])).toBe("policy");
@@ -173,6 +176,14 @@ test("run-group plan steps are classified, and an unreadable plan asks", () => {
   writeFileSync(path.join(root, "scripts/loop.json"), JSON.stringify({ label: "loop", steps: [{ label: "self", command: ["agent-tool", "run-group", "scripts/loop.json"] }] }));
   writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { check: "agent-tool run-group scripts/verify.json", ship: "agent-tool run-group scripts/ship.json", missing: "agent-tool run-group scripts/none.json", calls: "agent-tool run-group scripts/calls.json", deploy: "wrangler deploy", outer: "agent-tool run-group scripts/outer.json", loop: "agent-tool run-group scripts/loop.json", setup: "npm install", args: "bun run setup left-pad", helper: "echo $(npm publish)", calm: "bun run helper && bun test" } }));
   expect(projectCommands(root).map(entry => `${entry.command}:${entry.class}`)).toEqual(["bun run args:intake", "bun run calls:release", "bun run calm:exec", "bun run deploy:release", "bun run helper:exec", "bun run loop:exec", "bun run missing:exec", "bun run outer:release", "bun run ship:release"]);
+});
+
+test("--repo inside this checkout is the same checkout; outside it asks", () => {
+  const root = project();
+  mkdirSync(path.join(root, "packages/web"), { recursive: true });
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ workspaces: ["packages/*"], scripts: {} }));
+  writeFileSync(path.join(root, "packages/web/package.json"), JSON.stringify({ scripts: { icons: "agent-tool --repo ../.. images build favicons", away: "agent-tool --repo ../../../other images build favicons" } }));
+  expect(projectCommands(root).map(entry => `${entry.command}:${entry.class}`)).toEqual(["bun run away:exec"]);
 });
 
 test("a script that calls an asking script asks too, unless configured", () => {

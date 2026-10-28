@@ -60,6 +60,8 @@ function agentToolWords(command: string): string[] | undefined {
 function forwarded(last: string, executables: Record<string, PermissionClass>): PermissionClass | undefined {
   const tool = agentToolWords(last);
   if (tool) return !tool.length || (tool[0] === "run" && !tool.includes("--")) || (tool[0] === "run-group" && tool.length === 1) ? "exec" : undefined;
+  // An incomplete runner (`bun run`, `npm exec`, `pnpm dlx`, bare `bunx`) runs whatever the arguments name.
+  if (new RegExp(String.raw`^(?:(?:bun|npm|pnpm|yarn)${OPTS}\s+(?:run|run-script|exec|dlx|x)|bunx|npx)(?:\s+-\S+)*$`).test(last)) return "exec";
   const [cli, ...rest] = last.replace(RUNNER, "").split(/\s+/).filter(Boolean);
   const name = cli?.split("/").pop();
   if (!name || rest.some(word => !word.startsWith("-"))) return undefined;
@@ -85,6 +87,8 @@ function agentToolClass(command: string, last: boolean): PermissionClass | undef
 export function commandClass(command: string, last: boolean, executables: Record<string, PermissionClass>): PermissionClass | undefined {
   // Command substitution decides at run time what runs, which no rule can see.
   if (/\$\(|`|\$\{/.test(command)) return "exec";
+  // `--repo` points agent-tool at another checkout, whose scripts and plans these rules never read.
+  if (agentToolWords(command) && /^(?:\S+\s+)*?(?:\S*\/)?agent-tool(?:\s+--config\s+\S+)*\s+--repo\b/.test(command.replace(RUNNER, ""))) return "exec";
   const forwards = last ? forwarded(command, executables) : undefined;
   if (forwards && CLASSES[forwards].decision === "ask") return forwards;
   const tool = agentToolClass(command, last);
@@ -196,10 +200,22 @@ function inherit(root: string, classes: Map<string, PermissionClass>, bodies: Ma
 }
 
 /** Every script body by name across the root package and its workspaces. */
+/**
+ * Drop `agent-tool --repo <dir>` where the directory, resolved from the package that runs the
+ * script, stays inside this checkout; a `--repo` that leaves it stays and classifies as `exec`.
+ */
+export function withinCheckout(body: string, directory: string, root: string): string {
+  return body.replace(/(agent-tool(?:\s+--config\s+\S+)*)\s+--repo(?:=|\s+)(\S+)/g, (match, prefix: string, target: string) => {
+    const relative = path.relative(root, path.resolve(directory, target));
+    return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative)) ? prefix : match;
+  });
+}
+
 export function scriptBodies(root: string): Map<string, string[]> {
   const bodies = new Map<string, string[]>();
   for (const directory of packageDirectories(root)) {
-    for (const [name, body] of scripts(path.join(directory, "package.json"))) {
+    for (const [name, raw] of scripts(path.join(directory, "package.json"))) {
+      const body = withinCheckout(raw, directory, root);
       // A run-group plan's steps are the script's commands too, so calls and hooks in them are followed.
       const steps = segments(body).flatMap(command => {
         const words = agentToolWords(command);
@@ -220,7 +236,8 @@ function planSteps(root: string, plan: string, depth = 0): string[] {
     return steps.flatMap(step => {
       // An unreadable step stands for an arbitrary command.
       if (!Array.isArray(step.command)) return ["agent-tool"];
-      const command = step.command.join(" "), words = agentToolWords(command);
+      // Plan steps run from the checkout root.
+      const command = withinCheckout(step.command.join(" "), root, root), words = agentToolWords(command);
       return words?.[0] === "run-group" && words[1] ? [command, ...planSteps(root, words[1], depth + 1)] : [command];
     });
   } catch { return ["agent-tool"]; }
