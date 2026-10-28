@@ -161,7 +161,7 @@ describe("prepareVersions CLI", () => {
     expect(result.stderr).toMatch(/packages\/windowing: react@\^19\.0\.0/);
   });
 
-  test("refuses a bump that would send a version-pinned workspace reference to the registry", () => {
+  for (const committed of [false, true]) test(`refuses a ${committed ? "committed" : "prepared"} bump that would send a version-pinned workspace reference to the registry`, () => {
     const fixture = versionPreparationFixture();
     const { rootDir } = fixture;
     const frontend = JSON.parse(read(rootDir, FRONTEND));
@@ -173,7 +173,8 @@ describe("prepareVersions CLI", () => {
     commitAll(rootDir, "chore: pin the frontend by version");
     const base = commitOnMain(rootDir, { "README.md": "main advanced\n" });
     mergeMain(rootDir);
-    write(rootDir, "packages/windowing/src/app.ts", "export const changed = true;\n");
+    if (committed) write(rootDir, FRONTEND, JSON.stringify({ ...frontend, version: "0.8.0" }, null, 2) + "\n");
+    else write(rootDir, "packages/windowing/src/app.ts", "export const changed = true;\n");
     const head = commitAll(rootDir, "feat: change frontend");
     const result = fixture.prepare(base);
     expect(result.code).toBe(1);

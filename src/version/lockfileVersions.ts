@@ -107,8 +107,7 @@ export function unresolvedDependencies(
   return [...missing].sort();
 }
 
-/** Each workspace's package name and version, by name. */
-export function workspaceVersions(rootDir: string): Map<string, string> {
+function workspaceVersions(rootDir: string): Map<string, string> {
   const root = realpathSync(rootDir);
   const versions = new Map<string, string>();
   for (const directory of packageDirectories(root)) {
@@ -118,9 +117,23 @@ export function workspaceVersions(rootDir: string): Map<string, string> {
   return versions;
 }
 
+/** Workspace versions as bun.lock last resolved them, by package name. */
+export function lockedWorkspaceVersions(
+  rootDir: string,
+  lockSource = readFileSync(path.join(rootDir, "bun.lock"), "utf8"),
+): Map<string, string> {
+  const versions = new Map<string, string>();
+  for (const workspace of Object.values((field(Bun.JSONC.parse(lockSource), "workspaces") ?? {}) as Record<string, unknown>)) {
+    const name = field(workspace, "name"), version = field(workspace, "version");
+    if (typeof name === "string" && typeof version === "string") versions.set(name, version);
+  }
+  return versions;
+}
+
 /**
- * Declarations that a workspace satisfied before a version bump but no longer
- * does, so Bun would resolve them from the registry instead of the workspace.
+ * Declarations that a workspace satisfied at its locked version but no longer
+ * does, whether a committed or a prepared bump moved it, so Bun would resolve
+ * them from the registry instead of the workspace.
  */
 export function lostWorkspaceReferences(rootDir: string, before: ReadonlyMap<string, string>): string[] {
   const root = realpathSync(rootDir);
