@@ -93,7 +93,7 @@ export function commandClass(command: string, last: boolean, executables: Record
   if (words?.[0] === "bun" && words[1] === "x" && words[2] && Object.hasOwn(executables, words[2]) && CLASSES[executables[words[2]]!].decision === "ask") return executables[words[2]];
   // `agent-tool run ... -- <command>` and run-group plan steps run commands of their own.
   if (words?.[0] === "run" && words.includes("--")) return commandClass(words.slice(words.indexOf("--") + 1).join(" "), last, executables);
-  if (words?.[0] === "run-group" && words[1] && planRoot) return planClass(path.resolve(planRoot, words[1]), executables);
+  if (words?.[0] === "run-group" && words[1] && planRoot) return planClass(planRoot, words[1], executables);
   if (INTAKE.some(pattern => pattern.test(command))) return "intake";
   // Package runners download what is not installed unless their own options say not to.
   const runner = command.match(RUNNER_OPTIONS);
@@ -103,17 +103,15 @@ export function commandClass(command: string, last: boolean, executables: Record
   return undefined;
 }
 
-/** The strictest asking class among a run-group plan's steps; a plan that cannot be read asks. */
-function planClass(file: string, executables: Record<string, PermissionClass>): PermissionClass | undefined {
-  try {
-    const plan = JSON.parse(readFileSync(file, "utf8")) as { steps?: { command?: unknown }[] };
-    for (const step of plan.steps ?? []) {
-      if (!Array.isArray(step.command)) return "exec";
-      const value = commandClass(step.command.join(" "), false, executables);
-      if (value) return value;
-    }
-    return undefined;
-  } catch { return "exec"; }
+/** The first asking class among a run-group plan's steps, nested plans included; an unreadable plan asks. */
+function planClass(root: string, plan: string, executables: Record<string, PermissionClass>): PermissionClass | undefined {
+  for (const command of planSteps(root, plan)) {
+    // planSteps already flattened nested plans; classifying their run-group step again would recurse.
+    if (agentToolWords(command)?.[0] === "run-group") continue;
+    const value = command === "agent-tool" ? "exec" : commandClass(command, false, executables);
+    if (value) return value;
+  }
+  return undefined;
 }
 
 // Leading `NAME=value` assignments, optionally after `env`, do not change which command runs.
@@ -123,7 +121,12 @@ function planClass(file: string, executables: Record<string, PermissionClass>): 
  * unwrapped to the command it runs.
  */
 function normalize(command: string): string {
-  let text = command.trim().replace(/^(?:env\s+)?(?:[A-Za-z_]\w*=\S*\s+)*/, "");
+  let text = command.trim();
+  // Wrappers that run the rest of the line: env (with options and assignments), time, nice, nohup, command, timeout.
+  for (let before = ""; before !== text;) {
+    before = text;
+    text = text.replace(/^env(?:\s+(?:-[iv0]+|--ignore-environment|--[\w-]+=\S+|-[uCP]\s*[^-\s]\S*|-S))*(?:\s+--)?\s+/, "").replace(/^(?:time|nohup|command)\s+(?:-\S+\s+)*/, "").replace(/^nice(?:\s+-n\s*\S+|\s+-\d+)?\s+/, "").replace(/^timeout(?:\s+-\S+)*\s+\S+\s+/, "").replace(/^(?:[A-Za-z_]\w*=\S*\s+)+/, "");
+  }
   text = text.replace(/"([^"\s$`\\]*)"|'([^'\s]*)'|\\(\S)/g, (_, double, single, escaped) => double ?? single ?? escaped);
   const words = agentToolWords(text);
   return words?.[0] === "run" && words.includes("--") ? normalize(words.slice(words.indexOf("--") + 1).join(" ")) : text;
@@ -174,8 +177,9 @@ function inherit(root: string, classes: Map<string, PermissionClass>, bodies: Ma
           value = [`pre${call[1]}`, `post${call[1]}`].map(item => classes.get(item)).find(item => item !== undefined && CLASSES[item].decision === "ask");
           if (value) continue;
           const callee = classes.get(call[1]!)!, args = call[2]!.trim(), last = index === commands.length - 1;
-          if (callee !== "exec") { if (CLASSES[callee].decision === "ask") value = callee; continue; }
-          if (!args) { if (last) value = "exec"; continue; }
+          if (CLASSES[callee].decision === "ask" && callee !== "exec") { value = callee; continue; }
+          if (!args) { if (last && callee === "exec") value = "exec"; continue; }
+          // Arguments reach the called script's last command, whatever its class, so classify the result.
           // Follow chains of forwarding scripts; expandedClass treats runaway depth as `exec`.
           value = (own.get(call[1]!) ?? []).map(calleeBody => commandClass(`${segments(calleeBody).at(-1) ?? ""} ${args}`, last, executables) ?? expandedClass(root, `${segments(calleeBody).at(-1) ?? ""} ${args}`, own, executables)).find(item => item !== undefined);
         }
@@ -193,7 +197,7 @@ export function scriptBodies(root: string): Map<string, string[]> {
       // A run-group plan's steps are the script's commands too, so calls and hooks in them are followed.
       const steps = segments(body).flatMap(command => {
         const words = agentToolWords(command);
-        return words?.[0] === "run-group" && words[1] ? planSteps(path.resolve(directory, words[1])) : [];
+        return words?.[0] === "run-group" && words[1] ? planSteps(root, words[1]) : [];
       });
       bodies.set(name, [...(bodies.get(name) ?? []), body, ...(steps.length ? [steps.join(" && ")] : [])]);
     }
@@ -202,10 +206,17 @@ export function scriptBodies(root: string): Map<string, string[]> {
 }
 
 /** A plan's step commands; an unreadable plan or step stands for an arbitrary command. */
-function planSteps(file: string): string[] {
+/** A plan's step commands, nested plans included; agent-tool resolves plan paths from the checkout root. */
+function planSteps(root: string, plan: string, depth = 0): string[] {
+  if (depth > 8) return ["agent-tool"];
   try {
-    const steps = (JSON.parse(readFileSync(file, "utf8")) as { steps?: { command?: unknown }[] }).steps ?? [];
-    return steps.map(step => Array.isArray(step.command) ? step.command.join(" ") : "agent-tool");
+    const steps = (JSON.parse(readFileSync(path.resolve(root, plan), "utf8")) as { steps?: { command?: unknown }[] }).steps ?? [];
+    return steps.flatMap(step => {
+      // An unreadable step stands for an arbitrary command.
+      if (!Array.isArray(step.command)) return ["agent-tool"];
+      const command = step.command.join(" "), words = agentToolWords(command);
+      return words?.[0] === "run-group" && words[1] ? [command, ...planSteps(root, words[1], depth + 1)] : [command];
+    });
   } catch { return ["agent-tool"]; }
 }
 

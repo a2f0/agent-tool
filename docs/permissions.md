@@ -6,6 +6,19 @@ ones still ask. agent-tool assigns each of its commands a permission class and
 generates harness rules from that table, so the decision is made once, next to
 the code, rather than in every harness configuration.
 
+## What the rules protect
+
+The rules keep a cooperating agent from taking a consequential step (merging,
+publishing, deploying, adding third-party code, or changing its own permissions)
+without the user seeing it first. They are not a sandbox. An allowed command
+still runs repository code: tests, builds, and scripts can do anything their
+source says, and an agent that edits that source can change what an allowed
+command does. Script classification reads the commands a script names,
+including the scripts, hooks, plans, and wrappers it reaches; it cannot see
+inside programs those commands run, such as a shell or TypeScript file. Review
+such code like any other change, and keep credentials for consequential systems
+out of agent sessions where that matters.
+
 ## Classes
 
 | Class | Decision | Commands |
