@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { packageDirectories } from "../bun/workspace";
 import { manifestPath, readVersion, workspacePackages } from "./packageVersion";
 
 function field(value: unknown, key: string): unknown {
@@ -42,28 +43,61 @@ export function assertBunLockVersions(
   }
 }
 
+const SECTIONS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
+
+function entries(value: unknown): [string, string][] {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? Object.entries(value).map(([name, spec]) => [name, typeof spec === "string" ? spec : JSON.stringify(spec)])
+    : [];
+}
+
 /**
- * Third-party names that workspace manifests install but bun.lock does not
- * resolve: packages added by hand rather than through an approved add. New
- * workspaces and changed workspace versions are not third-party code.
+ * Third-party declarations that bun.lock does not already record, as
+ * `<manifest>: <name>@<spec>`: a package added or re-sourced by hand rather
+ * than through an approved add. Every manifest Bun installs is compared with
+ * the lockfile's record of that workspace, section by section, and the root's
+ * catalogs, overrides, and patches with the lockfile's. A new workspace may
+ * only use a third-party package at a spec the lockfile already records.
  */
 export function unresolvedDependencies(
   rootDir: string,
   lockSource = readFileSync(path.join(rootDir, "bun.lock"), "utf8"),
 ): string[] {
-  const resolved = field(Bun.JSONC.parse(lockSource), "packages");
-  const directories = workspacePackages(rootDir);
-  const manifests = directories.map((directory) => JSON.parse(readFileSync(path.join(rootDir, manifestPath(directory)), "utf8")) as Record<string, unknown>);
-  const workspaceNames = new Set(manifests.map((manifest) => manifest.name));
+  const lock = Bun.JSONC.parse(lockSource);
+  const workspaces = field(lock, "workspaces");
+  const root = realpathSync(rootDir);
+  const manifests = packageDirectories(root).map((directory) => ({
+    key: path.relative(root, directory).split(path.sep).join("/"),
+    manifest: JSON.parse(readFileSync(path.join(directory, "package.json"), "utf8")) as Record<string, unknown>,
+  }));
+  const internal = new Set(manifests.map(({ manifest }) => manifest.name));
+  const known = new Set<string>();
+  for (const [, workspace] of entries(workspaces).length ? Object.entries(workspaces as object) : []) {
+    for (const section of SECTIONS) for (const [name, spec] of entries(field(workspace, section))) known.add(`${name}@${spec}`);
+  }
   const missing = new Set<string>();
-  for (const manifest of manifests) {
-    // Peers may be optional and absent from the lockfile; Bun installs the other sections.
-    for (const section of ["dependencies", "devDependencies", "optionalDependencies"]) {
-      for (const [name, spec] of Object.entries((manifest[section] ?? {}) as Record<string, unknown>)) {
-        if (workspaceNames.has(name) || String(spec).startsWith("workspace:")) continue;
-        if (field(resolved, name) === undefined) missing.add(name);
+  for (const { key, manifest } of manifests) {
+    const recorded = field(workspaces, key);
+    for (const section of SECTIONS) {
+      for (const [name, spec] of entries(manifest[section])) {
+        if (internal.has(name) || spec.startsWith("workspace:")) continue;
+        const covered = recorded === undefined ? known.has(`${name}@${spec}`) : field(field(recorded, section), name) === spec;
+        if (!covered) missing.add(`${key || "."}: ${name}@${spec}`);
       }
     }
+  }
+  const rootManifest = manifests.find(({ key }) => key === "")?.manifest ?? {};
+  const nested = field(rootManifest, "workspaces");
+  const catalogs = field(rootManifest, "catalogs") ?? field(nested, "catalogs");
+  const sources: [string, unknown, unknown][] = [
+    ["catalog", field(rootManifest, "catalog") ?? field(nested, "catalog"), field(lock, "catalog")],
+    ...entries(catalogs).map(([name]): [string, unknown, unknown] => [`catalogs.${name}`, field(catalogs, name), field(field(lock, "catalogs"), name)]),
+    ["overrides", field(rootManifest, "overrides") ?? field(rootManifest, "resolutions"), field(lock, "overrides")],
+    ["patchedDependencies", field(rootManifest, "patchedDependencies"), field(lock, "patchedDependencies")],
+  ];
+  for (const [label, declared, recorded] of sources) {
+    // Nested overrides are objects on both sides; compare them as JSON.
+    for (const [name, spec] of entries(declared)) if (entries(recorded).find(([key]) => key === name)?.[1] !== spec) missing.add(`${label}: ${name}@${spec}`);
   }
   return [...missing].sort();
 }

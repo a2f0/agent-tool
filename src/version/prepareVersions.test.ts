@@ -138,8 +138,27 @@ describe("prepareVersions CLI", () => {
     const head = commitAll(rootDir, "feat: add workspace with a dependency");
     const result = fixture.prepare(base);
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain("bun.lock does not resolve left-pad");
+    expect(result.stderr).toContain("bun.lock does not record packages/new: left-pad@1.3.0");
     expect(git(rootDir, ["rev-parse", "HEAD"])).toBe(head);
+  });
+
+  test("refuses a re-sourced, peer, or catalog declaration the lockfile does not record", () => {
+    const fixture = versionPreparationFixture();
+    const { rootDir } = fixture;
+    const base = mainOid(rootDir);
+    const root = JSON.parse(read(rootDir, "package.json"));
+    root.catalog = { "left-pad": "1.3.0" };
+    root.overrides = { "nested@1.0.0": { child: "2.0.0" } };
+    write(rootDir, "package.json", JSON.stringify(root, null, 2) + "\n");
+    const frontend = JSON.parse(read(rootDir, FRONTEND));
+    frontend.peerDependencies = { react: "^19.0.0" };
+    write(rootDir, FRONTEND, JSON.stringify(frontend, null, 2) + "\n");
+    commitAll(rootDir, "feat: declare unrecorded packages");
+    const result = fixture.prepare(base);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("catalog: left-pad@1.3.0");
+    expect(result.stderr).toContain('overrides: nested@1.0.0@{"child":"2.0.0"}');
+    expect(result.stderr).toMatch(/packages\/windowing: react@\^19\.0\.0/);
   });
 
   test("root-only changes produce no version commit", () => {

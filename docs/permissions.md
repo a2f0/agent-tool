@@ -60,8 +60,10 @@ changes anything, it runs `bun install --frozen-lockfile --lockfile-only` and
 stops if `package.json` declares something the lockfile does not cover, so a
 hand-added package cannot be resolved as a side effect of an allowed change.
 `versions prepare`, which refreshes the lockfile for bumped and new workspace
-packages, likewise refuses when a manifest installs a third-party package that
-`bun.lock` does not resolve. Every other workspace manifest must stay
+packages, likewise refuses when any third-party declaration, in any section of
+any workspace, or a root catalog, override, or patch differs from what
+`bun.lock` records; a new workspace may use only third-party specs the lockfile
+already records. Every other workspace manifest must stay
 unchanged too, so a lifecycle script cannot edit a sibling package.
 
 After Bun exits, the command compares `package.json` with its earlier state. If

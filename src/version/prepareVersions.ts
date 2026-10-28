@@ -73,7 +73,7 @@ export function prepareVersions(rootDir: string, baseOid?: string): number {
     // The refresh below is unfrozen; it may record workspace changes, never resolve a hand-added package.
     const missing = unresolvedDependencies(rootDir);
     if (missing.length) {
-      throw new Error(`bun.lock does not resolve ${missing.join(", ")}; add new packages with \`agent-tool bun add\`, which asks for approval, before preparing versions.`);
+      throw new Error(`bun.lock does not record ${missing.join(", ")}; add or change third-party packages through agent-tool bun commands, or refresh the lockfile with approval, before preparing versions.`);
     }
   }
   try {
