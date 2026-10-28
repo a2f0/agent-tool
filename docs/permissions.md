@@ -44,8 +44,9 @@ per-package changes, and each Bun invocation.
 - `bun update <name[@version]>...` changes only dependencies that are already
   declared in `dependencies`, `devDependencies`, or `optionalDependencies`, from
   a registry version to a registry version or tag. It refuses undeclared names,
-  workspace, alias, Git, URL, and path sources, and packages declared in more
-  than one of those sections. Without a version it moves to `latest`, keeping an
+  workspace, alias, Git, URL, and path sources, packages declared in more than
+  one of those sections, and packages named like a workspace, whose new version
+  could resolve from the registry instead. Without a version it moves to `latest`, keeping an
   exact pin exact; an explicit version is written as given, exact versions with
   `--exact`. Peer ranges are a
   compatibility contract and are never rewritten.
@@ -69,8 +70,8 @@ use only position-independent third-party specs the lockfile already records
 specs count as local, and a dependency on a removed workspace is refused because
 it would now resolve from the registry. After bumping, it also refuses when a
 version-pinned reference that the workspace satisfied at its locked version no
-longer matches it, whether the bump was committed or prepared, for the same
-reason. Every other workspace manifest must stay
+longer matches it, resolving `catalog:` references through the root catalogs,
+whether the bump was committed or prepared, for the same reason. Every other workspace manifest must stay
 unchanged too, and no new workspace manifest may appear, so a lifecycle script
 cannot edit a sibling package or create one for a later call to resolve.
 

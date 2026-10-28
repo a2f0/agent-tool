@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { unresolvedDependencies } from "./lockfileVersions";
+import { lostWorkspaceReferences, unresolvedDependencies } from "./lockfileVersions";
 
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
@@ -37,7 +37,13 @@ test("a dependency on a removed workspace would resolve from the registry", () =
 });
 
 test("a new workspace cannot reuse a relative source recorded elsewhere", () => {
-  const lock = { workspaces: { "": { name: "root", dependencies: { vendor: "file:./vendor", ms: "1.0.0" } } } };
-  const directory = project({ dependencies: { vendor: "file:./vendor", ms: "1.0.0" } }, lock, { "packages/new": { name: "new", dependencies: { vendor: "file:./vendor", ms: "1.0.0" } } });
+  const lock = { workspaces: { "": { name: "root", dependencies: { vendor: "file:./vendor", ms: "~1.0.0" } } } };
+  const directory = project({ dependencies: { vendor: "file:./vendor", ms: "~1.0.0" } }, lock, { "packages/new": { name: "new", dependencies: { vendor: "file:./vendor", ms: "~1.0.0" } } });
   expect(unresolvedDependencies(directory)).toEqual(["packages/new: vendor@file:./vendor"]);
+});
+
+test("a catalog pin that a bumped workspace no longer satisfies is lost to the registry", () => {
+  const directory = project({ catalog: { api: "1.0.0" }, dependencies: { api: "catalog:" } }, { workspaces: {} }, { "packages/api": { name: "api", version: "2.0.0" } });
+  expect(lostWorkspaceReferences(directory, new Map([["api", "1.0.0"]]))).toEqual([".: api@catalog:"]);
+  expect(lostWorkspaceReferences(directory, new Map([["api", "2.0.0"]]))).toEqual([]);
 });

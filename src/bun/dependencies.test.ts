@@ -84,6 +84,9 @@ test("dependency commands accept only the root package or a declared workspace",
   const loose = f.run(["install", "--cwd", "tools/loose"]);
   expect(loose.status).toBe(1);
   expect(loose.stderr).toMatch(/root package or a declared workspace/);
+  writeFileSync(path.join(f.project, "package.json"), JSON.stringify({ name: "fixture", workspaces: ["packages/*"], dependencies: { ms: "1.0.0", web: "1.0.0" } }));
+  expect(f.run(["update", "web@2.0.0"]).stderr).toMatch(/web is a workspace package/);
+  writeFileSync(path.join(f.project, "package.json"), JSON.stringify({ name: "fixture", workspaces: ["packages/*"], dependencies: { ms: "1.0.0" } }));
   mkdirSync(path.join(f.project, "packages/api"));
   const sibling = path.join(f.project, "packages/api/package.json");
   writeFileSync(sibling, JSON.stringify({ name: "api" }));

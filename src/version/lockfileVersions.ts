@@ -86,7 +86,7 @@ export function unresolvedDependencies(
         // A workspace's name with a version spec can still resolve from the registry; only `workspace:` is local.
         if (spec.startsWith("workspace:")) continue;
         // A relative source names different code from a new directory, so only position-independent specs carry over.
-        const relative = /^(?:file:|link:|[./~])/.test(spec);
+        const relative = /^(?:file:|link:|\.{1,2}\/|\/|~\/)/.test(spec);
         const covered = recorded === undefined ? !relative && known.has(`${name}@${spec}`) : field(field(recorded, section), name) === spec;
         if (!covered) missing.add(`${key || "."}: ${name}@${spec}`);
       }
@@ -140,15 +140,25 @@ export function lockedWorkspaceVersions(
 export function lostWorkspaceReferences(rootDir: string, before: ReadonlyMap<string, string>): string[] {
   const root = realpathSync(rootDir);
   const after = workspaceVersions(root);
+  const rootManifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as Record<string, unknown>;
+  const nested = field(rootManifest, "workspaces");
+  // `catalog:` names a root catalog entry; compare the version it stands for.
+  const resolve = (name: string, spec: string): unknown => {
+    if (!spec.startsWith("catalog:")) return spec;
+    const catalog = spec.slice("catalog:".length);
+    return catalog && catalog !== "default"
+      ? field(field(field(rootManifest, "catalogs") ?? field(nested, "catalogs"), catalog), name)
+      : field(field(rootManifest, "catalog") ?? field(nested, "catalog"), name);
+  };
   const lost = new Set<string>();
   for (const directory of packageDirectories(root)) {
     const manifest = JSON.parse(readFileSync(path.join(directory, "package.json"), "utf8")) as Record<string, unknown>;
     const key = path.relative(root, directory).split(path.sep).join("/") || ".";
     for (const section of SECTIONS) {
       for (const [name, spec] of entries(manifest[section])) {
-        const old = before.get(name), now = after.get(name);
-        if (spec.startsWith("workspace:") || old === undefined || now === undefined) continue;
-        if (Bun.semver.satisfies(old, spec) && !Bun.semver.satisfies(now, spec)) lost.add(`${key}: ${name}@${spec}`);
+        const old = before.get(name), now = after.get(name), range = resolve(name, spec);
+        if (spec.startsWith("workspace:") || old === undefined || now === undefined || typeof range !== "string") continue;
+        if (Bun.semver.satisfies(old, range) && !Bun.semver.satisfies(now, range)) lost.add(`${key}: ${name}@${spec}`);
       }
     }
   }

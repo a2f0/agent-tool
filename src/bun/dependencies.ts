@@ -134,7 +134,7 @@ function parseArgs(action: string, args: string[]) {
 }
 
 /** Plan the Bun invocations for one action, refusing anything outside its permission class. */
-function plan(action: "add" | "update" | "remove", manifest: Manifest, requested: Requested[], exact: boolean, addSection: Section): string[][] {
+function plan(action: "add" | "update" | "remove", manifest: Manifest, requested: Requested[], exact: boolean, addSection: Section, workspaceNames: Set<string>): string[][] {
   if (action === "add") {
     for (const { name, spec } of requested) {
       assert(!declarations(manifest, name).length, `${name} is already declared; use \`agent-tool bun update ${name}\` to change its version.`);
@@ -154,6 +154,8 @@ function plan(action: "add" | "update" | "remove", manifest: Manifest, requested
   for (const { name, spec } of requested) {
     const installed = declarations(manifest, name).filter(item => INSTALLED.includes(item.section));
     assert(installed.length, `${name} is not an installed dependency here; adding a package needs \`agent-tool bun add\`.`);
+    // A version change can move a workspace reference to the registry package of the same name.
+    assert(!workspaceNames.has(name), `${name} is a workspace package; change references to it by hand.`);
     assert(installed.length === 1, `${name} is declared in ${installed.map(item => item.section).join(" and ")}; update it manually.`);
     const current = installed[0]!;
     assert(registrySpec(current.spec), `${name} uses a non-registry source (${current.spec}); update it manually.`);
@@ -184,7 +186,8 @@ export function bunCommand(args: string[]): number {
   assert(lockfiles.some(item => existsSync(item)), "No bun.lock was found; a first install resolves new packages, so run it directly with approval.");
   // Before a change, the lockfile must already cover every declaration, or Bun would also resolve a hand-added package.
   const preflight = ["install", "--frozen-lockfile", "--lockfile-only"];
-  const calls = action === "install" ? [["install", "--frozen-lockfile"]] : [preflight, ...plan(action, before, requested, exact, addSection)];
+  const workspaceNames = new Set(packageDirectories(root).map(item => (JSON.parse(readFileSync(path.join(item, "package.json"), "utf8")) as { name?: string }).name).filter((name): name is string => typeof name === "string"));
+  const calls = action === "install" ? [["install", "--frozen-lockfile"]] : [preflight, ...plan(action, before, requested, exact, addSection, workspaceNames)];
   // Lifecycle scripts can touch any workspace manifest; every one but the target must stay as it was.
   const others = packageDirectories(root).map(item => path.join(item, "package.json")).filter(item => item !== file && existsSync(item));
   const othersBefore = new Map(others.map(item => [item, JSON.stringify(readManifest(item))]));
