@@ -42,10 +42,15 @@ export function dependencyDiff(base: string) {
       else if (from !== to) changed.push({ manifest, section, name, from, to });
     }
   }
-  // A name already declared elsewhere in the repository is not new third-party code.
-  const known = new Set([...before.values()].flatMap(entries => [...entries].filter(([, spec]) => !spec.startsWith("workspace:")).map(([key]) => key.split("\0")[1])));
-  // A switch from a workspace to a registry or other source is new third-party code too.
-  const resourced = changed.filter(item => item.from.startsWith("workspace:") && !item.to.startsWith("workspace:")).map(item => item.name);
-  const newPackages = [...new Set([...added.filter(item => !item.spec.startsWith("workspace:")).map(item => item.name).filter(name => !known.has(name)), ...resourced])].sort();
+  // Package identity: an `npm:` alias installs the package it names, not the declared name.
+  const identity = (name: string, spec: string) => spec.startsWith("npm:") ? spec.slice(4).replace(/(.)@[^@]*$/, "$1") : name;
+  // A package already declared elsewhere in the repository is not new third-party code.
+  const known = new Set([...before.values()].flatMap(entries => [...entries].filter(([, spec]) => !spec.startsWith("workspace:")).map(([key, spec]) => identity(key.split("\0")[1]!, spec))));
+  const introduced = [
+    ...added.filter(item => !item.spec.startsWith("workspace:")).map(item => identity(item.name, item.spec)),
+    // A switch from a workspace, or to another aliased package, is new third-party code too.
+    ...changed.filter(item => !item.to.startsWith("workspace:") && (item.from.startsWith("workspace:") || identity(item.name, item.from) !== identity(item.name, item.to))).map(item => identity(item.name, item.to)),
+  ];
+  const newPackages = [...new Set(introduced.filter(name => !known.has(name) || changed.some(item => item.from.startsWith("workspace:") && item.name === name)))].sort();
   return { base, baseOid, headOid, newPackages, added, removed, changed };
 }

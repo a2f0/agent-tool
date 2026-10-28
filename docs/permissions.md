@@ -117,13 +117,15 @@ first and options precede `--`, so harness rules can match its name as a
 prefix; arguments for the command itself follow `--`. `--log` writes output to a
 private log and prints a `run` receipt; without it, output stays visible.
 
-`bun x` runs only an executable installed in this checkout's `node_modules/.bin`
-(`bun x --no-install`, never Bun's global cache), and only executables that
+`bun x` runs the package's or root's `node_modules/.bin/<name>` directly, only
+when it is an executable file inside this checkout, so neither `PATH` nor Bun's
+global cache can stand in for it; only executables that
 `permissions.executables` in `agent-tool.json` classifies get a rule; any other
 one keeps the harness default. Classify a whole executable by its riskiest
 subcommand, and use `exec` for one that runs whatever file or command it is
-given, such as `tsx`. While the recorded rules predate an asking class, `bun x`
-refuses that executable until they are regenerated.
+given, such as `tsx`. While the recorded rules are stale, `bun x` refuses any
+executable that is not currently classified as allowed, since an old rule
+could still allow one that was reclassified or removed.
 
 ```json
 {

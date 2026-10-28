@@ -383,6 +383,9 @@ test("dependency diff reports declared changes in every manifest and names new t
   writeFileSync(path.join(f.root, "packages/web/package.json"), JSON.stringify({ devDependencies: { vite: "7.0.0", chalk: "5.0.0", api: "9.9.9" } }));
   f.git(["commit", "-am", "chore: take api from the registry"]);
   expect(JSON.parse(f.run(["dependencies", "diff", "--base", base]).stdout).newPackages).toEqual(["api", "left-pad"]);
+  writeFileSync(path.join(f.root, "package.json"), JSON.stringify({ dependencies: { ms: "npm:@evil/ms@2.0.0", "left-pad": "1.3.0" } }));
+  f.git(["commit", "-am", "chore: alias ms"]);
+  expect(JSON.parse(f.run(["dependencies", "diff", "--base", base]).stdout).newPackages).toEqual(["@evil/ms", "api", "left-pad"]);
   expect(diff.added).toEqual([{ manifest: "package.json", section: "dependencies", name: "left-pad", spec: "1.3.0" }, { manifest: "packages/web/package.json", section: "devDependencies", name: "api", spec: "workspace:*" }, { manifest: "packages/web/package.json", section: "devDependencies", name: "chalk", spec: "5.0.0" }]);
   expect(diff.removed).toEqual([{ manifest: "package.json", section: "dependencies", name: "chalk", spec: "5.0.0" }]);
   expect(diff.changed).toEqual([{ manifest: "package.json", section: "dependencies", name: "ms", from: "1.0.0", to: "2.0.0" }]);
