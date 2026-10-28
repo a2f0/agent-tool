@@ -74,11 +74,15 @@ export function unresolvedDependencies(
   for (const [, workspace] of entries(workspaces).length ? Object.entries(workspaces as object) : []) {
     for (const section of SECTIONS) for (const [name, spec] of entries(field(workspace, section))) known.add(`${name}@${spec}`);
   }
+  // A name the lockfile resolved to a workspace that no longer exists would now come from the registry.
+  const current = new Set(manifests.map(({ manifest }) => manifest.name));
+  const removed = new Set(Object.values((workspaces ?? {}) as Record<string, unknown>).map((workspace) => field(workspace, "name")).filter((name) => typeof name === "string" && !current.has(name)));
   const missing = new Set<string>();
   for (const { key, manifest } of manifests) {
     const recorded = field(workspaces, key);
     for (const section of SECTIONS) {
       for (const [name, spec] of entries(manifest[section])) {
+        if (removed.has(name)) missing.add(`${key || "."}: ${name}@${spec} (its workspace was removed)`);
         // A workspace's name with a version spec can still resolve from the registry; only `workspace:` is local.
         if (spec.startsWith("workspace:")) continue;
         const covered = recorded === undefined ? known.has(`${name}@${spec}`) : field(field(recorded, section), name) === spec;

@@ -29,3 +29,9 @@ test("a workspace name with a registry version, a removed override, or a re-sour
   const directory = project({ dependencies: { ms: "github:attacker/ms", api: "9.9.9" } }, lock, { "packages/api": { name: "api", version: "1.0.0" } });
   expect(unresolvedDependencies(directory)).toEqual([".: api@9.9.9", ".: ms@github:attacker/ms", "overrides: removed tar"]);
 });
+
+test("a dependency on a removed workspace would resolve from the registry", () => {
+  const lock = { workspaces: { "": { name: "root", dependencies: { api: "1.0.0" } }, "packages/api": { name: "api", version: "1.0.0" } } };
+  const directory = project({ dependencies: { api: "1.0.0" } }, lock);
+  expect(unresolvedDependencies(directory)).toEqual([".: api@1.0.0 (its workspace was removed)"]);
+});

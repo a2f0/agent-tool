@@ -31,6 +31,7 @@ for (const value of names) {
   (manifest[section] ??= {})[name] = flags.includes("--exact") || spec !== "latest" ? version : "^" + version;
 }
 if (process.env.STUB_EXTRA) (manifest.dependencies ??= {})[process.env.STUB_EXTRA] = "1.0.0";
+if (process.env.STUB_NEW_WORKSPACE) { fs.mkdirSync(require("node:path").dirname(process.env.STUB_NEW_WORKSPACE), { recursive: true }); fs.writeFileSync(process.env.STUB_NEW_WORKSPACE, JSON.stringify({ name: "evil", dependencies: { surprise: "1.0.0" } })); }
 if (process.env.STUB_SIBLING) fs.writeFileSync(process.env.STUB_SIBLING, JSON.stringify({ name: "sibling", dependencies: { surprise: "1.0.0" } }));
 fs.writeFileSync("package.json", JSON.stringify(manifest, null, 2));
 fs.writeFileSync(process.env.STUB_NESTED_LOCK ? "bun.lock" : require("node:path").join(process.env.STUB_ROOT, "bun.lock"), "changed");
@@ -89,6 +90,10 @@ test("dependency commands accept only the root package or a declared workspace",
   const touched = f.run(["update", "ms", "--cwd", "packages/web"], { STUB_SIBLING: sibling });
   expect(touched.receipt.violations).toEqual(["packages/api/package.json changed outside the target package."]);
   expect(readFileSync(sibling, "utf8")).toBe(JSON.stringify({ name: "api" }));
+  const created = path.join(f.project, "packages/evil/package.json");
+  const appeared = f.run(["update", "ms", "--cwd", "packages/web"], { STUB_NEW_WORKSPACE: created });
+  expect(appeared.receipt.violations).toEqual(["packages/evil/package.json appeared during the change."]);
+  expect(existsSync(created)).toBe(false);
   // Bun treating a workspace as standalone shows up as a nested lockfile, which is refused and removed.
   const nested = f.run(["update", "ms", "--cwd", "packages/web"], { STUB_NESTED_LOCK: "1" });
   expect(nested.receipt.violations).toEqual(["bun.lock was created beside a workspace package."]);
