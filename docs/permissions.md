@@ -59,7 +59,8 @@ per-package changes, and each Bun invocation.
 - `bun install` runs `bun install --frozen-lockfile` and requires an existing
   `bun.lock`, because a first install resolves whatever `package.json` names.
 
-Every command requires an existing lockfile. Before `update`, `remove`, or `add`
+Every command requires an existing lockfile, and `update`, `remove`, and `add`
+need the text `bun.lock`, since a binary `bun.lockb` cannot be checked. Before `update`, `remove`, or `add`
 changes anything, it runs `bun install --frozen-lockfile --lockfile-only` and
 stops if `package.json` declares something the lockfile does not cover, so a
 hand-added package cannot be resolved as a side effect of an allowed change. They

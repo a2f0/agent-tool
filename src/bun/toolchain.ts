@@ -39,7 +39,7 @@ function runnable(file: string): boolean {
  */
 export function pinnedBun(directory: string, root: string): BunExecutable {
   const pin = misePin(directory)?.version ?? null;
-  const inside = (file: string) => { const relative = path.relative(realpathSync(root), realpathSync(file)); return !relative.startsWith("..") && !path.isAbsolute(relative); };
+  const inside = (file: string) => { const relative = path.relative(realpathSync(root), realpathSync(file)); return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative); };
   if (pin) {
     const data = process.env.MISE_DATA_DIR || path.join(process.env.XDG_DATA_HOME || path.join(homedir(), ".local/share"), "mise");
     const candidate = path.join(data, "installs", "bun", pin, "bin", "bun");

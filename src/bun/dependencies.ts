@@ -190,7 +190,9 @@ export function bunCommand(args: string[]): number {
   const preflight = ["install", "--frozen-lockfile", "--lockfile-only"];
   const workspaceNames = new Set(packageDirectories(root).map(item => (JSON.parse(readFileSync(path.join(item, "package.json"), "utf8")) as { name?: string }).name).filter((name): name is string => typeof name === "string"));
   const calls = action === "install" ? [["install", "--frozen-lockfile"]] : [preflight, ...plan(action, before, requested, exact, addSection, workspaceNames)];
-  if (action !== "install" && existsSync(path.join(root, "bun.lock"))) {
+  // The checks below read the text lockfile; a binary bun.lockb cannot be verified.
+  if (action !== "install") assert(existsSync(path.join(root, "bun.lock")), "Changing dependencies needs a text bun.lock; convert bun.lockb with approval first.");
+  if (action !== "install") {
     // A frozen check can accept stale workspace versions; an unfrozen call would then fetch such a reference.
     const lost = lostWorkspaceReferences(root, lockedWorkspaceVersions(root));
     assert(!lost.length, `${lost.join(", ")} no longer match their workspaces, so Bun would fetch them from the registry; fix those references before changing dependencies.`);

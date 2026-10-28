@@ -206,6 +206,24 @@ test("a mise install that reports another version is refused", () => {
   expect(result.stderr).toMatch(/reports Bun 9\.9\.9, not the pinned 9\.9\.8/);
 });
 
+test("a mise data directory inside the checkout is never trusted, even under a dot-dot name", () => {
+  const f = fixture({ dependencies: { ms: "1.0.0" } }, { pin: "0.0.1", install: false });
+  const bin = path.join(f.project, "..cache/installs/bun/0.0.1/bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(path.join(bin, "bun"), `#!/bin/sh\ntouch "${path.join(f.project, "executed")}"\necho 0.0.1\n`);
+  chmodSync(path.join(bin, "bun"), 0o755);
+  expect(f.run(["install"], { MISE_DATA_DIR: path.join(f.project, "..cache") }).status).toBe(1);
+  expect(existsSync(path.join(f.project, "executed"))).toBe(false);
+});
+
+test("changes need a text lockfile", () => {
+  const f = fixture({ dependencies: { ms: "1.0.0" } });
+  rmSync(path.join(f.project, "bun.lock"));
+  writeFileSync(path.join(f.project, "bun.lockb"), "binary");
+  expect(f.run(["update", "ms"]).stderr).toMatch(/needs a text bun.lock/);
+  expect(f.run(["install"]).status).toBe(0);
+});
+
 test("a bun inside the checkout is never executed", () => {
   const f = fixture({ dependencies: { ms: "1.0.0" } }, { pin: "0.0.1", install: false });
   const bin = path.join(f.project, "node_modules/.bin");
