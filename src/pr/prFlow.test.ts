@@ -168,6 +168,15 @@ describe("PR CLI flows ported from a2f0.net", () => {
     expect(created.args).not.toContain(body);
   });
 
+  test("reads the PR body from --body-file without stdin redirection", () => {
+    const file = path.join(temporary, "body.md");
+    writeFileSync(file, "From a file.\n");
+    const result = invoke("missing", ["pr", "open", "feat: example", "--body-file", file]);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(readFileSync(path.join(fixture, "created.json"), "utf8")).body).toBe("From a file.\n");
+    expect(invoke("missing", ["pr", "open", "feat: example", "--body-file"]).status).toBe(1);
+  });
+
   test("default PR titles ignore signature display on signed commits", () => {
     const key = path.join(temporary, "signing-key");
     execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", key], { stdio: "ignore" });

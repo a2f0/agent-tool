@@ -14,8 +14,9 @@ import { singleLineSubject } from "./subjectLine";
 import { validateCommitSubject } from "./validateCommitSubject";
 import { loadConfig } from "../config";
 
-/** Read the PR body from stdin, or "" when stdin is a terminal/empty. */
-function readBody(): string {
+/** Read the PR body from a file, or from stdin ("" when stdin is a terminal/empty). */
+function readBody(file?: string): string {
+  if (file !== undefined) return readFileSync(file, "utf8");
   // With no pipe/redirect, fd 0 is an open TTY and a blocking read would hang.
   if (process.stdin.isTTY) {
     return "";
@@ -31,10 +32,10 @@ function readBody(): string {
  * Open a pull request for the current branch with a policy-conforming
  * title. The title defaults to the branch's latest commit subject, is validated
  * against data-only project policy before the PR is created; the body is read from
- * stdin. The base defaults to the repository's default branch. The branch must
+ * `bodyFile` or stdin. The base defaults to the repository's default branch. The branch must
  * already be pushed at the local head; this never pushes.
  */
-export function openPr(rootDir: string, titleArg: string | undefined): number {
+export function openPr(rootDir: string, titleArg: string | undefined, bodyFile?: string): number {
   const { branch, repo, defaultBranch } = resolveRepoContext();
 
   const existing = findOpenPrNumber(branch, repo);
@@ -46,7 +47,7 @@ export function openPr(rootDir: string, titleArg: string | undefined): number {
   const title = singleLineSubject(titleArg, tipSubject, "PR title");
   validateCommitSubject(rootDir, title);
 
-  const body = readBody();
+  const body = readBody(bodyFile);
   if (loadConfig(rootDir).pr.rejectClaudeBranding) assertNoClaudeBranding(body);
 
   // Local validation first; the remote head is the last thing checked.

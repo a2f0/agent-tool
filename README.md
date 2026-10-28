@@ -45,10 +45,10 @@ checkout and explicit policy file.
 ```sh
 agent-tool branch create chore/maintenance --base main --remote origin
 agent-tool repo context
-agent-tool run --label tests -- bun test
+agent-tool bun test --log
 agent-tool review claude
 agent-tool branch push <reviewed-head> --remote origin
-agent-tool pr open 'chore: maintain repository' < /tmp/pr-body.txt
+agent-tool pr open 'chore: maintain repository' --body-file /tmp/pr-body.txt
 agent-tool pr checks --wait --head <reviewed-head>
 agent-tool pr preflight <reviewed-head> <base-branch> <reviewed-base>
 agent-tool pr merge 'chore: maintain repository' <reviewed-head> <base-branch>

@@ -6,6 +6,8 @@ import path from "node:path";
 import { CATALOG, CLASSES, claudePermissions, codexRules } from "./catalog";
 import { checkPermissions, installPermissions } from "./install";
 import { HELP } from "../cli";
+import { parseConfig } from "../config";
+import { projectCommands, scriptClass } from "./project";
 
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
@@ -20,7 +22,7 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
   expect(rules.ask).toEqual(expect.arrayContaining(["Bash(bun run agent-tool squashMerge *)", "Bash(agent-tool squashMerge *)"]));
   expect([...rules.allow, ...rules.ask].some(rule => /agent-tool run(?:-group)? /.test(rule))).toBe(false);
   const codex = codexRules();
-  expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", ["install", "update", "remove"]], decision="allow"');
+  expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", ["install", "update", "remove", "run", "test"]], decision="allow"');
   expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", "add"], decision="prompt"');
   // Prefix rules cannot see a trailing --apply, so Codex prompts for the whole command.
   expect(codex).toContain('prefix_rule(pattern=["agent-tool", "repo", "cleanup"], decision="prompt"');
@@ -89,4 +91,69 @@ test("the CLI previews by default and rejects unknown harnesses", () => {
   expect(JSON.parse(preview.stdout)).toMatchObject({ applied: false });
   expect(spawnSync(process.execPath, [cli, "permissions", "check"], { cwd: root, encoding: "utf8" }).status).toBe(1);
   expect(spawnSync(process.execPath, [cli, "permissions", "show", "--harness", "opencode"], { cwd: root, encoding: "utf8" }).stderr).toMatch(/Unknown permissions harness/);
+});
+
+test("scripts that reach shared systems ask unless configured; executables run only when classified", () => {
+  const root = project();
+  mkdirSync(path.join(root, "packages/api"), { recursive: true });
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ workspaces: ["packages/*"], scripts: { check: "x", "secrets:backup": "x", "build:release": "x" } }));
+  writeFileSync(path.join(root, "packages/api/package.json"), JSON.stringify({ scripts: { "deploy:prod": "x", "db:migrate": "x" } }));
+  writeFileSync(path.join(root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { scripts: { "build:*": "local", "db:migrate": "release" }, executables: { biome: "local", wrangler: "release" } } }));
+  expect(projectCommands(root)).toEqual([
+    { command: "bun run db:migrate", class: "release" },
+    { command: "bun run deploy:prod", class: "release" },
+    { command: "bun run secrets:backup", class: "release" },
+    { command: "bun x biome", class: "local" },
+    { command: "bun x wrangler", class: "release" },
+  ]);
+  const rules = claudePermissions(projectCommands(root));
+  expect(rules.allow).toEqual(expect.arrayContaining(["Bash(bun run agent-tool bun run *)", "Bash(bun run agent-tool bun x biome *)"]));
+  expect(rules.ask).toEqual(expect.arrayContaining(["Bash(bun run agent-tool bun run deploy:prod *)", "Bash(bun run agent-tool bun x wrangler *)", "Bash(bunx *)", "Bash(bun x *)", "Bash(npx *)"]));
+  expect(rules.allow.some(rule => rule.includes("bun x *"))).toBe(false);
+  expect(codexRules(projectCommands(root))).toContain('prefix_rule(pattern=["agent-tool", "bun", "run", ["db:migrate", "deploy:prod", "secrets:backup"]], decision="prompt"');
+  // A new release script changes the generated rules, so `permissions check` fails until they are regenerated.
+  installPermissions(root, "all", true);
+  writeFileSync(path.join(root, "packages/api/package.json"), JSON.stringify({ scripts: { "deploy:prod": "x", "publish:npm": "x" } }));
+  expect(checkPermissions(root, "all").map(item => item.status)).toEqual(["outdated", "outdated"]);
+});
+
+test("a script that calls an asking script asks too, unless configured", () => {
+  const root = project();
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { ship: "bun run check && bun run publish:npm", check: "bun test", "publish:npm": "npm publish", all: "npm run ship", safe: "bun run publish:npm --dry-run" } }));
+  writeFileSync(path.join(root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { scripts: { safe: "local" } } }));
+  expect(projectCommands(root).map(entry => entry.command)).toEqual(["bun run all", "bun run publish:npm", "bun run ship"]);
+});
+
+test("pre and post hooks count as part of the script they surround", () => {
+  const root = project();
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { check: "bun test", postcheck: "npm publish", lint: "biome check" } }));
+  expect(projectCommands(root).map(entry => entry.command)).toEqual(["bun run check", "bun run postcheck"]);
+});
+
+test("script classes resolve exact names, then the longest pattern, then the release-name default", () => {
+  expect(scriptClass("deploy", {})).toBe("release");
+  expect(scriptClass("ios:upload", {})).toBe("release");
+  expect(scriptClass("lint:deployment-docs", {})).toBe("local");
+  expect(scriptClass("build:release", { "build:*": "local" })).toBe("local");
+  expect(scriptClass("build:release", { "build:*": "local", "build:rel*": "release" })).toBe("release");
+  expect(scriptClass("deploy", { deploy: "local", "*": "release" })).toBe("local");
+  expect(scriptClass("agents:sync", {}, ["agent-tool skills install --apply && agent-tool permissions install --apply"])).toBe("policy");
+  expect(scriptClass("agents:sync", { "agents:sync": "local" }, ["agent-tool permissions install --apply"])).toBe("local");
+  expect(scriptClass("ship", {}, ["bun run build && wrangler deploy --env production"])).toBe("release");
+  expect(scriptClass("setup", {}, ["bun add left-pad@1.3.0"])).toBe("intake");
+  expect(scriptClass("setup", {}, ["bun install --frozen-lockfile && npm install --no-save"])).toBe("local");
+  expect(scriptClass("ci", {}, ["bun run lint && bun test"])).toBe("local");
+  expect(scriptClass("build", {}, ["wrangler deploy --dry-run --outdir dist && tsc"])).toBe("local");
+  expect(scriptClass("test", {}, ["bun test fastlane web"])).toBe("local");
+  expect(scriptClass("setup", {}, ["npm install --save-dev left-pad"])).toBe("intake");
+  expect(scriptClass("setup", {}, ["npm install left-pad"])).toBe("intake");
+  expect(scriptClass("setup", {}, ["npm install && npm install --no-save"])).toBe("local");
+  expect(scriptClass("lint", {}, ["bunx biome check"])).toBe("intake");
+  expect(scriptClass("lint", {}, ["bun --bun x markdownlint-cli2 '**/*.md'"])).toBe("intake");
+  expect(scriptClass("lint", {}, ["bunx --no-install biome check"])).toBe("local");
+  expect(scriptClass("ship", {}, ["npm publish --dry-run=false"])).toBe("release");
+  expect(scriptClass("ship", {}, ["npm publish --dry-run"])).toBe("local");
+  for (const permissions of [{ scripts: { check: "safe" } }, { scripts: { "bad name": "local" } }, { executables: { "@scope/tool": "local" } }, { scripts: { "a(b)": "local" } }]) {
+    expect(() => parseConfig(JSON.stringify({ schemaVersion: 1, permissions }))).toThrow();
+  }
 });

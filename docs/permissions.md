@@ -11,10 +11,10 @@ the code, rather than in every harness configuration.
 | Class | Decision | Commands |
 | --- | --- | --- |
 | `read` | allow | Context, checks, listings, previews, diagnostics, and logs |
-| `local` | allow | `bun install\|update\|remove`, `branch create`, `versions`, `images build`, `review`, and applied skill or hook installs |
+| `local` | allow | `bun install\|update\|remove\|test`, `bun run` for scripts that do not ask, `branch create`, `versions`, `images build`, `review`, and applied skill or hook installs |
 | `share` | allow | `branch push`, `pr open`, `pr threads reply\|resolve` |
-| `release` | ask | `pr merge`, `repo cleanup --apply`, and direct `gh pr merge`, `npm publish`, `bun publish` |
-| `intake` | ask | `bun add`, and direct `bun add`, `npm install`, `pnpm add`, `yarn add` |
+| `release` | ask | `pr merge`, `repo cleanup --apply`, release-named scripts, and direct `gh pr merge`, `npm publish`, `bun publish` |
+| `intake` | ask | `bun add`, and direct `bun add`, `npm install`, `pnpm add`, `yarn add`, and `bunx`, `bun x`, `npx`, which can download a package |
 | `policy` | ask | `permissions install --apply` |
 
 Legacy action names, such as `squashMerge` and `openPr`, carry the class of the
@@ -90,6 +90,52 @@ also covers the project's own lifecycle scripts. The files are restored too if
 the manifest cannot be read afterward. `node_modules` is not restored; the next frozen
 install rebuilds it. Updating a dependency can still bring new transitive
 packages; the lockfile diff is where review sees them.
+
+## Scripts and executables
+
+```sh
+agent-tool bun run check --log
+agent-tool bun run build --cwd packages/web -- --mode staging
+agent-tool bun test --log -- src/app.test.ts
+agent-tool bun x biome -- check src
+```
+
+`bun run`, `bun test`, and `bun x` use the pinned Bun and put its directory
+first on `PATH`, so a script that calls `bun` gets the same version. The script
+or executable comes first and options precede `--`, so harness rules can match
+the name as a prefix; arguments for the command itself follow `--`. `--log`
+writes output to a private log and prints a `run` receipt; without it, output
+stays visible, which suits commands whose JSON drives a decision.
+
+`bun run` accepts only scripts declared in the root package or a declared
+workspace, never a file path. Most scripts are `local`. A script whose name has
+a `deploy`, `publish`, `release`, `destroy`, `apply`, `secret`, `upload`, or
+`submit` segment is `release` and asks. So does one whose command, ignoring
+`--dry-run` steps, runs `permissions install` (`policy`), adds a package
+(`intake`), or publishes, merges, or deploys with `npm`, `bun`, `gh`,
+`wrangler`, or `terraform` (`release`), and one that runs an asking script with
+`<manager> run`. A script name has one rule across all workspaces, so any
+workspace's definition can make it ask. `agent-tool.json` overrides all of
+this. `bun x` runs only an executable installed in this checkout's
+`node_modules/.bin` (`bun x --no-install`, never Bun's global cache), and only
+executables that `agent-tool.json` classifies get a rule; any other one keeps
+the harness default.
+
+```json
+{
+  "schemaVersion": 1,
+  "permissions": {
+    "scripts": { "build:*": "local", "db:reset": "release" },
+    "executables": { "biome": "local", "tsc": "read", "wrangler": "release" }
+  }
+}
+```
+
+An exact script name wins over a `*` pattern, and a longer pattern over a
+shorter one. Classify a whole executable by its riskiest subcommand; to allow a
+safe subcommand of a risky tool, wrap it in a script. `permissions install`
+reads every declared script, so adding one that asks makes `permissions check`
+fail until the rules are regenerated.
 
 ## Generated rules
 

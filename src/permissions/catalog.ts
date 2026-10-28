@@ -18,9 +18,9 @@ export type Decision = "allow" | "ask";
 export interface CatalogEntry { command: string; class: PermissionClass; applyClass?: PermissionClass }
 
 export const CATALOG: CatalogEntry[] = [
-  ...["--help", "--version", "logs", "runs list", "doctor", "config show", "branch check", "branch status", "commits check", "checks binaries", "repo context", "policy check", "toolchain check", "ci gate", "release plan", "release verify", "pr context", "pr checks", "pr preflight", "pr threads list", "versions plan", "versions check", "dependencies check-terraform-plan", "skills list", "skills check", "hooks check", "images list", "permissions show", "permissions check"]
+  ...["--help", "--version", "logs", "runs list", "doctor", "config show", "branch check", "branch status", "commits check", "checks binaries", "repo context", "policy check", "toolchain check", "ci gate", "release plan", "release verify", "pr context", "pr checks", "pr logs", "pr preflight", "pr threads list", "versions plan", "versions check", "dependencies check-terraform-plan", "dependencies diff", "skills list", "skills check", "hooks check", "images list", "permissions show", "permissions check"]
     .map(command => ({ command, class: "read" as const })),
-  ...["bun install", "bun update", "bun remove", "branch create", "versions bump", "versions prepare", "versions resolve-conflicts", "images build", "review", "init"]
+  ...["bun install", "bun update", "bun remove", "bun run", "bun test", "branch create", "versions bump", "versions prepare", "versions resolve-conflicts", "images build", "review", "init"]
     .map(command => ({ command, class: "local" as const })),
   { command: "skills install", class: "read", applyClass: "local" },
   { command: "hooks install", class: "read", applyClass: "local" },
@@ -36,10 +36,12 @@ export const CATALOG: CatalogEntry[] = [
   { command: "squashMerge", class: "release" },
 ];
 // `run` and `run-group` execute arbitrary commands, so they stay unclassified and keep the harness default.
+// `bun x` runs only executables that `permissions.executables` classifies; project.ts adds those
+// and the package scripts whose class asks, ahead of the generic `bun run` allowance.
 
 /** Direct spellings of classified actions. Asking here keeps a raw command from bypassing its agent-tool form. */
 export const GUARDS: { command: string; class: PermissionClass }[] = [
-  ...["bun add", "bun a", "npm install", "npm i", "npm add", "pnpm add", "yarn add"].map(command => ({ command, class: "intake" as const })),
+  ...["bun add", "bun a", "npm install", "npm i", "npm add", "pnpm add", "yarn add", "bunx", "bun x", "npx"].map(command => ({ command, class: "intake" as const })),
   ...["gh pr merge", "npm publish", "bun publish"].map(command => ({ command, class: "release" as const })),
 ];
 
@@ -54,10 +56,10 @@ export function strictest(entry: CatalogEntry): PermissionClass {
 export interface ClaudePermissions { allow: string[]; ask: string[] }
 
 /** Claude Code matches `*` across spaces and splits compound commands before matching. */
-export function claudePermissions(): ClaudePermissions {
+export function claudePermissions(project: CatalogEntry[] = []): ClaudePermissions {
   const rules: ClaudePermissions = { allow: [], ask: [] };
   for (const invocation of INVOCATIONS) {
-    for (const entry of CATALOG) {
+    for (const entry of [...CATALOG, ...project]) {
       const base = `${invocation} ${entry.command}`;
       rules[CLASSES[entry.class].decision].push(entry.command.startsWith("--") ? `Bash(${base})` : `Bash(${base} *)`);
       if (entry.applyClass && CLASSES[entry.applyClass].decision !== CLASSES[entry.class].decision) rules[CLASSES[entry.applyClass].decision].push(`Bash(${base} *--apply*)`);
@@ -71,7 +73,7 @@ const quote = (value: string) => JSON.stringify(value);
 const element = (values: string[]) => values.length === 1 ? quote(values[0]!) : `[${values.map(quote).join(", ")}]`;
 
 /** Codex prefix rules: `allow` runs outside the sandbox without a prompt; `prompt` always asks. */
-export function codexRules(): string {
+export function codexRules(project: CatalogEntry[] = []): string {
   const lines = [
     "# Managed by agent-tool; regenerate with `agent-tool permissions install --apply`.",
     "# Codex applies the most restrictive matching rule. Commands with an --apply form",
@@ -83,7 +85,7 @@ export function codexRules(): string {
     const group = groups.get(key) ?? { prefix, last: [], class: value };
     group.last.push(tokens.at(-1)!); groups.set(key, group);
   };
-  for (const invocation of INVOCATIONS) for (const entry of CATALOG) add([...invocation.split(" "), ...entry.command.split(" ")], strictest(entry));
+  for (const invocation of INVOCATIONS) for (const entry of [...CATALOG, ...project]) add([...invocation.split(" "), ...entry.command.split(" ")], strictest(entry));
   for (const guard of GUARDS) add(guard.command.split(" "), guard.class);
   for (const value of Object.keys(CLASSES) as PermissionClass[]) {
     const rules = [...groups.values()].filter(group => group.class === value);

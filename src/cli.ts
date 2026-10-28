@@ -4,6 +4,7 @@ import path from "node:path";
 import { DEFAULT_CONFIG, loadConfig } from "./config";
 import { doctor } from "./doctor";
 import { checkTerraformPlan } from "./dependencies/terraformPlan";
+import { dependencyDiff } from "./dependencies/diff";
 import { review } from "./harnesses";
 import { runAgentToolAction } from "./runAgentToolAction";
 import { BUNDLED_SKILLS } from "./skills/bundled";
@@ -47,14 +48,16 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   release verify <package> <version> <merge-oid> --workflow name [--timeout seconds]
   logs <file> [--max-bytes N] [--tail-lines N]  Bounded local log tail
   review <claude|codex|opencode> [effort] [--base <local-ref>]
-  pr open [title]                       Body from stdin; branch already pushed
+  pr open [title] [--body-file file]    Body from the file or stdin; branch already pushed
   pr merge <subject-or-empty> <head-oid> <base-branch>
   pr context | checks [--wait] [--head oid] [--timeout seconds]
+  pr logs [--head oid] [--max-bytes N] [--tail-lines N]  Failed GitHub Actions job logs
   pr preflight <reviewed-head> <base-branch> <reviewed-base>
   pr threads list | reply <comment-id> [--body-file file] | resolve <thread-id>
   versions <plan|bump|check|prepare> <base-oid>
   versions resolve-conflicts
   dependencies check-terraform-plan <json-file>  Read-only destructive-plan check
+  dependencies diff --base <ref>        Declared dependencies added, removed, or changed since base
   skills list
   skills install [--harness <all|claude|codex|opencode>] [--apply]
   skills check [--harness <all|claude|codex|opencode>]
@@ -62,6 +65,9 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   bun add <name@version>... [--dev|--optional|--peer] [--exact] [--cwd <dir>]
   bun update <name[@version]>... [--cwd <dir>]  Change versions of declared dependencies only
   bun remove <name>... [--cwd <dir>]    Remove declared dependencies only
+  bun run <script> [--cwd <dir>] [--log] [-- args...]  Package script with the pinned Bun
+  bun test [--cwd <dir>] [--log] [-- args...]
+  bun x <executable> [--cwd <dir>] [--log] [-- args...]  Installed executables only, never fetched
   permissions show [--harness <all|claude|codex>]
   permissions install [--harness <all|claude|codex>] [--apply]
   permissions check [--harness <all|claude|codex>]
@@ -103,6 +109,10 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
   if (command === "ci") { usage(args.shift() === "gate", "Usage: ci gate <needs.json|-> [--policy policy.json]"); return gateCommand(args); }
   if (command === "release") return releaseCommand(args);
   if (command === "logs") return inspectLog(args);
+  if (command === "dependencies" && args[0] === "diff") {
+    usage(args.length === 3 && args[1] === "--base" && !!args[2] && !args[2].startsWith("-"), "Usage: agent-tool dependencies diff --base <ref>");
+    output(dependencyDiff(args[2]!)); return 0;
+  }
   if (command === "dependencies") {
     usage(args.length === 2 && args[0] === "check-terraform-plan", "Usage: agent-tool dependencies check-terraform-plan <json-file>");
     const source = readFileSync(args[1], "utf8");
@@ -167,7 +177,7 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
       else if (flag === "--harness") { const value = args.shift(); usage(!!value, "--harness requires a name."); target = value!; }
       else throw new Error(`Unknown permissions ${action} argument '${flag}'.`);
     }
-    if (action === "show") { writeSync(1, showPermissions(target)); return 0; }
+    if (action === "show") { writeSync(1, showPermissions(process.cwd(), target)); return 0; }
     if (action === "check") {
       const changes = checkPermissions(process.cwd(), target);
       const ok = changes.every(change => change.status === "unchanged");
@@ -198,9 +208,14 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
     return review(root, name!, effort, base);
   }
   if (command === "pr") {
-    if (["context", "checks", "preflight", "threads"].includes(args[0]!)) return prWorkflowCommand(args);
+    if (["context", "checks", "logs", "preflight", "threads"].includes(args[0]!)) return prWorkflowCommand(args);
     const action = args.shift();
-    if (action === "open") { usage(args.length <= 1, "Usage: agent-tool pr open [title]"); return openPr(root, args[0]); }
+    if (action === "open") {
+      const index = args.indexOf("--body-file");
+      const bodyFile = index === -1 ? undefined : args.splice(index, 2)[1];
+      usage((index === -1 || !!bodyFile) && args.length <= 1 && !args.includes("--body-file"), "Usage: agent-tool pr open [title] [--body-file <file>]");
+      return openPr(root, args[0], bodyFile);
+    }
     usage(action === "merge" && args.length === 3, "Usage: agent-tool pr merge <subject-or-empty> <reviewed-head-oid> <base-branch>");
     usage(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(args[1]!), "Merge requires a full reviewed HEAD OID.");
     return squashMerge(root, args[0], args[1], args[2]);

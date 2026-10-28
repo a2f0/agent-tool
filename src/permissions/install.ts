@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { claudePermissions, codexRules, type ClaudePermissions } from "./catalog";
+import { claudePermissions, codexRules, type CatalogEntry, type ClaudePermissions } from "./catalog";
+import { projectCommands } from "./project";
 
 const MANIFEST = ".agent-tool-permissions.json";
 const CLAUDE_SETTINGS = ".claude/settings.json";
@@ -75,7 +76,7 @@ function mergedSettings(settings: Settings, previous: ClaudePermissions | undefi
 
 interface Pending { harness: Harness; relative: string; file: string; contents: string; status: PermissionChange["status"] }
 
-function pending(root: string, targets: Harness[], manifest: Manifest): Pending[] {
+function pending(root: string, targets: Harness[], manifest: Manifest, project: CatalogEntry[]): Pending[] {
   return targets.map(harness => {
     const relative = harness === "claude" ? CLAUDE_SETTINGS : CODEX_RULES;
     const file = destination(root, relative);
@@ -83,9 +84,9 @@ function pending(root: string, targets: Harness[], manifest: Manifest): Pending[
     if (exists && !lstatSync(file).isFile()) throw new Error(`Permissions destination is not a regular file: ${relative}`);
     const current = exists ? readFileSync(file, "utf8") : undefined;
     let contents: string;
-    if (harness === "claude") contents = `${JSON.stringify(mergedSettings(readSettings(file), manifest.claude, claudePermissions()), null, 2)}\n`;
+    if (harness === "claude") contents = `${JSON.stringify(mergedSettings(readSettings(file), manifest.claude, claudePermissions(project)), null, 2)}\n`;
     else {
-      contents = codexRules();
+      contents = codexRules(project);
       if (current !== undefined && current !== contents && hash(current) !== manifest.codex?.sha256) throw new Error(`Locally edited or unmanaged rules: ${relative}. Preserve them before installing.`);
     }
     return { harness, relative, file, contents, status: current === contents ? "unchanged" : current === undefined ? "create" : "update" };
@@ -95,13 +96,14 @@ function pending(root: string, targets: Harness[], manifest: Manifest): Pending[
 export function installPermissions(rootDir: string, target: string, apply = false): PermissionChange[] {
   const root = realpathSync(rootDir);
   const manifest = readManifest(root);
-  const changes = pending(root, harnesses(target), manifest);
+  const project = projectCommands(root);
+  const changes = pending(root, harnesses(target), manifest, project);
   // Every destination is validated before any file is written.
   if (apply) {
     const next: Manifest = { ...manifest };
     for (const change of changes) {
       if (change.status !== "unchanged") atomicWrite(change.file, change.contents);
-      if (change.harness === "claude") next.claude = claudePermissions();
+      if (change.harness === "claude") next.claude = claudePermissions(project);
       else next.codex = { file: change.relative, sha256: hash(change.contents) };
     }
     atomicWrite(destination(root, MANIFEST), `${JSON.stringify(next, null, 2)}\n`);
@@ -113,14 +115,16 @@ export function installPermissions(rootDir: string, target: string, apply = fals
 export function checkPermissions(rootDir: string, target: string): PermissionCheck[] {
   const root = realpathSync(rootDir);
   const manifest = readManifest(root);
-  return pending(root, harnesses(target), manifest).map(change => {
+  const project = projectCommands(root);
+  return pending(root, harnesses(target), manifest, project).map(change => {
     if (change.status === "create") return { path: change.relative, status: "missing" };
     if (change.status === "update") return { path: change.relative, status: "outdated" };
-    const managed = change.harness === "claude" ? JSON.stringify(manifest.claude) === JSON.stringify(claudePermissions()) : manifest.codex?.sha256 === hash(change.contents);
+    const managed = change.harness === "claude" ? JSON.stringify(manifest.claude) === JSON.stringify(claudePermissions(project)) : manifest.codex?.sha256 === hash(change.contents);
     return { path: change.relative, status: managed ? "unchanged" : "unmanaged" };
   });
 }
 
-export function showPermissions(target: string): string {
-  return harnesses(target).map(harness => harness === "claude" ? `${JSON.stringify({ permissions: claudePermissions() }, null, 2)}\n` : codexRules()).join("\n");
+export function showPermissions(rootDir: string, target: string): string {
+  const project = projectCommands(realpathSync(rootDir));
+  return harnesses(target).map(harness => harness === "claude" ? `${JSON.stringify({ permissions: claudePermissions(project) }, null, 2)}\n` : codexRules(project)).join("\n");
 }
