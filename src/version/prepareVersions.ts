@@ -1,7 +1,7 @@
 import { loadConfig } from "../config";
 import { validateCommitSubject } from "../pr/validateCommitSubject";
 import { checkVersions, planVersions, rewriteVersions } from "./bumpVersions";
-import { assertBunLockVersions } from "./lockfileVersions";
+import { assertBunLockVersions, unresolvedDependencies } from "./lockfileVersions";
 import {
   assertAllowedPaths,
   assertClean,
@@ -69,11 +69,18 @@ export function prepareVersions(rootDir: string, baseOid?: string): number {
   const allowed = [...pending.map((plan) => plan.manifest), ...(lockfile ? [lockfile] : [])];
   let committed = false;
   let lockfileChanged = false;
+  if (lockfile) {
+    // The refresh below is unfrozen; it may record workspace changes, never resolve a hand-added package.
+    const missing = unresolvedDependencies(rootDir);
+    if (missing.length) {
+      throw new Error(`bun.lock does not resolve ${missing.join(", ")}; add new packages with \`agent-tool bun add\`, which asks for approval, before preparing versions.`);
+    }
+  }
   try {
     assertHead(rootDir, startHead);
     rewriteVersions(rootDir, baseCommit);
     if (lockfile) {
-      // Also repairs a stale lockfile after a deliberate release or new package.
+      // Records the bumped workspace versions in the lockfile.
       runProjectCommand(rootDir, ["bun", "install", "--lockfile-only", "--ignore-scripts"]);
       assertBunLockVersions(rootDir);
     }

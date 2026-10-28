@@ -59,6 +59,10 @@ Every command requires an existing lockfile. Before `update`, `remove`, or `add`
 changes anything, it runs `bun install --frozen-lockfile --lockfile-only` and
 stops if `package.json` declares something the lockfile does not cover, so a
 hand-added package cannot be resolved as a side effect of an allowed change.
+`versions prepare`, which refreshes the lockfile for bumped and new workspace
+packages, likewise refuses when a manifest installs a third-party package that
+`bun.lock` does not resolve. Every other workspace manifest must stay
+unchanged too, so a lifecycle script cannot edit a sibling package.
 
 After Bun exits, the command compares `package.json` with its earlier state. If
 Bun changed anything the verb does not allow (another dependency, another

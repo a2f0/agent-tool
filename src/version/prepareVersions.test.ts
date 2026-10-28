@@ -130,6 +130,18 @@ describe("prepareVersions CLI", () => {
     expect(fixture.lintPaths()).toEqual(["bun.lock"]);
   });
 
+  test("refuses to resolve a third-party package added by hand", () => {
+    const fixture = versionPreparationFixture();
+    const { rootDir } = fixture;
+    const base = mainOid(rootDir);
+    write(rootDir, "packages/new/package.json", JSON.stringify({ name: "new", version: "1.2.3", dependencies: { "left-pad": "1.3.0" } }, null, 2) + "\n");
+    const head = commitAll(rootDir, "feat: add workspace with a dependency");
+    const result = fixture.prepare(base);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("bun.lock does not resolve left-pad");
+    expect(git(rootDir, ["rev-parse", "HEAD"])).toBe(head);
+  });
+
   test("root-only changes produce no version commit", () => {
     const fixture = versionPreparationFixture();
     write(fixture.rootDir, "README.md", "updated\n");

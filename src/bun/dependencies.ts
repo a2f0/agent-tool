@@ -5,7 +5,7 @@ import { createLog } from "../commands/logFile";
 import { DEFAULT_LIMITS, printLogTail } from "../commands/output";
 import { assert, flag, option, output } from "../workflows/core";
 import { pinnedBun, type BunExecutable } from "./toolchain";
-import { workspacePackage } from "./workspace";
+import { packageDirectories, workspacePackage } from "./workspace";
 
 const SECTIONS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"] as const;
 type Section = typeof SECTIONS[number];
@@ -185,9 +185,10 @@ export function bunCommand(args: string[]): number {
   // Before a change, the lockfile must already cover every declaration, or Bun would also resolve a hand-added package.
   const preflight = ["install", "--frozen-lockfile", "--lockfile-only"];
   const calls = action === "install" ? [["install", "--frozen-lockfile"]] : [preflight, ...plan(action, before, requested, exact, addSection)];
-  const rootManifest = path.join(root, "package.json");
-  const rootBefore = root !== directory && existsSync(rootManifest) ? JSON.stringify(readManifest(rootManifest)) : null;
-  const restored = [...new Set([file, rootManifest, ...lockfiles, ...nested])];
+  // Lifecycle scripts can touch any workspace manifest; every one but the target must stay as it was.
+  const others = packageDirectories(root).map(item => path.join(item, "package.json")).filter(item => item !== file && existsSync(item));
+  const othersBefore = new Map(others.map(item => [item, JSON.stringify(readManifest(item))]));
+  const restored = [...new Set([file, ...others, ...lockfiles, ...nested])];
   const saved = snapshot(restored);
   const names = new Set(requested.map(item => item.name));
   const runs = [];
@@ -204,7 +205,7 @@ export function bunCommand(args: string[]): number {
       // Project lifecycle scripts run during installs too; a frozen install may change neither file.
       if (action === "install") violations = saved.changed().map(item => `${path.relative(directory, item) || "package.json"} changed during a frozen install.`);
       else violations = manifestViolations(action, before, after, names, addSection);
-      if (!violations.length && rootBefore !== null && JSON.stringify(readManifest(rootManifest)) !== rootBefore) violations.push("The workspace root package.json changed.");
+      for (const item of others) if (!violations.length && JSON.stringify(readManifest(item)) !== othersBefore.get(item)) violations.push(`${path.relative(root, item)} changed outside the target package.`);
       for (const item of saved.changed().filter(changed => nested.includes(changed))) violations.push(`${path.relative(directory, item)} was created beside a workspace package.`);
     }
   } catch (error) {

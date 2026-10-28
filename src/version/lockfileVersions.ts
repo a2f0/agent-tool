@@ -41,3 +41,29 @@ export function assertBunLockVersions(
     );
   }
 }
+
+/**
+ * Third-party names that workspace manifests install but bun.lock does not
+ * resolve: packages added by hand rather than through an approved add. New
+ * workspaces and changed workspace versions are not third-party code.
+ */
+export function unresolvedDependencies(
+  rootDir: string,
+  lockSource = readFileSync(path.join(rootDir, "bun.lock"), "utf8"),
+): string[] {
+  const resolved = field(Bun.JSONC.parse(lockSource), "packages");
+  const directories = workspacePackages(rootDir);
+  const manifests = directories.map((directory) => JSON.parse(readFileSync(path.join(rootDir, manifestPath(directory)), "utf8")) as Record<string, unknown>);
+  const workspaceNames = new Set(manifests.map((manifest) => manifest.name));
+  const missing = new Set<string>();
+  for (const manifest of manifests) {
+    // Peers may be optional and absent from the lockfile; Bun installs the other sections.
+    for (const section of ["dependencies", "devDependencies", "optionalDependencies"]) {
+      for (const [name, spec] of Object.entries((manifest[section] ?? {}) as Record<string, unknown>)) {
+        if (workspaceNames.has(name) || String(spec).startsWith("workspace:")) continue;
+        if (field(resolved, name) === undefined) missing.add(name);
+      }
+    }
+  }
+  return [...missing].sort();
+}
