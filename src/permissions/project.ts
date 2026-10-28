@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { loadConfig, type AgentToolConfig } from "../config";
 import { packageDirectories } from "../bun/workspace";
-import { CATALOG, CLASSES, type CatalogEntry, type PermissionClass } from "./catalog";
+import { CATALOG, CLASSES, strictest, type CatalogEntry, type PermissionClass } from "./catalog";
 
 /** Script names that usually reach shared systems ask unless `permissions.scripts` classifies them. */
 const RELEASE_SCRIPT = /(?:^|[:._-])(?:deploy|publish|release|destroy|apply|secrets?|upload|submit)(?:$|[:._-])/i;
@@ -18,13 +18,15 @@ function wildcard(pattern: string): RegExp {
 }
 
 /** Commands in a script body that put it in an asking class whatever the script is called. */
-const BODY_CLASSES: [RegExp, PermissionClass][] = [
-  [/\b(?:(?:bun\s+(?:add|a)|pnpm\s+add|yarn\s+add)\b|npm\s+(?:install|i|add)(?:\s+-\S+)*\s+[^-\s&|;])/, "intake"],
+/** Commands that download third-party code, dry run or not. */
+const INTAKE = [
+  /\b(?:(?:bun\s+(?:add|a)|pnpm\s+add|yarn\s+add)\b|npm\s+(?:install|i|add)(?:\s+-\S+)*\s+[^-\s&|;])/,
   // Package runners download what is not installed unless told not to.
-  [/^(?!.*--no-install)(?:.*\s)?(?:bunx|npx|bun(?:\s+--\S+)*\s+x)\s/, "intake"],
-  [/\b(?:npm\s+publish|bun\s+publish|gh\s+pr\s+merge|gh\s+release\s+create|wrangler\s+(?:deploy|publish|secret)|terraform\s+(?:apply|destroy))\b/, "release"],
+  /^(?!.*--no-install)(?:.*\s)?(?:bunx|npx|bun(?:\s+--\S+)*\s+x)\s/,
 ];
-const REFERENCE = /\b(?:bun|npm|pnpm|yarn)\s+run\s+(?:--[\w-]+(?:[= ]\S+)?\s+)*([\w@.:/+-]+)/g;
+/** Commands that change shared state, unless they run as a dry run. */
+const RELEASE = /\b(?:npm\s+publish|bun\s+publish|gh\s+pr\s+merge|gh\s+release\s+create|wrangler\s+(?:deploy|publish|secret)|terraform\s+(?:apply|destroy))\b/;
+const DRY_RUN = /--dry-run(?:=(?:true|1))?(?=\s|$)/;
 
 const RUNNER = /^(?:(?:bun\s+run|bunx(?:\s+--\S+)*|npx(?:\s+--\S+)*|bun\s+x(?:\s+--\S+)*)\s+)?/;
 const SHELLS = new Set(["sh", "bash", "zsh", "env", "exec", "eval", "xargs", "node", "bun", "deno", "python", "python3"]);
@@ -57,14 +59,32 @@ function forwarded(last: string, executables: Record<string, PermissionClass>): 
   return Object.hasOwn(executables, name) ? executables[name] : undefined;
 }
 
-/** The strictest catalog class among the agent-tool commands a body runs with fixed arguments. */
-function agentToolClass(command: string): PermissionClass | undefined {
+/**
+ * The catalog class of an agent-tool command. In last position Bun appends the script's
+ * arguments, which can add `--apply`, so the stricter class applies.
+ */
+function agentToolClass(command: string, last: boolean): PermissionClass | undefined {
   const words = agentToolWords(command);
   if (!words?.length) return undefined;
   const matches = CATALOG.filter(entry => entry.command.split(" ").every((word, index) => words[index] === word));
-  const values = matches.map(entry => entry.applyClass && words.includes("--apply") ? entry.applyClass : entry.class);
+  const values = matches.map(entry => last ? strictest(entry) : entry.applyClass && words.includes("--apply") ? entry.applyClass : entry.class);
   return values.find(value => CLASSES[value].decision === "ask");
 }
+
+/** The asking class of one command, if any; `last` marks the command that receives forwarded arguments. */
+function commandClass(command: string, last: boolean, executables: Record<string, PermissionClass>): PermissionClass | undefined {
+  const forwards = last ? forwarded(command, executables) : undefined;
+  if (forwards && CLASSES[forwards].decision === "ask") return forwards;
+  const tool = agentToolClass(command, last);
+  if (tool) return tool;
+  if (INTAKE.some(pattern => pattern.test(command))) return "intake";
+  if (!DRY_RUN.test(command) && RELEASE.test(command)) return "release";
+  return undefined;
+}
+
+const segments = (body: string) => body.split(/&&|\|\||[;|&\n]/).map(command => command.trim()).filter(Boolean);
+// `<manager> [options] run [options] <script> [args]`; `--cwd`, `--filter`, and `-F` take a value.
+const CALL = /^(?:bun|npm|pnpm|yarn)(?:\s+-[-\w]+)*\s+run(?:\s+(?:(?:--cwd|--filter|-F)(?:=\S+|\s+\S+)|-[-\w]+(?:=\S+)?))*\s+([\w@.:/+-]+)(?:\s+--)?((?:\s+.*)?)$/;
 
 /**
  * Exact names win over wildcard patterns. An unconfigured script then asks when its command
@@ -74,30 +94,41 @@ export function scriptClass(name: string, configured: Record<string, PermissionC
   if (Object.hasOwn(configured, name)) return configured[name]!;
   const pattern = Object.keys(configured).filter(key => key.includes("*") && wildcard(key).test(name)).sort((a, b) => b.length - a.length)[0];
   if (pattern) return configured[pattern]!;
-  // Check each command of a body on its own; a dry run changes nothing remote.
-  const segments = (body: string) => body.split(/&&|\|\||[;|&\n]/).map(command => command.trim()).filter(Boolean);
-  const forwards = bodies.map(body => forwarded(segments(body).at(-1) ?? "", executables)).filter((value): value is PermissionClass => value !== undefined);
-  const asking = forwards.find(value => CLASSES[value].decision === "ask") ?? bodies.flatMap(segments).map(agentToolClass).find(value => value !== undefined);
-  if (asking) return asking;
-  const commands = bodies.flatMap(segments).filter(command => !/--dry-run(?:=(?:true|1))?(?=\s|$)/.test(command));
-  for (const [pattern, value] of BODY_CLASSES) if (commands.some(command => pattern.test(command))) return value;
+  for (const body of bodies) {
+    const commands = segments(body);
+    for (const [index, command] of commands.entries()) {
+      const value = commandClass(command, index === commands.length - 1, executables);
+      if (value) return value;
+    }
+  }
   return RELEASE_SCRIPT.test(name) ? "release" : "local";
 }
 
 /** A script that runs an asking script asks too; repeat until no class changes. */
-function inherit(classes: Map<string, PermissionClass>, bodies: Map<string, string[]>): void {
+/**
+ * A script that calls an asking script asks too; repeat until no class changes. A call to an
+ * `exec` script runs that script's last command with the call's arguments, so classify the
+ * expanded command; called last without arguments, it forwards the caller's own.
+ */
+function inherit(classes: Map<string, PermissionClass>, bodies: Map<string, string[]>, own: Map<string, string[]>, executables: Record<string, PermissionClass>): void {
   for (let changed = true; changed;) {
     changed = false;
     for (const [name, list] of bodies) {
       if (CLASSES[classes.get(name)!].decision === "ask") continue;
       // Bun runs pre<name> and post<name> with <name>, so an asking hook, configured or not, makes it ask.
-      const hook = [`pre${name}`, `post${name}`].find(item => classes.has(item) && CLASSES[classes.get(item)!].decision === "ask");
-      if (hook) { classes.set(name, classes.get(hook)!); changed = true; continue; }
-      // An `exec` script called with fixed arguments runs those, which the caller's own body rules
-      // classify; called last with none, it receives the caller's arguments, so the caller forwards too.
-      const forwarding = list.map(body => body.split(/&&|\|\||[;|&\n]/).map(command => command.trim()).filter(Boolean).at(-1)?.match(/^(?:bun|npm|pnpm|yarn)\s+run\s+(?:--\S+\s+)*([\w@.:/+-]+)(?:\s+-\S+)*$/)?.[1]).find(item => item !== undefined && item !== name && classes.get(item) === "exec");
-      const called = forwarding ?? list.flatMap(body => [...body.matchAll(REFERENCE)].map(match => match[1]!)).find(item => item !== name && classes.has(item) && CLASSES[classes.get(item)!].decision === "ask" && classes.get(item) !== "exec");
-      if (called) { classes.set(name, classes.get(called)!); changed = true; }
+      let value = [`pre${name}`, `post${name}`].map(item => classes.get(item)).find(item => item !== undefined && CLASSES[item].decision === "ask");
+      for (const body of list) {
+        const commands = segments(body);
+        for (const [index, command] of commands.entries()) {
+          const call = command.match(CALL);
+          if (value || !call || call[1] === name || !classes.has(call[1]!)) continue;
+          const callee = classes.get(call[1]!)!, args = call[2]!.trim(), last = index === commands.length - 1;
+          if (callee !== "exec") { if (CLASSES[callee].decision === "ask") value = callee; continue; }
+          if (!args) { if (last) value = "exec"; continue; }
+          value = (own.get(call[1]!) ?? []).map(calleeBody => commandClass(`${segments(calleeBody).at(-1) ?? ""} ${args}`, last, executables)).find(item => item !== undefined);
+        }
+      }
+      if (value) { classes.set(name, value); changed = true; }
     }
   }
 }
@@ -114,11 +145,12 @@ export function projectCommands(root: string, config: AgentToolConfig = loadConf
   const bodies = new Map<string, string[]>();
   for (const directory of packageDirectories(root)) for (const [name, body] of scripts(path.join(directory, "package.json"))) bodies.set(name, [...(bodies.get(name) ?? []), body]);
   for (const name of Object.keys(config.permissions.scripts)) if (!name.includes("*") && !bodies.has(name)) bodies.set(name, []);
+  const own = new Map(bodies);
   // Bun runs pre<name> and post<name> around <name>, so their commands count as the script's own.
-  for (const [name, list] of [...bodies]) bodies.set(name, [...list, ...(bodies.get(`pre${name}`) ?? []), ...(bodies.get(`post${name}`) ?? [])]);
+  for (const [name, list] of [...bodies]) bodies.set(name, [...list, ...(own.get(`pre${name}`) ?? []), ...(own.get(`post${name}`) ?? [])]);
   const classes = new Map([...bodies].map(([name, list]) => [name, scriptClass(name, config.permissions.scripts, list, config.permissions.executables)]));
   // Configured classes are deliberate; only defaults inherit from the scripts they call.
-  inherit(classes, new Map([...bodies].filter(([name]) => !Object.hasOwn(config.permissions.scripts, name) && !Object.keys(config.permissions.scripts).some(key => key.includes("*") && wildcard(key).test(name)))));
+  inherit(classes, new Map([...bodies].filter(([name]) => !Object.hasOwn(config.permissions.scripts, name) && !Object.keys(config.permissions.scripts).some(key => key.includes("*") && wildcard(key).test(name)))), own, config.permissions.executables);
   const entries: CatalogEntry[] = [];
   for (const name of [...bodies.keys()].sort()) {
     const value = classes.get(name)!;

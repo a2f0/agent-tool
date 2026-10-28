@@ -112,11 +112,13 @@ stays visible, which suits commands whose JSON drives a decision.
 workspace, never a file path. Most scripts are `local`. A script whose name has
 a `deploy`, `publish`, `release`, `destroy`, `apply`, `secret`, `upload`, or
 `submit` segment is `release` and asks. So does one whose commands, split at
-`&&`, `||`, `;`, `|`, `&`, and newlines and ignoring `--dry-run` steps, run an
-agent-tool command that asks, add or download a package (`intake`, including
-`bunx`/`npx` without `--no-install`), or publish, merge, or deploy with `npm`,
-`bun`, `gh`, `wrangler`, or `terraform` (`release`), and one that runs an
-asking script with `<manager> run`, or whose `pre` or `post` hook asks, by its
+`&&`, `||`, `;`, `|`, `&`, and newlines, run an agent-tool command that asks
+(in last position, where a caller can append `--apply`, its stricter form), add
+or download a package (`intake`, including `bunx`/`npx` without `--no-install`,
+dry run or not), or publish, merge, or deploy with `npm`, `bun`, `gh`,
+`wrangler`, or `terraform` outside a `--dry-run` (`release`), and one that runs
+an asking script with `<manager> run`; a call with arguments to an `exec`
+script is classified as the command it expands to, or whose `pre` or `post` hook asks, by its
 commands or by configuration. Bun appends a script's arguments to its last command, so a script ending
 in a bare agent-tool, `agent-tool run` without a `--` command, a bare
 `run-group`, or a bare shell or interpreter is `exec`, as is one that ends by
