@@ -25,14 +25,14 @@ interface Requested { name: string; spec?: string }
 export interface DependencyChange { name: string; section: Section; from: string | null; to: string | null }
 
 /** Registry versions, ranges, and tags; never a workspace, alias, Git, URL, or path source. */
-export function registrySpec(spec: string): boolean { return /^[^\s:/\\.][^\s:/\\]*$/.test(spec) && !spec.startsWith("-"); }
+export function registrySpec(spec: string): boolean { return /^[\w^~<>=*|][\w^~<>=*|.+ -]*$/.test(spec) && spec.trim() === spec; }
 
 export function parseRequested(value: string): Requested {
   const at = value.indexOf("@", value.startsWith("@") ? 1 : 0);
   const name = at === -1 ? value : value.slice(0, at);
   const spec = at === -1 ? undefined : value.slice(at + 1);
   assert(NAME.test(name), `Invalid package name '${name}'.`);
-  assert(spec === undefined || (spec.length > 0 && !/\s/.test(spec) && !spec.startsWith("-")), `Invalid version for ${name}.`);
+  assert(spec === undefined || (spec.trim().length > 0 && !/[\r\n\t]/.test(spec) && !spec.startsWith("-")), `Invalid version for ${name}.`);
   return { name, spec };
 }
 
@@ -174,15 +174,17 @@ export function bunCommand(args: string[]): number {
   const { root, directory } = workspacePackage(target);
   const file = path.join(directory, "package.json");
   const { requested, exact, addSection } = parseArgs(action, args);
-  const bun = pinnedBun(directory);
+  const bun = pinnedBun(directory, root);
   const bunInfo = { path: bun.path, version: bun.version, source: bun.source, pinned: bun.pinned };
   const before = readManifest(file);
   const lockfiles = [path.join(root, "bun.lock"), path.join(root, "bun.lockb")];
   // A workspace shares the root lockfile; Bun creating one beside the package means it was treated as standalone.
   const nested = directory === root ? [] : [path.join(directory, "bun.lock"), path.join(directory, "bun.lockb")];
-  // Without a lockfile, a frozen install resolves whatever package.json names, including hand-added packages.
-  if (action === "install") assert(lockfiles.some(item => existsSync(item)), "No bun.lock was found; a first install resolves new packages, so run it directly with approval.");
-  const calls = action === "install" ? [["install", "--frozen-lockfile"]] : plan(action, before, requested, exact, addSection);
+  // Without a lockfile, Bun resolves whatever package.json names, including hand-added packages.
+  assert(lockfiles.some(item => existsSync(item)), "No bun.lock was found; a first install resolves new packages, so run it directly with approval.");
+  // Before a change, the lockfile must already cover every declaration, or Bun would also resolve a hand-added package.
+  const preflight = ["install", "--frozen-lockfile", "--lockfile-only"];
+  const calls = action === "install" ? [["install", "--frozen-lockfile"]] : [preflight, ...plan(action, before, requested, exact, addSection)];
   const rootManifest = path.join(root, "package.json");
   const rootBefore = root !== directory && existsSync(rootManifest) ? JSON.stringify(readManifest(rootManifest)) : null;
   const restored = [...new Set([file, rootManifest, ...lockfiles, ...nested])];
@@ -195,7 +197,7 @@ export function bunCommand(args: string[]): number {
     for (const call of calls) {
       const run = runBun(bun, directory, call);
       runs.push(run);
-      if (run.exitCode !== 0) { violations = [`bun ${call[0]} failed with exit ${run.exitCode}.`]; break; }
+      if (run.exitCode !== 0) { violations = [call === preflight ? "package.json and the lockfile disagree; resolve that difference with approval before changing dependencies." : `bun ${call[0]} failed with exit ${run.exitCode}.`]; break; }
     }
     if (!violations.length) {
       after = readManifest(file);

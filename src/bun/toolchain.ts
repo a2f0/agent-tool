@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { outsideExecutable } from "../review/executable";
 import { assert } from "../workflows/core";
 
 export interface BunExecutable { path: string; version: string; source: "mise" | "path"; pinned: string | null }
@@ -36,15 +37,17 @@ function runnable(file: string): boolean {
  * Resolve the Bun a checkout pins, without relying on the agent shell's PATH.
  * Agent shells do not activate mise, so the pinned install is used directly when present.
  */
-export function pinnedBun(directory: string): BunExecutable {
+export function pinnedBun(directory: string, root: string): BunExecutable {
   const pin = misePin(directory)?.version ?? null;
+  const inside = (file: string) => { const relative = path.relative(realpathSync(root), realpathSync(file)); return !relative.startsWith("..") && !path.isAbsolute(relative); };
   if (pin) {
     const data = process.env.MISE_DATA_DIR || path.join(process.env.XDG_DATA_HOME || path.join(homedir(), ".local/share"), "mise");
     const candidate = path.join(data, "installs", "bun", pin, "bin", "bun");
-    if (runnable(candidate)) return { path: candidate, version: versionOf(candidate), source: "mise", pinned: pin };
+    if (runnable(candidate) && !inside(candidate)) return { path: candidate, version: versionOf(candidate), source: "mise", pinned: pin };
   }
-  const found = Bun.which("bun");
-  assert(found, "Bun is not on PATH.");
+  // A `bun` inside the checkout (node_modules/.bin is on PATH under `bun run`) is repository code; never run it.
+  const found = outsideExecutable("bun", process.env, root)?.candidate;
+  assert(found, "No Bun outside this checkout is on PATH.");
   const version = versionOf(found);
   assert(!pin || version === pin || version.startsWith(`${pin}.`), `Bun ${pin} from the mise config is not installed, and PATH has ${version}. Install the pinned Bun before changing dependencies.`);
   return { path: found, version, source: "path", pinned: pin };

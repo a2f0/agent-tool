@@ -35,7 +35,8 @@ would get a lockfile of its own, is refused. Each runs the Bun that the nearest
 `.mise.toml` pins, from
 `$MISE_DATA_DIR/installs/bun/<version>` (default `~/.local/share/mise`), so
 agent shells need no `PATH` prefix. When the pinned install is missing, a `bun`
-on `PATH` is used only if its version matches the pin. Output goes to a private
+on `PATH` is used only if its version matches the pin, and a `bun` inside the
+checkout, such as one in `node_modules/.bin`, is never run. Output goes to a private
 log, as with `run`, and stdout is one JSON receipt with the resolved Bun, the
 per-package changes, and each Bun invocation.
 
@@ -53,6 +54,11 @@ per-package changes, and each Bun invocation.
   `--peer` for one section, and `--exact` to pin exactly.
 - `bun install` runs `bun install --frozen-lockfile` and requires an existing
   `bun.lock`, because a first install resolves whatever `package.json` names.
+
+Every command requires an existing lockfile. Before `update`, `remove`, or `add`
+changes anything, it runs `bun install --frozen-lockfile --lockfile-only` and
+stops if `package.json` declares something the lockfile does not cover, so a
+hand-added package cannot be resolved as a side effect of an allowed change.
 
 After Bun exits, the command compares `package.json` with its earlier state. If
 Bun changed anything the verb does not allow (another dependency, another

@@ -17,6 +17,7 @@ const fs = require("node:fs");
 if (process.env.STUB_CORRUPT) { fs.writeFileSync("package.json", "{ not json"); process.exit(0); }
 const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
 if (command === "install") {
+  if (process.env.STUB_OUT_OF_SYNC) process.exit(1);
   if (process.env.STUB_EXTRA) { (manifest.dependencies ??= {})[process.env.STUB_EXTRA] = "1.0.0"; fs.writeFileSync("package.json", JSON.stringify(manifest, null, 2)); }
   process.exit(0);
 }
@@ -65,10 +66,10 @@ test("an explicit update version is written as given, without forcing an exact p
   const f = fixture({ dependencies: { ms: "1.0.0" } });
   const result = f.run(["update", "ms@^2.0.0"]);
   expect(result.status).toBe(0);
-  expect(result.receipt.runs[0].command).toEqual(["bun", "add", "ms@^2.0.0"]);
+  expect(result.receipt.runs[1].command).toEqual(["bun", "add", "ms@^2.0.0"]);
   expect(f.read().dependencies).toEqual({ ms: "^2.0.0" });
   // An explicit exact version stays exact even where the current spec is a range.
-  expect(f.run(["update", "ms@3.0.0"]).receipt.runs[0].command).toEqual(["bun", "add", "--exact", "ms@3.0.0"]);
+  expect(f.run(["update", "ms@3.0.0"]).receipt.runs[1].command).toEqual(["bun", "add", "--exact", "ms@3.0.0"]);
 });
 
 test("dependency commands accept only the root package or a declared workspace", () => {
@@ -92,7 +93,7 @@ test("update changes only versions, keeping each dependency's section and exact 
   const result = f.run(["update", "ms", "@scope/tool"]);
   expect(result.status).toBe(0);
   expect(result.receipt.bun).toMatchObject({ source: "mise", version: "9.9.9", pinned: "9.9.9" });
-  expect(result.receipt.runs.map((item: { command: string[] }) => item.command)).toEqual([["bun", "add", "--exact", "ms@latest"], ["bun", "add", "--dev", "@scope/tool@latest"]]);
+  expect(result.receipt.runs.map((item: { command: string[] }) => item.command)).toEqual([["bun", "install", "--frozen-lockfile", "--lockfile-only"], ["bun", "add", "--exact", "ms@latest"], ["bun", "add", "--dev", "@scope/tool@latest"]]);
   expect(f.read()).toMatchObject({ dependencies: { ms: "2.0.0" }, devDependencies: { "@scope/tool": "^2.0.0" } });
   expect(result.receipt.changes).toEqual([{ name: "ms", section: "dependencies", from: "1.0.0", to: "2.0.0" }, { name: "@scope/tool", section: "devDependencies", from: "^1.0.0", to: "^2.0.0" }]);
 });
@@ -152,6 +153,29 @@ test("unexpected or failed Bun changes are restored, including the lockfile", ()
   expect(readFileSync(path.join(f.project, "package.json"), "utf8")).toBe(original);
 });
 
+test("a manifest the lockfile does not cover stops every change before Bun resolves it", () => {
+  const f = fixture({ dependencies: { ms: "1.0.0", "hand-added": "1.0.0" } });
+  for (const args of [["update", "ms"], ["remove", "ms"], ["add", "chalk@5.0.0"]]) {
+    const result = f.run(args, { STUB_OUT_OF_SYNC: "1" });
+    expect(result.status).toBe(1);
+    expect(result.receipt.violations).toEqual(["package.json and the lockfile disagree; resolve that difference with approval before changing dependencies."]);
+    expect(result.receipt.runs).toHaveLength(1);
+  }
+  rmSync(path.join(f.project, "bun.lock"));
+  expect(f.run(["update", "ms"]).stderr).toMatch(/No bun.lock/);
+});
+
+test("a bun inside the checkout is never executed", () => {
+  const f = fixture({ dependencies: { ms: "1.0.0" } }, { pin: "0.0.1", install: false });
+  const bin = path.join(f.project, "node_modules/.bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(path.join(bin, "bun"), `#!/bin/sh\ntouch "${path.join(f.project, "executed")}"\necho 0.0.1\n`);
+  chmodSync(path.join(bin, "bun"), 0o755);
+  const result = f.run(["install"], { PATH: `${bin}${path.delimiter}${process.env.PATH}` });
+  expect(result.status).toBe(1);
+  expect(existsSync(path.join(f.project, "executed"))).toBe(false);
+});
+
 test("install is frozen and requires an existing lockfile", () => {
   const f = fixture({ dependencies: { ms: "1.0.0" } });
   const result = f.run(["install"]);
@@ -169,8 +193,8 @@ test("a missing pinned Bun fails instead of using a different PATH version", () 
 });
 
 test("specs and manifest comparisons", () => {
-  for (const spec of ["1.2.3", "^1.2.3", "~1.2", ">=1.0.0", "latest", "next", "1.x", "*"]) expect(registrySpec(spec)).toBe(true);
-  for (const spec of ["workspace:*", "npm:other@1", "github:a/b", "a/b", "file:../x", "./x", "https://x/y.tgz", "-x", "1 2"]) expect(registrySpec(spec)).toBe(false);
+  for (const spec of ["1.2.3", "^1.2.3", "~1.2", ">=1.0.0", "latest", "next", "1.x", "*", ">=1 <2", "^1 || ^2", "1.0.0 - 2.0.0"]) expect(registrySpec(spec)).toBe(true);
+  for (const spec of ["workspace:*", "catalog:", "npm:other@1", "github:a/b", "a/b", "file:../x", "./x", "../x", "https://x/y.tgz", "-x", " 1", "x@1"]) expect(registrySpec(spec)).toBe(false);
   expect(parseRequested("@scope/name@1.0.0")).toEqual({ name: "@scope/name", spec: "1.0.0" });
   expect(parseRequested("name")).toEqual({ name: "name", spec: undefined });
   expect(() => parseRequested("--flag")).toThrow();
