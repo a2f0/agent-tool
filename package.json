@@ -26,6 +26,8 @@
   },
   "scripts": {
     "start": "bun src/index.ts",
+    "agent:run": "bun src/index.ts run",
+    "agent:logs": "bun src/index.ts logs",
     "test": "bun test src scripts",
     "typecheck": "tsc --noEmit",
     "generate": "bun scripts/build/bundle-skills.ts",
