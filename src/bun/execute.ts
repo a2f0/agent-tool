@@ -8,7 +8,7 @@ import { CLASSES } from "../permissions/catalog";
 import { checkPermissions } from "../permissions/install";
 import { projectCommands } from "../permissions/project";
 import { pinnedBun } from "./toolchain";
-import { workspacePackage } from "./workspace";
+import { workspacePackage } from "../system/workspace";
 
 const USAGE = `Usage:
   agent-tool bun test [--cwd <dir>] [--log] [-- args...]

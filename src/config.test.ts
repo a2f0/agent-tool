@@ -37,6 +37,26 @@ describe("portable project policy", () => {
       { schemaVersion: 1, versions: { commitMessage: "chore: one\nchore: two" } },
     ]) expect(() => parseConfig(JSON.stringify(input))).toThrow();
   });
+  test("parses the graph section and rejects malformed globs and layers", () => {
+    expect(DEFAULT_CONFIG.graph).toEqual({ include: [], exclude: [], tests: [], layers: [] });
+    const graph = { include: ["src/**"], exclude: ["**/vendor/**"], tests: ["**/*.test.ts"], layers: [{ name: "low", include: ["src/{git,system}/**"] }] };
+    expect(parseConfig(JSON.stringify({ schemaVersion: 1, graph })).graph).toEqual(graph);
+    expect(parseConfig('{"schemaVersion":1,"graph":{"include":["src/**"]}}').graph).toEqual({ include: ["src/**"], exclude: [], tests: [], layers: [] });
+    for (const [value, message] of [
+      [[], "Invalid config setting 'graph'."],
+      [{ inclde: ["src/**"] }, "Unknown graph setting 'inclde'."],
+      [{ include: "src/**" }, "Invalid config setting 'graph.include'."],
+      [{ include: ["../src/**"] }, "Invalid config setting 'graph.include'."],
+      [{ include: ["/src/**"] }, "Invalid config setting 'graph.include'."],
+      [{ exclude: ["!src/**"] }, "Invalid config setting 'graph.exclude'."],
+      [{ tests: ["src\\a.ts"] }, "Invalid config setting 'graph.tests'."],
+      [{ layers: {} }, "Invalid config setting 'graph.layers'."],
+      [{ layers: [{ name: "low", include: [] }] }, "Invalid config setting 'graph.layers[0].include'."],
+      [{ layers: [{ name: "has space", include: ["src/**"] }] }, "Invalid config setting 'graph.layers[0].name'."],
+      [{ layers: [{ name: "low", include: ["src/**"], exclude: [] }] }, "Unknown graph.layers[0] setting 'exclude'."],
+      [{ layers: [{ name: "low", include: ["a/**"] }, { name: "low", include: ["b/**"] }] }, "graph.layers names must be unique."],
+    ] as const) expect(() => parseConfig(JSON.stringify({ schemaVersion: 1, graph: value }))).toThrow(message);
+  });
   test("accepts version preparation and base freshness policy", () => {
     const config = parseConfig(JSON.stringify({
       schemaVersion: 1,

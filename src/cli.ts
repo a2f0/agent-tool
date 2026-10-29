@@ -5,6 +5,7 @@ import { DEFAULT_CONFIG, loadConfig } from "./config";
 import { doctor } from "./doctor";
 import { checkTerraformPlan } from "./dependencies/terraformPlan";
 import { dependencyDiff } from "./dependencies/diff";
+import { checkGraph } from "./graph/check";
 import { review } from "./harnesses";
 import { runAgentToolAction } from "./runAgentToolAction";
 import { BUNDLED_SKILLS } from "./skills/bundled";
@@ -72,6 +73,7 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   permissions check [--harness <all|claude|codex>]
   images list [target...]               JSON files each image target writes
   images build [target...] [--out <dir>]  Render assets/brand/*.svg per agent-tool.json
+  graph check                           Import cycles and layer violations per agent-tool.json
   init                                  Create agent-tool.json without overwriting
   config show
   doctor                                JSON versions and supported review flags
@@ -148,6 +150,11 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
     return import("./images/build").then(async ({ buildImages, listImages }) => {
       output(action === "list" ? listImages(images, names) : await buildImages(process.cwd(), images, names, out)); return 0;
     });
+  }
+  if (command === "graph") {
+    usage(args.length === 1 && args[0] === "check", "Usage: agent-tool graph check");
+    const report = checkGraph(process.cwd(), loadConfig().graph);
+    output(report); return report.ok ? 0 : 1;
   }
   if (command === "skills") {
     const action = args.shift();

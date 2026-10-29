@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { outsideExecutable } from "../review/executable";
+import { outsideExecutable } from "../system/executable";
 import { assert } from "../workflows/core";
 
 export interface BunExecutable { path: string; version: string; source: "mise" | "path"; pinned: string | null }

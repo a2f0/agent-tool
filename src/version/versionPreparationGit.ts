@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { gitEnvironment } from "../git/environment";
-import { outsideExecutable } from "../review/executable";
+import { outsideExecutable } from "../system/executable";
 
 /** Helper Git operations run without hooks or replace objects. */
 export function git(rootDir: string, args: readonly string[]): string {
