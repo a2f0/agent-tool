@@ -91,6 +91,8 @@ function gitRoot(): string {
 
 export function main(argv = process.argv.slice(2)): number | Promise<number> {
   const args = [...argv];
+  // File arguments are relative to where agent-tool was invoked, before --repo or the root change.
+  const invoked = process.cwd();
   while (args[0] === "--repo" || args[0] === "--config") {
     const flag = args.shift()!;
     const value = args.shift();
@@ -211,8 +213,9 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
     const action = args.shift();
     if (action === "open") {
       const index = args.indexOf("--body-file");
-      const bodyFile = index === -1 ? undefined : args.splice(index, 2)[1];
-      usage((index === -1 || !!bodyFile) && args.length <= 1 && !args.includes("--body-file"), "Usage: agent-tool pr open [title] [--body-file <file>]");
+      const given = index === -1 ? undefined : args.splice(index, 2)[1];
+      const bodyFile = given === undefined ? undefined : path.resolve(invoked, given);
+      usage((index === -1 || !!given) && args.length <= 1 && !args.includes("--body-file"), "Usage: agent-tool pr open [title] [--body-file <file>]");
       return openPr(root, args[0], bodyFile);
     }
     usage(action === "merge" && args.length === 3, "Usage: agent-tool pr merge <subject-or-empty> <reviewed-head-oid> <base-branch>");

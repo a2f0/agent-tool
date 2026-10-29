@@ -49,7 +49,7 @@ export function failedJobLogs(pr: { prNumber: string; repo: string }, expected: 
   assert(view.headRefOid === expected, "PR HEAD differs from the requested head; pass --head with the PR's commit.");
   const checks = json<(Check & { link: string })[]>(["pr", "checks", pr.prNumber, "-R", pr.repo, "--json", "name,state,workflow,link"]);
   assert(Array.isArray(checks), "Could not read checks.");
-  return checks.filter(check => !NOT_FAILED.includes(check.state)).map(check => {
+  const failed = checks.filter(check => !NOT_FAILED.includes(check.state)).map(check => {
     const job = check.link?.match(/\/actions\/runs\/(\d+)\/job\/(\d+)/);
     if (!job) return { ...check, log: null, note: "Not a GitHub Actions job; follow its link." };
     const { log, fd } = createLog("agent-tool-ci-");
@@ -59,6 +59,9 @@ export function failedJobLogs(pr: { prNumber: string; repo: string }, expected: 
     const tail = logTail(log, limits);
     return { ...check, runId: Number(job[1]), jobId: Number(job[2]), ok: status === 0, log, tail: tail.text, truncated: tail.truncated };
   });
+  // A push while reading would label another commit's logs with the requested head.
+  assert(json<{ headRefOid: string }>(["pr", "view", pr.prNumber, "-R", pr.repo, "--json", "headRefOid"]).headRefOid === expected, "PR HEAD changed while reading logs; read them again for the new head.");
+  return failed;
 }
 
 export function preflight(expectedHead: string, baseBranch: string, baseOid: string): unknown {

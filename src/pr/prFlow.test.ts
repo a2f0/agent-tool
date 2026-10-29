@@ -97,9 +97,9 @@ if (args[0] === "repo" && args[1] === "view") {
 
 afterEach(() => rmSync(temporary, { recursive: true, force: true }));
 
-function invoke(scenario: string, args: string[], body = "", config?: string) {
+function invoke(scenario: string, args: string[], body = "", config?: string, cwd = fixture) {
   return spawnSync(process.execPath, [entry, ...args], {
-    cwd: fixture,
+    cwd,
     env: {
       ...process.env,
       PATH: `${path.join(temporary, "tools")}${path.delimiter}${process.env.PATH}`,
@@ -175,6 +175,12 @@ describe("PR CLI flows ported from a2f0.net", () => {
     expect(result.status).toBe(0);
     expect(JSON.parse(readFileSync(path.join(fixture, "created.json"), "utf8")).body).toBe("From a file.\n");
     expect(invoke("missing", ["pr", "open", "feat: example", "--body-file"]).status).toBe(1);
+    // A relative path is read from the invoking directory, not the repository root.
+    rmSync(path.join(fixture, "created.json"));
+    mkdirSync(path.join(fixture, "sub"), { recursive: true });
+    writeFileSync(path.join(fixture, "sub", "body.md"), "From a subdirectory.\n");
+    expect(invoke("missing", ["pr", "open", "feat: example", "--body-file", "body.md"], "", undefined, path.join(fixture, "sub")).status).toBe(0);
+    expect(JSON.parse(readFileSync(path.join(fixture, "created.json"), "utf8")).body).toBe("From a subdirectory.\n");
   });
 
   test("default PR titles ignore signature display on signed commits", () => {

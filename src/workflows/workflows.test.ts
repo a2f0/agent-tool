@@ -386,6 +386,14 @@ test("dependency diff reports declared changes in every manifest and names new t
   writeFileSync(path.join(f.root, "package.json"), JSON.stringify({ dependencies: { ms: "npm:@evil/ms@2.0.0", "left-pad": "1.3.0" } }));
   f.git(["commit", "-am", "chore: alias ms"]);
   expect(JSON.parse(f.run(["dependencies", "diff", "--base", base]).stdout).newPackages).toEqual(["@evil/ms", "api", "left-pad"]);
+  writeFileSync(path.join(f.root, "package.json"), JSON.stringify({ catalog: { tool: "npm:old@1.0.0" }, dependencies: { tool: "catalog:" } }));
+  f.git(["commit", "-am", "chore: catalog tool"]);
+  const cataloged = f.git(["rev-parse", "HEAD"]);
+  writeFileSync(path.join(f.root, "package.json"), JSON.stringify({ catalog: { tool: "npm:new@1.0.0" }, dependencies: { tool: "catalog:" } }));
+  f.git(["commit", "-am", "chore: repoint the catalog"]);
+  const repointed = JSON.parse(f.run(["dependencies", "diff", "--base", cataloged]).stdout);
+  expect(repointed.changed).toEqual([{ manifest: "package.json", section: "dependencies", name: "tool", from: "npm:old@1.0.0", to: "npm:new@1.0.0" }]);
+  expect(repointed.newPackages).toEqual(["new"]);
   expect(diff.added).toEqual([{ manifest: "package.json", section: "dependencies", name: "left-pad", spec: "1.3.0" }, { manifest: "packages/web/package.json", section: "devDependencies", name: "api", spec: "workspace:*" }, { manifest: "packages/web/package.json", section: "devDependencies", name: "chalk", spec: "5.0.0" }]);
   expect(diff.removed).toEqual([{ manifest: "package.json", section: "dependencies", name: "chalk", spec: "5.0.0" }]);
   expect(diff.changed).toEqual([{ manifest: "package.json", section: "dependencies", name: "ms", from: "1.0.0", to: "2.0.0" }]);

@@ -4,18 +4,33 @@ const SECTIONS = ["dependencies", "devDependencies", "optionalDependencies", "pe
 type Entries = Map<string, string>;
 export interface DependencyEntry { manifest: string; section: string; name: string }
 
+const object = (value: unknown): Record<string, unknown> | undefined => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+
 function manifests(commit: string): Map<string, Entries> {
   const files = git(["ls-tree", "-r", "--full-tree", "--name-only", "-z", commit]).split("\0").filter(file => /(?:^|\/)package\.json$/.test(file) && !file.split("/").includes("node_modules"));
+  const read = (file: string): Record<string, unknown> => {
+    try { return JSON.parse(git(["show", `${commit}:${file}`])) as Record<string, unknown>; }
+    catch { throw new Error(`${file} at ${commit.slice(0, 12)} is not valid JSON.`); }
+  };
+  // `catalog:` and `catalog:<name>` resolve through the root manifest's catalogs, so a catalog change is a change.
+  const root = files.includes("package.json") ? read("package.json") : {};
+  const workspaces = object(root.workspaces);
+  const catalog = object(root.catalog) ?? object(workspaces?.catalog) ?? {};
+  const catalogs = object(root.catalogs) ?? object(workspaces?.catalogs) ?? {};
+  const resolve = (name: string, spec: string): string => {
+    if (!spec.startsWith("catalog:")) return spec;
+    const named = spec.slice("catalog:".length);
+    const value = named && named !== "default" ? object(catalogs[named])?.[name] : catalog[name];
+    return typeof value === "string" ? value : spec;
+  };
   const result = new Map<string, Entries>();
   for (const file of files) {
-    let value: Record<string, unknown>;
-    try { value = JSON.parse(git(["show", `${commit}:${file}`])) as Record<string, unknown>; }
-    catch { throw new Error(`${file} at ${commit.slice(0, 12)} is not valid JSON.`); }
+    const value = read(file);
     const entries: Entries = new Map();
     for (const section of SECTIONS) {
-      const declared = value[section];
-      if (!declared || typeof declared !== "object" || Array.isArray(declared)) continue;
-      for (const [name, spec] of Object.entries(declared)) entries.set(`${section}\0${name}`, String(spec));
+      const declared = object(value[section]);
+      if (!declared) continue;
+      for (const [name, spec] of Object.entries(declared)) entries.set(`${section}\0${name}`, resolve(name, String(spec)));
     }
     result.set(file, entries);
   }
