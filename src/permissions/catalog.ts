@@ -40,7 +40,7 @@ export const CATALOG: CatalogEntry[] = [
 // `bun x` runs only executables that `permissions.executables` classifies; project.ts adds those.
 // Package scripts are not classified, so `bun run` keeps the harness default.
 
-/** Direct spellings of classified actions. Asking here keeps a raw command from bypassing its agent-tool form. */
+/** Direct spellings of classified actions. Codex prompts for them, so a raw command cannot bypass its agent-tool form. */
 export const GUARDS: { command: string; class: PermissionClass }[] = [
   ...["bun add", "bun a", "npm install", "npm i", "npm add", "pnpm add", "yarn add", "bunx", "bun x", "npx"].map(command => ({ command, class: "intake" as const })),
   ...["gh pr merge", "npm publish", "bun publish"].map(command => ({ command, class: "release" as const })),
@@ -56,18 +56,25 @@ export function strictest(entry: CatalogEntry): PermissionClass {
 
 export interface ClaudePermissions { allow: string[]; ask: string[] }
 
-/** Claude Code matches `*` across spaces and splits compound commands before matching. */
+/**
+ * Claude Code matches `*` across spaces and splits compound commands before matching.
+ * Only allow rules are generated: Claude Code prompts for an explicit ask rule in every
+ * mode, bypassPermissions included, so a committed ask rule would override each user's
+ * chosen mode. Classes that ask stay unlisted, so Manual mode prompts for them and auto
+ * mode leaves them to the classifier. `ask` stays empty so that reinstalling removes the
+ * ask rules earlier versions recorded.
+ */
 export function claudePermissions(project: CatalogEntry[] = []): ClaudePermissions {
-  const rules: ClaudePermissions = { allow: [], ask: [] };
+  const allow: string[] = [];
   for (const invocation of INVOCATIONS) {
     for (const entry of [...CATALOG, ...project]) {
+      // An allow rule also matches the `--apply` form, so a command whose `--apply` form asks gets none.
+      if (CLASSES[strictest(entry)].decision !== "allow") continue;
       const base = `${invocation} ${entry.command}`;
-      rules[CLASSES[entry.class].decision].push(entry.command.startsWith("--") ? `Bash(${base})` : `Bash(${base} *)`);
-      if (entry.applyClass && CLASSES[entry.applyClass].decision !== CLASSES[entry.class].decision) rules[CLASSES[entry.applyClass].decision].push(`Bash(${base} *--apply*)`);
+      allow.push(entry.command.startsWith("--") ? `Bash(${base})` : `Bash(${base} *)`);
     }
   }
-  for (const guard of GUARDS) rules[CLASSES[guard.class].decision].push(`Bash(${guard.command} *)`);
-  return rules;
+  return { allow, ask: [] };
 }
 
 const quote = (value: string) => JSON.stringify(value);

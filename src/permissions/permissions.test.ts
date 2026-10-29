@@ -13,14 +13,25 @@ const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 function project() { const root = mkdtempSync(path.join(tmpdir(), "permissions-")); directories.push(root); return root; }
 
+/** Claude Code's Bash rule match: `*` spans any text, including spaces. */
+function allowed(rules: string[], command: string): boolean {
+  return rules.some(rule => new RegExp(`^${rule.slice(5, -1).replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`).test(command));
+}
+
 test("dependency verbs split by class: add asks, update and remove run", () => {
   const rules = claudePermissions();
-  expect(rules.ask).toContain("Bash(bun run agent-tool bun add *)");
   expect(rules.allow).toEqual(expect.arrayContaining(["Bash(bun run agent-tool bun update *)", "Bash(bun run agent-tool bun remove *)", "Bash(bun run agent-tool bun install *)"]));
-  expect(rules.ask).toEqual(expect.arrayContaining(["Bash(bun add *)", "Bash(bun a *)", "Bash(gh pr merge *)", "Bash(bun run agent-tool pr merge *)", "Bash(bun run agent-tool repo cleanup *--apply*)", "Bash(bun run agent-tool permissions install *--apply*)"]));
-  expect(rules.allow).toContain("Bash(bun run agent-tool repo cleanup *)");
-  expect(rules.ask).toEqual(expect.arrayContaining(["Bash(bun run agent-tool squashMerge *)", "Bash(agent-tool squashMerge *)"]));
-  expect([...rules.allow, ...rules.ask].some(rule => /agent-tool run(?:-group)? /.test(rule))).toBe(false);
+  // Claude Code prompts for explicit ask rules even in bypassPermissions mode, so none are written.
+  expect(rules.ask).toEqual([]);
+  for (const invocation of ["bun run agent-tool", "node_modules/.bin/agent-tool", "agent-tool"]) {
+    for (const command of ["bun add left-pad@1.3.0", "pr merge 'feat: x' abc main", "squashMerge 'feat: x' abc main", "repo cleanup 12 abc --apply", "repo cleanup --apply 12 abc", "permissions install --apply", "run --label x -- rm -rf tmp"]) {
+      expect({ command: `${invocation} ${command}`, allowed: allowed(rules.allow, `${invocation} ${command}`) }).toEqual({ command: `${invocation} ${command}`, allowed: false });
+    }
+    expect(allowed(rules.allow, `${invocation} bun update left-pad`)).toBe(true);
+    expect(allowed(rules.allow, `${invocation} skills install --apply`)).toBe(true);
+  }
+  for (const command of ["bun add left-pad", "bunx cowsay", "npx cowsay", "gh pr merge 1", "npm publish"]) expect(allowed(rules.allow, command)).toBe(false);
+  expect(rules.allow.some(rule => /agent-tool run(?:-group)? /.test(rule))).toBe(false);
   const codex = codexRules();
   expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", ["install", "update", "remove", "test"]], decision="allow"');
   expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", "add"], decision="prompt"');
@@ -64,6 +75,23 @@ test("install keeps unrelated Claude settings and replaces only managed rules", 
   expect(updated.permissions.allow).toContain("Bash(make test)");
 });
 
+test("reinstalling removes the ask rules earlier versions wrote and keeps user ones", () => {
+  const root = project();
+  const earlier = ["Bash(bun run agent-tool pr merge *)", "Bash(bunx *)"];
+  mkdirSync(path.join(root, ".claude"));
+  writeFileSync(path.join(root, ".claude/settings.json"), JSON.stringify({ permissions: { allow: [], ask: [...earlier] } }));
+  writeFileSync(path.join(root, ".agent-tool-permissions.json"), JSON.stringify({ schemaVersion: 1, claude: { allow: [], ask: earlier } }));
+  expect(checkPermissions(root, "claude")[0]!.status).toBe("outdated");
+  installPermissions(root, "claude", true);
+  expect(JSON.parse(readFileSync(path.join(root, ".claude/settings.json"), "utf8")).permissions.ask).toBeUndefined();
+  expect(checkPermissions(root, "claude")[0]!.status).toBe("unchanged");
+  const settings = JSON.parse(readFileSync(path.join(root, ".claude/settings.json"), "utf8"));
+  settings.permissions.ask = ["Bash(git push *)"];
+  writeFileSync(path.join(root, ".claude/settings.json"), JSON.stringify(settings));
+  installPermissions(root, "claude", true);
+  expect(JSON.parse(readFileSync(path.join(root, ".claude/settings.json"), "utf8")).permissions.ask).toEqual(["Bash(git push *)"]);
+});
+
 test("install keeps a private settings file private", () => {
   const root = project();
   mkdirSync(path.join(root, ".claude"));
@@ -99,8 +127,12 @@ test("executables run through bun x only when classified, and bunx or npx ask", 
   expect(projectCommands(root)).toEqual([{ command: "bun x biome", class: "local" }, { command: "bun x tsx", class: "exec" }, { command: "bun x wrangler", class: "release" }]);
   const rules = claudePermissions(projectCommands(root));
   expect(rules.allow).toContain("Bash(bun run agent-tool bun x biome *)");
-  expect(rules.ask).toEqual(expect.arrayContaining(["Bash(bun run agent-tool bun x wrangler *)", "Bash(bun run agent-tool bun x tsx *)", "Bash(bunx *)", "Bash(bun x *)", "Bash(npx *)"]));
-  expect([...rules.allow, ...rules.ask].some(rule => / bun run [^*]/.test(rule.replace("Bash(bun run agent-tool", "Bash(")))).toBe(false);
+  for (const command of ["bun run agent-tool bun x wrangler deploy", "bun run agent-tool bun x tsx script.ts", "bun run agent-tool bun x eslint .", "bunx biome", "bun x biome", "npx biome"]) expect(allowed(rules.allow, command)).toBe(false);
+  const codex = codexRules(projectCommands(root));
+  expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", "x", "tsx"], decision="prompt"');
+  expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", "x", "wrangler"], decision="prompt"');
+  expect(codex).toContain('prefix_rule(pattern=[["bunx", "npx"]], decision="prompt"');
+  expect(rules.allow.some(rule => / bun run [^*]/.test(rule.replace("Bash(bun run agent-tool", "Bash(")))).toBe(false);
   for (const permissions of [{ executables: { biome: "safe" } }, { executables: { "@scope/tool": "local" } }, { scripts: { check: "local" } }]) {
     expect(() => parseConfig(JSON.stringify({ schemaVersion: 1, permissions }))).toThrow();
   }

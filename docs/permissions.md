@@ -2,9 +2,9 @@
 
 Agents can run without blanket approval (`bypassPermissions` in Claude Code,
 `--yolo` in Codex) when routine commands are allowed and the few consequential
-ones still ask. agent-tool assigns each of its commands a permission class and
-generates harness rules from that table, so the decision is made once, next to
-the code, rather than in every harness configuration.
+ones still need the user. agent-tool assigns each of its commands a permission
+class and generates harness rules from that table, so the decision is made once,
+next to the code, rather than in every harness configuration.
 
 ## What the rules protect
 
@@ -36,8 +36,8 @@ stay unclassified and keep the harness's default decision; do not add a broad
 `agent-tool *` allow rule, which would include them. `src/permissions/catalog.ts` holds the
 table; a test checks that every entry names a command the CLI accepts.
 
-The direct package-manager and `gh` spellings are listed so that a raw command
-cannot bypass its agent-tool form. They catch the common spellings, not every
+Codex rules also list the direct package-manager and `gh` spellings, so that a
+raw command cannot bypass its agent-tool form. They catch the common spellings, not every
 alias: `bun install <name>` also adds a package, and asking for it would also
 ask for every frozen install. Treat them as a guard rail, not a sandbox.
 
@@ -153,11 +153,17 @@ agent-tool permissions check              # CI
 `install` writes two files and records what it owns in
 `.agent-tool-permissions.json`:
 
-- `.claude/settings.json` gains `permissions.allow` and `permissions.ask` entries
-  for each class, for the `bun run agent-tool`, `node_modules/.bin/agent-tool`,
-  and `agent-tool` spellings. Other settings and rules in the file are kept;
-  reinstalling replaces only entries a previous install recorded. A command with
-  an `--apply` form is allowed as a preview and asks with `--apply`.
+- `.claude/settings.json` gains `permissions.allow` entries for the classes that
+  allow, for the `bun run agent-tool`, `node_modules/.bin/agent-tool`, and
+  `agent-tool` spellings. Commands in classes that ask get no rule, because
+  Claude Code prompts for an explicit `ask` rule in every mode, including
+  `bypassPermissions`, so a committed one would override each user's chosen
+  mode. In Manual mode an unlisted command prompts; for auto mode, see
+  [Auto mode](#auto-mode). A command whose `--apply` form asks, such as
+  `repo cleanup`, gets no rule either, since an allow rule would also match
+  `--apply`. Other settings and rules in the file are kept; reinstalling
+  replaces only entries a previous install recorded, including the `ask`
+  entries that versions before 0.1.28 wrote.
 - `.codex/rules/agent-tool.rules` holds prefix rules. Codex applies the most
   restrictive matching rule, so its `prompt` rules also override a broader user
   rule such as `prefix_rule(pattern=["gh"], decision="allow")`. Prefix rules
@@ -167,16 +173,40 @@ agent-tool permissions check              # CI
 The rules take effect only outside bypass modes. Each harness also has limits
 that the rules cannot change:
 
-- Claude Code applies project `allow` rules only after the workspace is trusted;
-  `ask` rules apply immediately. `ask` rules match past leading variable
-  assignments and inside subshells, but an `allow` rule does not match a command
-  that starts with an assignment such as `PATH=...`, so invoke agent-tool
-  without one. Set `defaultMode` in user settings (project settings ignore
-  `auto` and `bypassPermissions`); in `auto` mode, rules are checked before the
-  classifier.
+- Claude Code applies project `allow` rules only after the workspace is trusted.
+  An `allow` rule does not match a command that starts with an assignment such
+  as `PATH=...`, so invoke agent-tool without one. Set `defaultMode` in user
+  settings (project settings ignore `auto` and `bypassPermissions`); in `auto`
+  mode, rules are checked before the classifier.
 - Codex loads `<repo>/.codex/rules/` only when the project's `.codex/` layer is
   trusted. `allow` runs a command outside the sandbox without a prompt, which
   agent-tool's network commands need. A shell script is split into separate
   commands only when it is a plain chain joined by `&&`, `||`, `;`, or `|`;
   redirection (including `2>&1`), substitution, variables, and control flow make
   the whole script one opaque command that prompts.
+
+### Auto mode
+
+Claude Code's auto mode sends commands no rule allows to a classifier, which
+blocks actions on its `soft_deny` list unless the user asked for that specific
+action in the conversation. That is the checkpoint the classes that ask
+describe, without a prompt for a merge the user already requested. The
+classifier reads `autoMode` only from user or managed settings, never from a
+repository, so add the classes to `~/.claude/settings.json` yourself:
+
+```json
+{
+  "autoMode": {
+    "soft_deny": [
+      "$defaults",
+      "Release: merging a pull request, publishing a package, or deleting remote state, including `agent-tool pr merge`, `agent-tool repo cleanup --apply`, `gh pr merge`, `npm publish`, and `bun publish`",
+      "Dependency intake: adding a third-party package with `agent-tool bun add`, `bun add`, `npm install <name>`, `pnpm add`, or `yarn add`, or running `bunx`, `bun x`, or `npx`, which can download one",
+      "Permission changes: `agent-tool permissions install --apply`, or edits to `.claude/settings.json`, `.codex/rules/`, or `permissions` in `agent-tool.json`",
+      "Arbitrary execution: `agent-tool bun x` with an executable that runs whatever file or command it is given, such as `tsx`"
+    ]
+  }
+}
+```
+
+Keep `"$defaults"` so the built-in rules stay in effect, and check the result
+with `claude auto-mode config`.

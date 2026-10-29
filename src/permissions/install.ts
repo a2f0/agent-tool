@@ -69,7 +69,9 @@ function mergedSettings(settings: Settings, previous: ClaudePermissions | undefi
   for (const key of ["allow", "ask"] as const) {
     const owned = new Set(previous?.[key] ?? []);
     const kept = ((permissions[key] as string[] | undefined) ?? []).filter(item => !owned.has(item) && !current[key].includes(item));
-    permissions[key] = [...kept, ...current[key]];
+    const merged = [...kept, ...current[key]];
+    if (merged.length) permissions[key] = merged;
+    else delete permissions[key];
   }
   return { ...settings, permissions };
 }
