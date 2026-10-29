@@ -48,8 +48,9 @@ export function flag(args: string[], name: string): boolean {
   assert(!args.includes(name), `Duplicate ${name}.`);
   return true;
 }
-export function timeoutOptions(args: string[]): { timeoutMs: number; intervalMs: number } {
-  const seconds = Number(option(args, "--timeout") ?? "900");
+/** `--timeout` wins over the caller's default, which is 900 seconds unless a policy supplies one. */
+export function timeoutOptions(args: string[], defaultSeconds = 900): { timeoutMs: number; intervalMs: number } {
+  const seconds = Number(option(args, "--timeout") ?? defaultSeconds);
   const interval = Number(option(args, "--interval") ?? "10");
   assert(Number.isFinite(seconds) && seconds >= 0 && seconds <= 86400 && Number.isFinite(interval) && interval >= 1 && interval <= 60, "Timeout must be 0–86400 seconds and interval 1–60 seconds.");
   return { timeoutMs: seconds * 1000, intervalMs: interval * 1000 };

@@ -204,7 +204,8 @@ feature checkout with policy from a trusted source.
   "subject": { "conventional": true, "maxLength": 50 },
   "merge": {
     "requiredChecks": [{ "name": "CI gate", "workflow": "CI" }],
-    "requireStrictBaseFreshness": true
+    "requireStrictBaseFreshness": true,
+    "checksTimeoutSeconds": 1800
   },
   "review": {
     "claudeModel": null,
@@ -230,7 +231,9 @@ The policy is data only: no commitlint binary or JavaScript config runs.
   72-character limit.
 - **`merge`**: by default a PR must report at least one check, and every check
   must succeed or be skipped. Named required checks must succeed; configure
-  them before shipping.
+  them before shipping. `checksTimeoutSeconds` (an integer from 0 to 86400,
+  default 900) is how long `pr checks --wait` waits when `--timeout` is not
+  given; set it above the slowest required job so the plain command suffices.
 - **`review`**: Claude and Codex use their CLI defaults unless a model is set.
   Set `opencodeModel` to a model your account supports. `opencodeVariants`
   replaces the default effort-to-variant map (`xhigh` to `max`); an effort

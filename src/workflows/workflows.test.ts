@@ -7,6 +7,7 @@ import { DEFAULT_CONFIG, parseConfig } from "../config";
 import { branchErrors } from "./branch";
 import { binaryPaths, evaluateGate, signatureAccepted } from "./checks";
 import { parseGroup } from "../commands/group";
+import { timeoutOptions } from "./core";
 
 const cli = path.resolve(import.meta.dir, "../index.ts");
 const directories: string[] = [];
@@ -153,6 +154,24 @@ test("CI waiter does not pass no-check races, duplicate pending jobs, or head dr
   f.save({ checks: [{ name: "test", workflow: "CI", state: "SUCCESS" }, { name: "test", workflow: "CI", state: "PENDING" }] }); result = f.run(["pr", "checks"]); expect(result.status).toBe(1); expect(JSON.parse(result.stdout).waiting).toBe(true);
   f.save({ apiHead: "a".repeat(40) }); result = f.run(["pr", "checks"]); expect(result.status).toBe(1); expect(result.stderr).toContain("HEAD changed");
   f.save(); expect(f.run(["pr", "checks", "--wait"]).status).toBe(0);
+});
+test("CI wait timeout prefers --timeout, then the caller's default, then 900 seconds", () => {
+  expect(timeoutOptions([])).toEqual({ timeoutMs: 900_000, intervalMs: 10_000 });
+  expect(timeoutOptions([], 1800)).toEqual({ timeoutMs: 1_800_000, intervalMs: 10_000 });
+  expect(timeoutOptions(["--timeout", "5", "--interval", "2"], 1800)).toEqual({ timeoutMs: 5000, intervalMs: 2000 });
+  expect(timeoutOptions(["--timeout", "0"], 1800).timeoutMs).toBe(0);
+  expect(() => timeoutOptions(["--timeout", "86401"], 1800)).toThrow("Timeout must be");
+});
+test("pr checks --wait takes its default timeout from merge.checksTimeoutSeconds", () => {
+  const f = githubFixture(); f.save({ checks: [{ name: "test", workflow: "CI", state: "PENDING" }] });
+  // A zero policy wait makes one observation, so the plain command times out at once instead of after 900 seconds.
+  writeFileSync(path.join(f.root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, merge: { checksTimeoutSeconds: 0 } }));
+  let result = f.run(["pr", "checks", "--wait"]); expect(result.status).toBe(1); expect(result.stderr).toContain("Timed out waiting");
+  // The command-line flag still wins over a long policy wait.
+  writeFileSync(path.join(f.root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, merge: { checksTimeoutSeconds: 86400 } }));
+  result = f.run(["pr", "checks", "--wait", "--timeout", "0"]); expect(result.status).toBe(1); expect(result.stderr).toContain("Timed out waiting");
+  writeFileSync(path.join(f.root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, merge: { checksTimeoutSeconds: 1.5 } }));
+  result = f.run(["pr", "checks", "--wait", "--timeout", "0"]); expect(result.status).toBe(1); expect(result.stderr).toContain("merge.checksTimeoutSeconds");
 });
 test("preflight checks exact base/HEAD and preserves dirty user edits", () => {
   const f = githubFixture(); let result = f.run(["pr", "preflight", f.commit, "main", f.commit]); expect(result.status).toBe(0);
