@@ -22,6 +22,29 @@ requirements. Reference documents hold reusable command contracts and maintenanc
 procedures. Run-specific inventories, review findings, timings, and publish
 receipts belong in the PR; private logs and generated artifacts remain local.
 
+### Module layering
+
+Modules import only from their own layer or a lower one, and never in a cycle,
+including through type-only imports. `src/moduleGraph.test.ts` enforces both and
+names the layer each module belongs to; add a new top-level module there.
+
+1. Primitives: `git/`, `workflows/core.ts` (process, Git, and `gh` helpers and
+   argument parsing), `workflows/config.ts`, `permissions/catalog.ts`, and
+   `images/config.ts`. They import nothing above themselves.
+2. Configuration: `config.ts`, which parses `agent-tool.json` from the primitive
+   schemas.
+3. Domains: `bun/`, `commands/`, `dependencies/`, `images/`, `permissions/`,
+   `pr/`, `release/`, `review/`, `skills/`, `version/`, and `harnesses.ts`.
+   Domains may use each other without cycles.
+4. Workflows: the rest of `workflows/`, which compose domains into repository
+   commands such as `branch`, `pr`, `hooks`, and `repo`.
+5. Entry points: `cli.ts` (command dispatch), `index.ts`, `runAgentToolAction.ts`,
+   and `doctor.ts`.
+6. Repository scripts in `scripts/`, which may import any `src/` module.
+
+Production modules never import `*.test.ts` or `*.testUtils.ts` files, which the
+published package omits.
+
 ## Validation
 
 ```sh
