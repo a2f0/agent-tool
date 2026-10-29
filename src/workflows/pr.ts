@@ -161,7 +161,7 @@ export async function prWorkflowCommand(args: string[]): Promise<number> {
   assert(action === "checks", "Unknown PR workflow command.");
   const wait = flag(args, "--wait");
   const expected = option(args, "--head") ?? head();
-  const options = timeoutOptions(args);
+  const options = timeoutOptions(args, loadConfig().merge.checksTimeoutSeconds);
   assert(!args.length, "Usage: pr checks [--wait] [--head <oid>] [--timeout seconds] [--interval seconds]"); oid(expected);
   const identity = resolvePr();
   const inspect = () => { const value = checkSnapshot(identity, expected); return { done: !value.waiting, value }; };

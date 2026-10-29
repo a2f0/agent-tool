@@ -24,6 +24,12 @@ describe("portable project policy", () => {
       { schemaVersion: 1, versions: { bundles: ["../outside"] } },
       { schemaVersion: 1, versions: { bundles: "packages/sdk" } },
       { schemaVersion: 1, merge: { requireStrictBaseFreshness: "true" } },
+      { schemaVersion: 1, merge: { checksTimeoutSeconds: "1800" } },
+      { schemaVersion: 1, merge: { checksTimeoutSeconds: 1800.5 } },
+      { schemaVersion: 1, merge: { checksTimeoutSeconds: -1 } },
+      { schemaVersion: 1, merge: { checksTimeoutSeconds: 86401 } },
+      { schemaVersion: 1, merge: { checksTimeoutSeconds: null } },
+      { schemaVersion: 1, merge: { checkTimeoutSeconds: 1800 } },
       { schemaVersion: 1, versions: { lockfile: "package-lock.json" } },
       { schemaVersion: 1, versions: { validate: ["bun run lint"] } },
       { schemaVersion: 1, versions: { validate: [[]] } },
@@ -45,6 +51,12 @@ describe("portable project policy", () => {
     expect(parseConfig('{"schemaVersion":1,"versions":{"bundles":["packages/sdk"]}}').versions.bundles).toEqual(["packages/sdk"]);
     for (const dir of ["./packages/a", "packages/."]) expect(() => parseConfig(JSON.stringify({ schemaVersion: 1, versions: { packages: [dir] } }))).toThrow();
     expect(DEFAULT_CONFIG.merge.requireStrictBaseFreshness).toBe(false);
+  });
+  test("accepts a per-repository CI wait and defaults it to 900 seconds", () => {
+    expect(DEFAULT_CONFIG.merge.checksTimeoutSeconds).toBe(900);
+    expect(parseConfig('{"schemaVersion":1}').merge.checksTimeoutSeconds).toBe(900);
+    expect(parseConfig('{"schemaVersion":1,"merge":{"requiredChecks":[{"name":"CI"}]}}').merge.checksTimeoutSeconds).toBe(900);
+    for (const seconds of [0, 1800, 86400]) expect(parseConfig(JSON.stringify({ schemaVersion: 1, merge: { checksTimeoutSeconds: seconds } })).merge.checksTimeoutSeconds).toBe(seconds);
   });
   test("checks arbitrary required workflows without carrying tearleads jobs", () => {
     const policy = { requireChecks: true, requiredChecks: [{ name: "unit", workflow: "verify" }] };

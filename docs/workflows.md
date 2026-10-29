@@ -183,7 +183,9 @@ Checks reuse merge policy and inspect every returned workflow/job/event entry.
 No reported checks, missing required checks, and pending jobs keep waiting;
 failed jobs fail immediately. Duplicate jobs from push/PR workflows must all
 finish. A changed PR HEAD or state fails immediately. Timeout and interval are
-seconds (default 900/10; interval 1–60); `--timeout 0` performs one observation.
+seconds (interval 1–60, default 10); `--timeout 0` performs one observation.
+Without `--timeout`, the wait is `merge.checksTimeoutSeconds` from
+`agent-tool.json`, or 900 seconds when that is unset.
 The read-only preflight additionally checks clean local state, exact local/PR
 HEAD and branch, OPEN/non-draft/MERGEABLE/CLEAN state, no queued/automatic merge,
 unchanged live base, base ancestry, configured strict rulesets, and explicit

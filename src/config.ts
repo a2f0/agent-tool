@@ -12,7 +12,7 @@ export interface RequiredCheck {
 export interface AgentToolConfig extends WorkflowConfig {
   schemaVersion: 1;
   subject: { conventional: boolean; maxLength: number; types: string[]; lowercaseInitial: boolean; rejectTerminalPeriod: boolean; ignoreGenerated: boolean };
-  merge: { requireChecks: boolean; requiredChecks: RequiredCheck[]; requireStrictBaseFreshness: boolean };
+  merge: { requireChecks: boolean; requiredChecks: RequiredCheck[]; requireStrictBaseFreshness: boolean; checksTimeoutSeconds: number };
   review: { claudeModel: string | null; codexModel: string | null; opencodeModel: string; opencodeVariants: Record<string, string>; timeoutMs: number };
   versions: { packages: string[] | null; bundles: string[]; lockfile: "bun.lock" | null; validate: string[][]; commitMessage: string };
   pr: { rejectClaudeBranding: boolean };
@@ -31,7 +31,7 @@ export const DEFAULT_CONFIG: AgentToolConfig = {
     rejectTerminalPeriod: false,
     ignoreGenerated: false,
   },
-  merge: { requireChecks: true, requiredChecks: [], requireStrictBaseFreshness: false },
+  merge: { requireChecks: true, requiredChecks: [], requireStrictBaseFreshness: false, checksTimeoutSeconds: 900 },
   review: { claudeModel: null, codexModel: null, opencodeModel: "deepseek/deepseek-v4-pro", opencodeVariants: { low: "low", medium: "medium", high: "high", xhigh: "max", max: "max" }, timeoutMs: 600_000 },
   versions: { packages: null, bundles: [], lockfile: "bun.lock", validate: [], commitMessage: "chore: bump package versions" },
   pr: { rejectClaudeBranding: false },
@@ -78,6 +78,8 @@ export function parseConfig(source: string): AgentToolConfig {
   if (typeof result.merge.requireChecks !== "boolean") invalid("merge.requireChecks");
   if (!Array.isArray(result.merge.requiredChecks)) invalid("merge.requiredChecks");
   if (typeof result.merge.requireStrictBaseFreshness !== "boolean") invalid("merge.requireStrictBaseFreshness");
+  // Same bounds as `--timeout`, which still overrides it on the command line.
+  if (!Number.isSafeInteger(result.merge.checksTimeoutSeconds) || result.merge.checksTimeoutSeconds < 0 || result.merge.checksTimeoutSeconds > 86400) invalid("merge.checksTimeoutSeconds");
   for (const check of result.merge.requiredChecks) {
     const entry = object(check, "merge.requiredChecks entry");
     keys(entry, ["name", "workflow"], "merge.requiredChecks entry");
