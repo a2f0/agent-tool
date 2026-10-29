@@ -2,7 +2,7 @@
   "label": "verify",
   "steps": [
     { "label": "typecheck", "command": ["bun", "run", "typecheck"] },
-    { "label": "tests", "command": ["bun", "test"] },
+    { "label": "tests", "command": ["bun", "test", "--parallel"] },
     { "label": "package-smoke", "command": ["bun", "scripts/testing/smoke-package.ts"] },
     { "label": "build", "command": ["bun", "run", "build"] },
     { "label": "compiled-smoke", "command": ["bun", "scripts/testing/smoke.ts", "dist/agent-tool"] }
