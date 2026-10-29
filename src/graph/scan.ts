@@ -8,7 +8,8 @@
 /** Whether a `/` after this code starts a regular expression literal rather than a division. */
 function startsRegex(before: string): boolean {
   const code = before.trimEnd();
-  // `<` is left out so JSX closing tags (`</a>`) do not read as expressions.
+  // `<` is left out so JSX closing tags (`</a>`) do not read as expressions; `a++ / b` divides.
+  if (/(?:\+\+|--)$/.test(code)) return false;
   return code === "" || /[(,=:[!&|?{};+\-*%>~^]$/.test(code)
     || /(?<![.$\w])(?:return|typeof|case|in|of|delete|void|throw|new|yield|await|else|do)$/.test(code);
 }
@@ -16,6 +17,8 @@ function startsRegex(before: string): boolean {
 // A string or template right after one of these is a module specifier.
 const SPECIFIER_CONTEXT = /(?:(?<![.$\w])from|(?<![.$\w])import\s*\(?|(?<![.$\w])require\s*\()\s*$/;
 const CALL_CONTEXT = /(?<![.$\w])(?:import|require)\s*\(\s*$/;
+// A `)` closing the condition of one of these is followed by a statement, so a `/` there starts a regex.
+const CONTROL = /(?<![.$\w])(?:if|while|for(?:\s+await)?|with)\s*$/;
 
 /**
  * Blanks comments, template-literal text, regular expression bodies, and every string
@@ -25,7 +28,19 @@ const CALL_CONTEXT = /(?<![.$\w])(?:import|require)\s*\(\s*$/;
 export function stripNonCode(source: string): string {
   const out = source.split("");
   const blank = (from: number, to: number) => { for (let i = from; i < to; i++) if (out[i] !== "\n") out[i] = " "; };
-  const before = (i: number) => out.slice(Math.max(0, i - 40), i).join("");
+  // The code before offset i with whitespace runs (including blanked comments) collapsed, so a
+  // long comment between `from` and its specifier cannot push `from` out of view.
+  const before = (i: number) => {
+    let text = "";
+    for (let j = i - 1; j >= 0 && text.length < 40; j--) {
+      if (/\s/.test(out[j]!)) { if (!text.startsWith(" ")) text = ` ${text}`; } else text = out[j] + text;
+    }
+    return text;
+  };
+  const lastCode = (i: number) => { let j = i - 1; while (j >= 0 && /\s/.test(out[j]!)) j--; return j; };
+  // Open parentheses, each true when it opened a control-flow condition, and the offsets of `)`s that closed one.
+  const parens: boolean[] = [];
+  const controlClose = new Set<number>();
   // Each entry is the brace depth of an open interpolation; template text resumes when it closes.
   const interpolations: number[] = [];
   let depth = 0;
@@ -51,7 +66,7 @@ export function stripNonCode(source: string): string {
       const end = source.indexOf("*/", i + 2);
       const stop = end === -1 ? source.length : end + 2;
       blank(i, stop); i = stop;
-    } else if (char === "/" && startsRegex(before(i))) {
+    } else if (char === "/" && (out[lastCode(i)] === ")" ? controlClose.has(lastCode(i)) : startsRegex(before(i)))) {
       // Skip to the closing slash, honoring escapes and character classes, where `/` is literal.
       const start = ++i;
       let inClass = false;
@@ -75,7 +90,9 @@ export function stripNonCode(source: string): string {
       const literal = close === -1 ? "" : source.slice(i + 1, close);
       if (close !== -1 && !literal.includes("${") && !literal.includes("\\") && CALL_CONTEXT.test(before(i))) i = close + 1;
       else { i++; skipTemplateText(); }
-    } else if (char === "{") { depth++; i++; }
+    } else if (char === "(") { parens.push(CONTROL.test(before(i))); i++; }
+    else if (char === ")") { if (parens.pop()) controlClose.add(i); i++; }
+    else if (char === "{") { depth++; i++; }
     else if (char === "}") {
       depth--; i++;
       if (interpolations.at(-1) === depth) { interpolations.pop(); skipTemplateText(); }
@@ -84,7 +101,7 @@ export function stripNonCode(source: string): string {
   return out.join("");
 }
 
-const SPECIFIER = /(?<![.$\w])(?:import|export)(?:\s+type\b)?\s*(?:[\w*{}\s,$]*?\bfrom\s*)?["']([^"'\n]+)["']|(?<![.$\w])(?:import|require)\s*\(\s*["'`]([^"'`\n]+)["'`]\s*[,)]/g;
+const SPECIFIER = /(?<![.$\w])(?:import|export)(?:\s+type\b)?\s*(?:[\w*{}\s,$"']*?\bfrom\s*)?["']([^"'\n]+)["']|(?<![.$\w])(?:import|require)\s*\(\s*["'`]([^"'`\n]+)["'`]\s*[,)]/g;
 
 /** Every module specifier in source order, bare packages included. */
 export function importSpecifiers(source: string): string[] {

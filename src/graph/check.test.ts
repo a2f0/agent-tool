@@ -44,7 +44,7 @@ describe("sourceFiles", () => {
 describe("resolveImport", () => {
   const root = () => fixture({
     "src/a.ts": "", "src/b.tsx": "", "src/c.mts": "", "src/d.cts": "", "src/dir/index.ts": "", "src/view/index.tsx": "",
-    "src/types.d.ts": "", "src/both.ts": "", "src/both/index.ts": "",
+    "src/types.d.ts": "", "src/both.ts": "", "src/both/index.ts": "", "src/index.ts": "",
   });
 
   test("resolves extensionless, emitted-JavaScript, and index specifiers to TypeScript sources", () => {
@@ -62,6 +62,9 @@ describe("resolveImport", () => {
     expect(resolveImport(repo, "src/x.ts", "./view")).toBe("src/view/index.tsx");
     expect(resolveImport(repo, "src/deep/x.ts", "../a")).toBe("src/a.ts");
     expect(resolveImport(repo, "src/x.ts", "./both")).toBe("src/both.ts");
+    expect(resolveImport(repo, "src/x.ts", "./dir/")).toBe("src/dir/index.ts");
+    expect(resolveImport(repo, "src/dir/x.ts", ".")).toBe("src/dir/index.ts");
+    expect(resolveImport(repo, "src/dir/x.ts", "..")).toBe("src/index.ts");
   });
 
   test("leaves missing files, declarations, other languages, and paths outside the repository unresolved", () => {

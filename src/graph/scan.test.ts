@@ -42,8 +42,9 @@ describe("relativeImports", () => {
       'const u = require("./u"); import v = require("./v");',
       'const w = await import("./w", { with: { type: "json" } });',
       'import x from "./x" with { type: "json" };',
+      'import { "string name" as y } from "./y";',
     ].join("\n");
-    expect(relativeImports(source)).toEqual(["./a", "./b", "./c", "./d", "./e", "./f", "./g", "./l", "./m", "./n", "./o", "./p", "../r", "./s", "./t", "./u", "./v", "./w", "./x"]);
+    expect(relativeImports(source)).toEqual(["./a", "./b", "./c", "./d", "./e", "./f", "./g", "./l", "./m", "./n", "./o", "./p", "../r", "./s", "./t", "./u", "./v", "./w", "./x", "./y"]);
   });
 
   test("ignores comments, template text, and strings that are not specifiers", () => {
@@ -89,6 +90,29 @@ describe("relativeImports", () => {
       'const escapedSlash = /\\/"/; import "./aa";',
     ].join("\n");
     expect(relativeImports(source)).toEqual(["./u", "./v", "./w", "./x", "./y", "./z", "./aa"]);
+  });
+
+  test("tells regex literals after control-flow conditions from divisions after expressions", () => {
+    const source = [
+      'if (ok) /"/.test(s); import "./a";',
+      'while (f(x)) /`/.exec(s); import "./b";',
+      'for (const c of cs) /\'/.test(c); import "./c";',
+      'const d = f(x) / 2 / g(y); import "./d";',
+      'const e = i++ / 2; const q = "/"; import "./e";',
+      'if (a) { x = (b) / c; } import "./f";',
+    ].join("\n");
+    expect(relativeImports(source)).toEqual(["./a", "./b", "./c", "./d", "./e", "./f"]);
+  });
+
+  test("finds a specifier however long the comment or whitespace before it", () => {
+    const comment = `/* ${"x".repeat(200)} */`;
+    const source = [
+      `import { a } from ${comment} "./a";`,
+      `export * from\n${" ".repeat(100)}\n"./b";`,
+      `const c = await import(${comment}\n  "./c");`,
+      `const d = await import ${comment} (\`./d\`);`,
+    ].join("\n");
+    expect(relativeImports(source)).toEqual(["./a", "./b", "./c", "./d"]);
   });
 
   test("reads JSX closing tags as code and skips a shebang", () => {

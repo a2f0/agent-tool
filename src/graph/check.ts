@@ -48,7 +48,7 @@ function isFile(root: string, file: string): boolean {
  * `.ts` or `.tsx`, or a directory's `index.ts`/`index.tsx`, in TypeScript's order.
  */
 export function resolveImport(root: string, from: string, specifier: string): string | undefined {
-  const base = path.posix.normalize(path.posix.join(path.posix.dirname(from), specifier));
+  const base = path.posix.normalize(path.posix.join(path.posix.dirname(from), specifier)).replace(/\/+$/, "");
   if (base.startsWith("../") || base === "..") return undefined;
   const extension = path.posix.extname(base);
   const stem = base.slice(0, base.length - extension.length);
