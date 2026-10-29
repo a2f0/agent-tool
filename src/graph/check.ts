@@ -52,7 +52,9 @@ export function resolveImport(root: string, from: string, specifier: string): st
   if (base.startsWith("../") || base === "..") return undefined;
   const extension = path.posix.extname(base);
   const stem = base.slice(0, base.length - extension.length);
-  const candidates = [base, ...(EMITTED[extension] ?? []).map(source => stem + source), `${base}.ts`, `${base}.tsx`, `${base}/index.ts`, `${base}/index.tsx`];
+  // `.` is the repository root itself, whose index has no directory prefix.
+  const candidates = base === "." ? ["index.ts", "index.tsx"]
+    : [base, ...(EMITTED[extension] ?? []).map(source => stem + source), `${base}.ts`, `${base}.tsx`, `${base}/index.ts`, `${base}/index.tsx`];
   return candidates.find(candidate => SOURCE.test(candidate) && !DECLARATION.test(candidate) && isFile(root, candidate));
 }
 

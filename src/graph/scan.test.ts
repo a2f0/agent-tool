@@ -100,8 +100,10 @@ describe("relativeImports", () => {
       'const d = f(x) / 2 / g(y); import "./d";',
       'const e = i++ / 2; const q = "/"; import "./e";',
       'if (a) { x = (b) / c; } import "./f";',
+      'const n = value! / 2; const m = list[0]! / f()! / 3; import "./g";',
+      'if (!/"/.test(s)) x = 1; const neg = !/`/.test(s); import "./h";',
     ].join("\n");
-    expect(relativeImports(source)).toEqual(["./a", "./b", "./c", "./d", "./e", "./f"]);
+    expect(relativeImports(source)).toEqual(["./a", "./b", "./c", "./d", "./e", "./f", "./g", "./h"]);
   });
 
   test("finds a specifier however long the comment or whitespace before it", () => {

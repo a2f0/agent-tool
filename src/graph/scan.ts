@@ -9,7 +9,8 @@
 function startsRegex(before: string): boolean {
   const code = before.trimEnd();
   // `<` is left out so JSX closing tags (`</a>`) do not read as expressions; `a++ / b` divides.
-  if (/(?:\+\+|--)$/.test(code)) return false;
+  // A postfix `!` after an operand is a non-null assertion (`value! / 2`), not logical not.
+  if (/(?:\+\+|--|[\w$)\]]!)$/.test(code)) return false;
   return code === "" || /[(,=:[!&|?{};+\-*%>~^]$/.test(code)
     || /(?<![.$\w])(?:return|typeof|case|in|of|delete|void|throw|new|yield|await|else|do)$/.test(code);
 }

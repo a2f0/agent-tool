@@ -338,8 +338,8 @@ file. It replaces per-repository module-graph tests: put the section in
   (`--repo`), select the sources scanned; `exclude` removes matches. Only `.ts`,
   `.tsx`, `.mts`, and `.cts` files are scanned; declaration files (`.d.ts`,
   `.d.mts`, `.d.cts`) and anything under `node_modules` are skipped. Globs use
-  Bun's syntax (`**`, `*`, `{a,b}`); they may not be absolute, contain `..`, or
-  start with `!`. `include` must name at least one glob.
+  Bun's syntax (`**`, `*`, `{a,b}`); they may not be absolute, contain `.` or
+  `..` segments, or start with `!`. `include` must name at least one glob.
 - **Edges**: every import form counts, type-only ones included: `import`,
   `import type`, `export ... from`, side-effect `import "./x"`, `import("./x")`
   (also in types and inside template-literal `${...}` interpolations), and
@@ -351,8 +351,9 @@ file. It replaces per-repository module-graph tests: put the section in
   `.ts`, `.tsx`, `/index.ts`, and `/index.tsx`. An import of a file outside the
   scanned set is a leaf.
 - **Cycles** are checked across every scanned file, tests included. The report
-  lists each cycle once, starting at its alphabetically smallest file; one
-  offending import can appear in several cycles.
+  lists the cycles a depth-first search finds, at least one through every
+  tangle, each once and starting at its alphabetically smallest file; one
+  offending import can appear in several of them.
 - **`tests`** globs mark test-only files. A production file importing one is a
   violation, since packages usually omit them. Test files may import any layer
   and need none.

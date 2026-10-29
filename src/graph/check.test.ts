@@ -130,6 +130,14 @@ describe("checkGraph", () => {
     expect(checkGraph(root, config({ include: ["src/**"] })).cycles).toEqual([["src/a.ts", "src/b.ts"]]);
   });
 
+  test("follows imports of the repository root's index", () => {
+    const root = fixture({ "index.ts": 'import "./src/a";\n', "src/a.ts": 'import "..";\n', "src/b.ts": 'import "../index.js";\n' });
+    expect(resolveImport(root, "src/a.ts", "..")).toBe("index.ts");
+    expect(resolveImport(root, "src/a.ts", "../")).toBe("index.ts");
+    expect(resolveImport(root, "index.ts", ".")).toBe("index.ts");
+    expect(checkGraph(root, config({ include: ["**"] }))).toMatchObject({ files: 3, imports: 3, cycles: [["index.ts", "src/a.ts"]] });
+  });
+
   test("treats imports of unscanned files as leaves", () => {
     const root = fixture({ "src/a.ts": 'import "../vendor/v";\n', "vendor/v.ts": 'import "../src/a";\n' });
     expect(checkGraph(root, config({ include: ["src/**"] }))).toMatchObject({ ok: true, files: 1, imports: 0 });
