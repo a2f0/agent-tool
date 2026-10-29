@@ -25,18 +25,21 @@ receipts belong in the PR; private logs and generated artifacts remain local.
 ### Module layering
 
 Modules import only from their own layer or a lower one, and never in a cycle,
-including through type-only imports. `src/moduleGraph.test.ts` enforces both and
-names the layer each module belongs to; add a new top-level module there.
+including through type-only imports. The `graph` section of `agent-tool.json`
+names the layer each module belongs to, and `bun src/index.ts graph check`
+(in the verify run group and CI) enforces both; add a new top-level module to
+its layers. A test asserts the real configuration passes.
 
 1. Primitives: `git/`, `system/` (PATH lookup outside the repository and Bun
    workspace discovery, shared by several domains), `workflows/core.ts`
    (process, Git, and `gh` helpers and argument parsing), `workflows/config.ts`,
-   `permissions/catalog.ts`, and `images/config.ts`. They import nothing above
-   themselves.
+   `permissions/catalog.ts`, `images/config.ts`, and `graph/config.ts`. They
+   import nothing above themselves.
 2. Configuration: `config.ts`, which parses `agent-tool.json` from the primitive
    schemas.
-3. Domains: `bun/`, `commands/`, `dependencies/`, `images/`, `permissions/`,
-   `pr/`, `release/`, `review/`, `skills/`, `version/`, and `harnesses.ts`.
+3. Domains: `bun/`, `commands/`, `dependencies/`, `graph/`, `images/`,
+   `permissions/`, `pr/`, `release/`, `review/`, `skills/`, `version/`, and
+   `harnesses.ts`.
    Domains may use each other without cycles.
 4. Workflows: the rest of `workflows/`, which compose domains into repository
    commands such as `branch`, `pr`, `hooks`, and `repo`.
@@ -51,6 +54,7 @@ published package omits.
 
 ```sh
 bun run agent:run --label typecheck -- bun run typecheck
+bun run agent:run --label graph -- bun src/index.ts graph check
 bun run agent:run --label tests -- bun test --parallel
 bun run agent:run --label package-smoke -- bun scripts/testing/smoke-package.ts
 bun run agent:run --label build -- bun run build
@@ -63,7 +67,7 @@ Keep each test file independent of the others, with its own temporary
 directories and stubs; plain `bun test` still runs the same suite serially.
 
 Build regenerates `src/skills/bundled.ts`; commit it with canonical skill changes.
-After running `bun run generate`, the same five checks can run together with
+After running `bun run generate`, the same six checks can run together with
 `bun src/index.ts run-group scripts/testing/verify.json`, recording source-bound
 timings and receipts. Generation runs first so a build does not change the source
 fingerprint while validation is in progress.

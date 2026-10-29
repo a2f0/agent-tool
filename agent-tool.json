@@ -12,5 +12,34 @@
   },
   "versions": {
     "packages": ["."]
+  },
+  "graph": {
+    "include": ["src/**", "scripts/**"],
+    "tests": ["**/*.test.ts", "**/*.testUtils.ts"],
+    "layers": [
+      {
+        "name": "primitives",
+        "include": [
+          "src/git/**",
+          "src/system/**",
+          "src/workflows/core.ts",
+          "src/workflows/config.ts",
+          "src/graph/config.ts",
+          "src/images/config.ts",
+          "src/permissions/catalog.ts"
+        ]
+      },
+      {"name": "config", "include": ["src/config.ts"]},
+      {
+        "name": "domains",
+        "include": [
+          "src/{bun,commands,dependencies,graph,images,permissions,pr,release,review,skills,version}/**",
+          "src/harnesses.ts"
+        ]
+      },
+      {"name": "workflows", "include": ["src/workflows/**"]},
+      {"name": "entry", "include": ["src/cli.ts", "src/index.ts", "src/runAgentToolAction.ts", "src/doctor.ts"]},
+      {"name": "scripts", "include": ["scripts/**"]}
+    ]
   }
 }
