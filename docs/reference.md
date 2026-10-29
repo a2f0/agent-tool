@@ -126,6 +126,7 @@ For repository workflow commands added alongside these interfaces, see
 | `permissions install [--harness all\|claude\|codex] [--apply]` | Preview by default; write the managed rules into `.claude/settings.json` and `.codex/rules/` |
 | `images list [target...]` | List the files each image target writes, without rendering |
 | `images build [target...] [--out dir]` | Render image targets from `assets/brand/*.svg`; `--out` redirects one target |
+| `graph check` | Fail on import cycles and layer violations among the TypeScript sources the `graph` section names; print a JSON report |
 | `init` / `config show` | Create or inspect data-only project policy |
 | `doctor` | Inspect local versions and required CLI flags without running a model |
 
@@ -307,6 +308,78 @@ Android densities or `@2x`/`@3x`), and the layers composed into it:
 outputs with a bundled WebAssembly renderer, so builds need no ImageMagick or
 librsvg and render identically on every machine. See the
 [image reference](images.md) for every setting.
+
+### Graph
+
+`graph` describes a repository's TypeScript module graph, and `agent-tool graph
+check` fails (exit 1) when it has an import cycle, a production module that
+imports from a higher layer, or a production module that imports a test-only
+file. It replaces per-repository module-graph tests: put the section in
+`agent-tool.json` and run the command in a CI job that gates merges.
+
+```json
+{
+  "schemaVersion": 1,
+  "graph": {
+    "include": ["src/**", "scripts/**"],
+    "exclude": ["**/vendor/**", "**/generated/**"],
+    "tests": ["**/*.test.ts", "**/*.test.tsx", "**/*.testUtils.ts"],
+    "layers": [
+      { "name": "primitives", "include": ["src/git/**", "src/core.ts"] },
+      { "name": "domains", "include": ["src/{review,version}/**"] },
+      { "name": "entry", "include": ["src/cli.ts", "src/index.ts"] },
+      { "name": "scripts", "include": ["scripts/**"] }
+    ]
+  }
+}
+```
+
+- **Files**: `include` globs, relative to the directory the command runs in
+  (`--repo`), select the sources scanned; `exclude` removes matches. Only `.ts`,
+  `.tsx`, `.mts`, and `.cts` files are scanned; declaration files (`.d.ts`,
+  `.d.mts`, `.d.cts`) and anything under `node_modules` are skipped. Globs use
+  Bun's syntax (`**`, `*`, `{a,b}`); they may not be absolute, contain `..`, or
+  start with `!`. `include` must name at least one glob.
+- **Edges**: every import form counts, type-only ones included: `import`,
+  `import type`, `export ... from`, side-effect `import "./x"`, `import("./x")`
+  (also in types and inside template-literal `${...}` interpolations), and
+  `require("./x")`. Comments, template-literal text, regular expression
+  literals, and other strings are ignored. Only relative specifiers are
+  followed; bare packages and path aliases are leaves. A specifier resolves
+  as TypeScript does: the exact file, an emitted extension's source (`.js` to
+  `.ts` or `.tsx`, `.jsx` to `.tsx`, `.mjs` to `.mts`, `.cjs` to `.cts`), then
+  `.ts`, `.tsx`, `/index.ts`, and `/index.tsx`. An import of a file outside the
+  scanned set is a leaf.
+- **Cycles** are checked across every scanned file, tests included. The report
+  lists each cycle once, starting at its alphabetically smallest file; one
+  offending import can appear in several cycles.
+- **`tests`** globs mark test-only files. A production file importing one is a
+  violation, since packages usually omit them. Test files may import any layer
+  and need none.
+- **`layers`** are listed lowest first. A file belongs to the first layer with
+  a matching glob, so a later broad glob (`src/workflows/**`) can follow an
+  earlier exception (`src/workflows/core.ts`). A production file may import its
+  own layer or a lower one. With layers configured, every scanned production
+  file must belong to one, so a new file cannot escape the layering; such files
+  are listed under `unlayered`. Without layers, only cycles and test-only
+  imports are checked.
+
+The command prints one JSON report and exits 0 only when `ok` is true:
+
+```json
+{
+  "ok": false,
+  "files": 133,
+  "imports": 274,
+  "cycles": [["src/a.ts", "src/b.ts"]],
+  "violations": ["src/git/b.ts (primitives) imports src/cli.ts (entry)", "src/x.ts imports test-only src/x.test.ts"],
+  "unlayered": ["src/new.ts"]
+}
+```
+
+The scanner reads text, not a TypeScript syntax tree. A quote or backtick in
+JSX text (`<p>don't</p>`) reads as the start of a string, which can hide an
+import later on that line, or later in the file for a backtick.
 
 ## Portable skills
 
