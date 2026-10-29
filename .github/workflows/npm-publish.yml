@@ -50,7 +50,7 @@ jobs:
       - if: steps.decide.outputs.publish == 'true'
         run: bun install --frozen-lockfile
       - if: steps.decide.outputs.publish == 'true'
-        run: bun run typecheck && bun test && bun scripts/testing/smoke-package.ts
+        run: bun run typecheck && bun test --parallel && bun scripts/testing/smoke-package.ts
       # The package ships src/skills/bundled.ts, so it must match skills/.
       - if: steps.decide.outputs.publish == 'true'
         run: bun run generate && git diff --exit-code -- src/skills/bundled.ts

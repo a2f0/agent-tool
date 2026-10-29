@@ -69,7 +69,7 @@ from a clone:
 mise install
 bun install --frozen-lockfile
 bun src/index.ts --help
-bun test
+bun test --parallel
 ```
 
 [Development](docs/development.md) covers the source layout, the full

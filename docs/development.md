@@ -49,11 +49,16 @@ published package omits.
 
 ```sh
 bun run agent:run --label typecheck -- bun run typecheck
-bun run agent:run --label tests -- bun test
+bun run agent:run --label tests -- bun test --parallel
 bun run agent:run --label package-smoke -- bun scripts/testing/smoke-package.ts
 bun run agent:run --label build -- bun run build
 bun run agent:run --label compiled-smoke -- bun scripts/testing/smoke.ts dist/agent-tool
 ```
+
+Tests run as isolated files across worker processes with `--parallel`, since
+most of their time goes to spawning the CLI against disposable repositories.
+Keep each test file independent of the others, with its own temporary
+directories and stubs; plain `bun test` still runs the same suite serially.
 
 Build regenerates `src/skills/bundled.ts`; commit it with canonical skill changes.
 After running `bun run generate`, the same five checks can run together with
