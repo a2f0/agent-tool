@@ -28,10 +28,11 @@ from `skills/*/SKILL.md`; commit `src/skills/bundled.ts` with skill changes.
 CI also verifies Linux Debian packaging. Preserve the review snapshot,
 read-only tool permissions, pinned-base checks, and exact-head merge behavior.
 
-When handling review feedback, reply in its original review thread through
-`POST /repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies`
-and resolve only fully addressed findings. Each merge that bumps the version
-deploys it to npm as `@a2f0/agent-tool`; after merging, verify the
+When handling review feedback, reply in its original review thread with
+`bun src/index.ts pr threads reply <comment-id> --body-file <file>`, and resolve
+only fully addressed findings with
+`bun src/index.ts pr threads resolve <thread-id>`. Each merge that bumps the
+version deploys it to npm as `@a2f0/agent-tool`; after merging, verify the
 "Publish npm package" workflow run for the merge commit and that npm lists the
 version.
 
