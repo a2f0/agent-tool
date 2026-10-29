@@ -7,7 +7,7 @@ import { assert, flag, option, output } from "../workflows/core";
 import { bunExecute } from "./execute";
 import { pinnedBun, type BunExecutable } from "./toolchain";
 import { lockedWorkspaceVersions, lostWorkspaceReferences } from "../version/lockfileVersions";
-import { packageDirectories, workspacePackage } from "./workspace";
+import { packageDirectories, workspacePackage } from "../system/workspace";
 
 const SECTIONS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"] as const;
 type Section = typeof SECTIONS[number];

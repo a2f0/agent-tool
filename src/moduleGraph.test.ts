@@ -13,7 +13,7 @@ const root = path.resolve(import.meta.dir, "..");
 const LAYERS: readonly { name: string; owns: (file: string) => boolean }[] = [
   {
     name: "primitives",
-    owns: file => file.startsWith("src/git/") || ["src/workflows/core.ts", "src/workflows/config.ts", "src/permissions/catalog.ts", "src/images/config.ts"].includes(file),
+    owns: file => /^src\/(git|system)\//.test(file) || ["src/workflows/core.ts", "src/workflows/config.ts", "src/permissions/catalog.ts", "src/images/config.ts"].includes(file),
   },
   { name: "config", owns: file => file === "src/config.ts" },
   {

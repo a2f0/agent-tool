@@ -1,6 +1,6 @@
 import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { packageDirectories } from "../bun/workspace";
+import { packageDirectories } from "../system/workspace";
 import { manifestPath, readVersion, workspacePackages } from "./packageVersion";
 
 function field(value: unknown, key: string): unknown {

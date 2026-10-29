@@ -28,9 +28,11 @@ Modules import only from their own layer or a lower one, and never in a cycle,
 including through type-only imports. `src/moduleGraph.test.ts` enforces both and
 names the layer each module belongs to; add a new top-level module there.
 
-1. Primitives: `git/`, `workflows/core.ts` (process, Git, and `gh` helpers and
-   argument parsing), `workflows/config.ts`, `permissions/catalog.ts`, and
-   `images/config.ts`. They import nothing above themselves.
+1. Primitives: `git/`, `system/` (PATH lookup outside the repository and Bun
+   workspace discovery, shared by several domains), `workflows/core.ts`
+   (process, Git, and `gh` helpers and argument parsing), `workflows/config.ts`,
+   `permissions/catalog.ts`, and `images/config.ts`. They import nothing above
+   themselves.
 2. Configuration: `config.ts`, which parses `agent-tool.json` from the primitive
    schemas.
 3. Domains: `bun/`, `commands/`, `dependencies/`, `images/`, `permissions/`,
