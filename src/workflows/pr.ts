@@ -1,6 +1,8 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { gitEnvironment } from "../git/environment";
-import { readFileSync } from "node:fs";
+import { closeSync, readFileSync } from "node:fs";
+import { createLog } from "../commands/logFile";
+import { DEFAULT_LIMITS, logTail, outputLimit } from "../commands/output";
 import { loadConfig } from "../config";
 import { remoteBranchHead, resolvePr, resolveRepositoryGitUrl } from "../git/prContext";
 import { assertMergeChecks } from "../pr/mergeChecks";
@@ -37,6 +39,29 @@ export function checkSnapshot(pr: { prNumber: string; repo: string }, expected: 
     const failed = requiredSkipped || checks.some(check => !["SUCCESS", "SKIPPED", "PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED"].includes(check.state));
     return { ok: false, waiting: !failed, headOid: expected, checks, reason: (error as Error).message };
   }
+}
+
+const NOT_FAILED = ["SUCCESS", "SKIPPED", "NEUTRAL", "PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "EXPECTED"];
+
+/** Each failed GitHub Actions job of the PR head, saved to a private log with a bounded tail. */
+export function failedJobLogs(pr: { prNumber: string; repo: string }, expected: string, limits = DEFAULT_LIMITS) {
+  const view = json<{ headRefOid: string }>(["pr", "view", pr.prNumber, "-R", pr.repo, "--json", "headRefOid"]);
+  assert(view.headRefOid === expected, "PR HEAD differs from the requested head; pass --head with the PR's commit.");
+  const checks = json<(Check & { link: string })[]>(["pr", "checks", pr.prNumber, "-R", pr.repo, "--json", "name,state,workflow,link"]);
+  assert(Array.isArray(checks), "Could not read checks.");
+  const failed = checks.filter(check => !NOT_FAILED.includes(check.state)).map(check => {
+    const job = check.link?.match(/\/actions\/runs\/(\d+)\/job\/(\d+)/);
+    if (!job) return { ...check, log: null, note: "Not a GitHub Actions job; follow its link." };
+    const { log, fd } = createLog("agent-tool-ci-");
+    let status: number | null;
+    try { status = spawnSync("gh", ["run", "view", job[1]!, "-R", pr.repo, "--job", job[2]!, "--log-failed"], { stdio: ["ignore", fd, fd], env: gitEnvironment() }).status; }
+    finally { closeSync(fd); }
+    const tail = logTail(log, limits);
+    return { ...check, runId: Number(job[1]), jobId: Number(job[2]), ok: status === 0, log, tail: tail.text, truncated: tail.truncated };
+  });
+  // A push while reading would label another commit's logs with the requested head.
+  assert(json<{ headRefOid: string }>(["pr", "view", pr.prNumber, "-R", pr.repo, "--json", "headRefOid"]).headRefOid === expected, "PR HEAD changed while reading logs; read them again for the new head.");
+  return failed;
 }
 
 export function preflight(expectedHead: string, baseBranch: string, baseOid: string): unknown {
@@ -125,6 +150,14 @@ export async function prWorkflowCommand(args: string[]): Promise<number> {
     output({ repo: identity.repo, ...pr, liveBaseOid: remoteBranchHead(resolveRepositoryGitUrl(identity.repo), pr.baseRefName), localHeadOid: head() }); return 0;
   }
   if (action === "preflight") { assert(args.length === 3, "Usage: pr preflight <reviewed-head> <base-branch> <reviewed-base>"); output(preflight(args[0]!, args[1]!, args[2]!)); return 0; }
+  if (action === "logs") {
+    const expected = option(args, "--head") ?? head();
+    const maxBytes = option(args, "--max-bytes"), tailLines = option(args, "--tail-lines");
+    const limits = { maxBytes: maxBytes ? outputLimit("--max-bytes", maxBytes) : DEFAULT_LIMITS.maxBytes, tailLines: tailLines ? outputLimit("--tail-lines", tailLines) : DEFAULT_LIMITS.tailLines };
+    assert(!args.length, "Usage: pr logs [--head <oid>] [--max-bytes N] [--tail-lines N]"); oid(expected);
+    const identity = resolvePr();
+    output({ ...identity, headOid: expected, failed: failedJobLogs(identity, expected, limits) }); return 0;
+  }
   assert(action === "checks", "Unknown PR workflow command.");
   const wait = flag(args, "--wait");
   const expected = option(args, "--head") ?? head();

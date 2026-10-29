@@ -33,6 +33,8 @@ export function packageDirectories(root: string): string[] {
 export function workspacePackage(directory: string): { root: string; directory: string } {
   const resolved = realpathSync(directory);
   const root = projectRoot(resolved);
+  // Harness rules come from the invoking checkout; --cwd may not reach another repository.
+  assert(root === projectRoot(process.cwd()), "--cwd must name a package in this checkout.");
   assert(packageDirectories(root).some(item => realpathSync(item) === resolved), "Use the root package or a declared workspace; standalone packages keep their own lockfiles.");
   return { root, directory: resolved };
 }

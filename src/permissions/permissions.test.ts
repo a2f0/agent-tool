@@ -6,6 +6,8 @@ import path from "node:path";
 import { CATALOG, CLASSES, claudePermissions, codexRules } from "./catalog";
 import { checkPermissions, installPermissions } from "./install";
 import { HELP } from "../cli";
+import { parseConfig } from "../config";
+import { projectCommands } from "./project";
 
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
@@ -20,7 +22,7 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
   expect(rules.ask).toEqual(expect.arrayContaining(["Bash(bun run agent-tool squashMerge *)", "Bash(agent-tool squashMerge *)"]));
   expect([...rules.allow, ...rules.ask].some(rule => /agent-tool run(?:-group)? /.test(rule))).toBe(false);
   const codex = codexRules();
-  expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", ["install", "update", "remove"]], decision="allow"');
+  expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", ["install", "update", "remove", "test"]], decision="allow"');
   expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", "add"], decision="prompt"');
   // Prefix rules cannot see a trailing --apply, so Codex prompts for the whole command.
   expect(codex).toContain('prefix_rule(pattern=["agent-tool", "repo", "cleanup"], decision="prompt"');
@@ -89,4 +91,17 @@ test("the CLI previews by default and rejects unknown harnesses", () => {
   expect(JSON.parse(preview.stdout)).toMatchObject({ applied: false });
   expect(spawnSync(process.execPath, [cli, "permissions", "check"], { cwd: root, encoding: "utf8" }).status).toBe(1);
   expect(spawnSync(process.execPath, [cli, "permissions", "show", "--harness", "opencode"], { cwd: root, encoding: "utf8" }).stderr).toMatch(/Unknown permissions harness/);
+});
+
+test("executables run through bun x only when classified, and bunx or npx ask", () => {
+  const root = project();
+  writeFileSync(path.join(root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { biome: "local", wrangler: "release", tsx: "exec" } } }));
+  expect(projectCommands(root)).toEqual([{ command: "bun x biome", class: "local" }, { command: "bun x tsx", class: "exec" }, { command: "bun x wrangler", class: "release" }]);
+  const rules = claudePermissions(projectCommands(root));
+  expect(rules.allow).toContain("Bash(bun run agent-tool bun x biome *)");
+  expect(rules.ask).toEqual(expect.arrayContaining(["Bash(bun run agent-tool bun x wrangler *)", "Bash(bun run agent-tool bun x tsx *)", "Bash(bunx *)", "Bash(bun x *)", "Bash(npx *)"]));
+  expect([...rules.allow, ...rules.ask].some(rule => / bun run [^*]/.test(rule.replace("Bash(bun run agent-tool", "Bash(")))).toBe(false);
+  for (const permissions of [{ executables: { biome: "safe" } }, { executables: { "@scope/tool": "local" } }, { scripts: { check: "local" } }]) {
+    expect(() => parseConfig(JSON.stringify({ schemaVersion: 1, permissions }))).toThrow();
+  }
 });

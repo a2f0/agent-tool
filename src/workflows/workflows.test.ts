@@ -350,3 +350,54 @@ test("signed commit checks ignore signature display without weakening trust or m
   result = f.run(["commits", "check", "--range", "HEAD^..HEAD"]);
   expect(result.status).toBe(1); expect(JSON.parse(result.stdout).findings[0].errors).toEqual(["Signature does not meet 'present' policy (N)."]);
 });
+
+test("pr logs saves each failed Actions job log and lists external failures without one", () => {
+  const f = githubFixture();
+  f.save({ checks: [{ name: "test", state: "FAILURE", workflow: "CI", link: "https://github.com/o/r/actions/runs/42/job/7" }, { name: "lint", state: "SUCCESS", workflow: "CI", link: "https://github.com/o/r/actions/runs/42/job/8" }, { name: "preview", state: "FAILURE", workflow: "", link: "https://vercel.com/o/r" }] });
+  const result = f.run(["pr", "logs", "--tail-lines", "5"]);
+  expect(result.status).toBe(0);
+  const failed = JSON.parse(result.stdout).failed;
+  expect(failed.map((check: { name: string }) => check.name)).toEqual(["test", "preview"]);
+  expect(failed[0]).toMatchObject({ runId: 42, jobId: 7, ok: true });
+  expect(failed[0].tail).toContain("databaseId");
+  expect(failed[1].log).toBeNull();
+  rmSync(path.dirname(failed[0].log), { recursive: true, force: true });
+  expect(readFileSync(f.stateFile + ".calls", "utf8")).toContain(JSON.stringify(["run", "view", "42", "-R", "o/r", "--job", "7", "--log-failed"]));
+  expect(f.run(["pr", "logs", "--head", "a".repeat(40)]).stderr).toContain("PR HEAD differs");
+});
+
+test("dependency diff reports declared changes in every manifest and names new third-party packages", () => {
+  const f = fixture();
+  mkdirSync(path.join(f.root, "packages/web"), { recursive: true });
+  writeFileSync(path.join(f.root, "package.json"), JSON.stringify({ dependencies: { ms: "1.0.0", chalk: "5.0.0" } }));
+  writeFileSync(path.join(f.root, "packages/web/package.json"), JSON.stringify({ devDependencies: { vite: "7.0.0" } }));
+  f.git(["add", "."]); f.git(["commit", "-m", "chore: manifests"]);
+  const base = f.git(["rev-parse", "HEAD"]);
+  writeFileSync(path.join(f.root, "package.json"), JSON.stringify({ dependencies: { ms: "2.0.0", "left-pad": "1.3.0" } }));
+  writeFileSync(path.join(f.root, "packages/web/package.json"), JSON.stringify({ devDependencies: { vite: "7.0.0", chalk: "5.0.0", api: "workspace:*" } }));
+  f.git(["commit", "-am", "chore: change dependencies"]);
+  const result = f.run(["dependencies", "diff", "--base", base]);
+  expect(result.status).toBe(0);
+  const diff = JSON.parse(result.stdout);
+  expect(diff.newPackages).toEqual(["left-pad"]);
+  writeFileSync(path.join(f.root, "packages/web/package.json"), JSON.stringify({ devDependencies: { vite: "7.0.0", chalk: "5.0.0", api: "9.9.9" } }));
+  f.git(["commit", "-am", "chore: take api from the registry"]);
+  expect(JSON.parse(f.run(["dependencies", "diff", "--base", base]).stdout).newPackages).toEqual(["api", "left-pad"]);
+  writeFileSync(path.join(f.root, "package.json"), JSON.stringify({ dependencies: { ms: "npm:@evil/ms@2.0.0", "left-pad": "1.3.0" } }));
+  f.git(["commit", "-am", "chore: alias ms"]);
+  expect(JSON.parse(f.run(["dependencies", "diff", "--base", base]).stdout).newPackages).toEqual(["@evil/ms", "api", "left-pad"]);
+  writeFileSync(path.join(f.root, "package.json"), JSON.stringify({ catalog: { tool: "npm:old@1.0.0" }, dependencies: { tool: "catalog:" } }));
+  f.git(["commit", "-am", "chore: catalog tool"]);
+  const cataloged = f.git(["rev-parse", "HEAD"]);
+  writeFileSync(path.join(f.root, "package.json"), JSON.stringify({ catalog: { tool: "npm:new@1.0.0" }, dependencies: { tool: "catalog:" } }));
+  f.git(["commit", "-am", "chore: repoint the catalog"]);
+  const repointed = JSON.parse(f.run(["dependencies", "diff", "--base", cataloged]).stdout);
+  expect(repointed.changed).toEqual([{ manifest: "package.json", section: "dependencies", name: "tool", from: "npm:old@1.0.0", to: "npm:new@1.0.0" }]);
+  expect(repointed.newPackages).toEqual(["new"]);
+  expect(diff.added).toEqual([{ manifest: "package.json", section: "dependencies", name: "left-pad", spec: "1.3.0" }, { manifest: "packages/web/package.json", section: "devDependencies", name: "api", spec: "workspace:*" }, { manifest: "packages/web/package.json", section: "devDependencies", name: "chalk", spec: "5.0.0" }]);
+  expect(diff.removed).toEqual([{ manifest: "package.json", section: "dependencies", name: "chalk", spec: "5.0.0" }]);
+  expect(diff.changed).toEqual([{ manifest: "package.json", section: "dependencies", name: "ms", from: "1.0.0", to: "2.0.0" }]);
+  expect(f.run(["dependencies", "diff", "--base", "--output=x"]).status).toBe(1);
+  const nested = spawnSync(process.execPath, [cli, "dependencies", "diff", "--base", base], { cwd: path.join(f.root, "packages/web"), env: f.env, encoding: "utf8" });
+  expect(JSON.parse(nested.stdout).newPackages).toEqual(JSON.parse(f.run(["dependencies", "diff", "--base", base]).stdout).newPackages);
+});

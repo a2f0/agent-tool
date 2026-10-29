@@ -6,16 +6,29 @@ ones still ask. agent-tool assigns each of its commands a permission class and
 generates harness rules from that table, so the decision is made once, next to
 the code, rather than in every harness configuration.
 
+## What the rules protect
+
+The rules keep a cooperating agent from taking a consequential step (merging,
+publishing, deploying, adding third-party code, or changing its own permissions)
+without the user seeing it first. They are not a sandbox. An allowed command
+still runs repository code: tests and tools can do anything their source says,
+and an agent that edits that source can change what an allowed command does.
+Classes describe agent-tool's own commands and the executables a repository
+classifies; they cannot see inside the programs those run. Review
+such code like any other change, and keep credentials for consequential systems
+out of agent sessions where that matters.
+
 ## Classes
 
 | Class | Decision | Commands |
 | --- | --- | --- |
 | `read` | allow | Context, checks, listings, previews, diagnostics, and logs |
-| `local` | allow | `bun install\|update\|remove`, `branch create`, `versions`, `images build`, `review`, and applied skill or hook installs |
+| `local` | allow | `bun install\|update\|remove\|test`, `bun x` for executables classified `local`, `branch create`, `versions`, `images build`, `review`, and applied skill or hook installs |
 | `share` | allow | `branch push`, `pr open`, `pr threads reply\|resolve` |
 | `release` | ask | `pr merge`, `repo cleanup --apply`, and direct `gh pr merge`, `npm publish`, `bun publish` |
-| `intake` | ask | `bun add`, and direct `bun add`, `npm install`, `pnpm add`, `yarn add` |
+| `intake` | ask | `bun add`, and direct `bun add`, `npm install`, `pnpm add`, `yarn add`, and `bunx`, `bun x`, `npx`, which can download a package |
 | `policy` | ask | `permissions install --apply` |
+| `exec` | ask | Executables classified `exec`: ones that run whatever file or command they are given |
 
 Legacy action names, such as `squashMerge` and `openPr`, carry the class of the
 command they alias. `run` and `run-group` execute arbitrary commands, so they
@@ -90,6 +103,43 @@ also covers the project's own lifecycle scripts. The files are restored too if
 the manifest cannot be read afterward. `node_modules` is not restored; the next frozen
 install rebuilds it. Updating a dependency can still bring new transitive
 packages; the lockfile diff is where review sees them.
+
+## Tests and executables
+
+```sh
+agent-tool bun test --log -- src/app.test.ts
+agent-tool bun x biome -- check src
+```
+
+`bun test` and `bun x` use the pinned Bun and put its directory first on `PATH`,
+so a test or tool that calls `bun` gets the same version. The executable comes
+first and options precede `--`, so harness rules can match its name as a
+prefix; arguments for the command itself follow `--`. `--log` writes output to a
+private log and prints a `run` receipt; without it, output stays visible.
+
+`bun x` runs the package's or root's `node_modules/.bin/<name>` directly, only
+when it is an executable file inside this checkout, so neither `PATH` nor Bun's
+global cache can stand in for it; only executables that
+`permissions.executables` in `agent-tool.json` classifies get a rule; any other
+one keeps the harness default. Classify a whole executable by its riskiest
+subcommand, and use `exec` for one that runs whatever file or command it is
+given, such as `tsx`. While the recorded rules are stale, `bun x` refuses any
+executable that is not currently classified as allowed, since an old rule
+could still allow one that was reclassified or removed.
+
+```json
+{
+  "schemaVersion": 1,
+  "permissions": {
+    "executables": { "biome": "local", "tsc": "read", "wrangler": "release", "tsx": "exec" }
+  }
+}
+```
+
+Package scripts are not classified yet. A script can run anything its commands,
+hooks, and the scripts it calls name, and arguments a caller appends can change
+what its last command does, so a rule that allowed scripts by default could not
+be trusted. `bun run` and `agent:run` therefore keep the harness default.
 
 ## Generated rules
 

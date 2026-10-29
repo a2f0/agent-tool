@@ -106,12 +106,14 @@ For repository workflow commands added alongside these interfaces, see
 | `run [--label text] [--max-bytes N] [--tail-lines N] -- <command> [args...]` | Run with full local logs and compact results; preserve exit status |
 | `logs <file> [--max-bytes N] [--tail-lines N]` | Inspect a bounded, terminal-safe tail of a local file |
 | `review claude\|codex\|opencode [effort] [--base ref]` | Review committed HEAD using a pinned raw-file snapshot |
-| `pr open [title]` | Open a same-repository PR; body from stdin; branch already pushed |
+| `pr open [title] [--body-file file]` | Open a same-repository PR; body from the file or stdin; branch already pushed |
+| `pr logs [--head oid] [--max-bytes N] [--tail-lines N]` | Save each failed GitHub Actions job log of the PR head privately and show a bounded tail |
 | `pr merge <subject-or-empty> <head-oid> <base-branch>` | Check CI and synchronously squash the reviewed HEAD |
 | `versions plan\|bump\|check <base-oid>` | Plan, rewrite, or check package versions against an exact base |
 | `versions prepare <base-oid>` | Bump, refresh `bun.lock`, validate, and commit versions; print a JSON receipt |
 | `versions resolve-conflicts` | Resolve only version-field conflicts in configured manifests |
 | `dependencies check-terraform-plan <json-file>` | Read-only screening for destructive or incomplete Terraform JSON plans |
+| `dependencies diff --base <ref>` | Declared dependencies added, removed, or changed in every tracked `package.json`, and the new third-party package names |
 | `skills list` | List embedded portable skills |
 | `skills install [--harness all\|claude\|codex\|opencode] [--apply]` | Preview by default; install or update managed skills |
 | `skills check [--harness all\|claude\|codex\|opencode]` | Read-only CI check for current managed skills |
@@ -119,6 +121,7 @@ For repository workflow commands added alongside these interfaces, see
 | `bun update <name[@version]>... [--cwd dir]` | Change versions of declared registry dependencies only, keeping each one's section |
 | `bun remove <name>... [--cwd dir]` | Remove declared dependencies only |
 | `bun add <name@version>... [--dev\|--optional\|--peer] [--exact] [--cwd dir]` | Add new dependencies; the one dependency verb that asks for approval |
+| `bun test\|x <executable> [--cwd dir] [--log] [-- args...]` | Run the test runner or an installed executable with the pinned Bun; `--log` captures output like `run` |
 | `permissions show\|check [--harness all\|claude\|codex]` | Print, or check in CI, the harness permission rules generated from command classes |
 | `permissions install [--harness all\|claude\|codex] [--apply]` | Preview by default; write the managed rules into `.claude/settings.json` and `.codex/rules/` |
 | `images list [target...]` | List the files each image target writes, without rendering |

@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseImages, type ImagesConfig } from "./images/config";
+import { CLASSES, type PermissionClass } from "./permissions/catalog";
 import { WORKFLOW_DEFAULTS, validateWorkflowConfig, type WorkflowConfig } from "./workflows/config";
 
 export interface RequiredCheck {
@@ -16,6 +17,7 @@ export interface AgentToolConfig extends WorkflowConfig {
   versions: { packages: string[] | null; bundles: string[]; lockfile: "bun.lock" | null; validate: string[][]; commitMessage: string };
   pr: { rejectClaudeBranding: boolean };
   images: ImagesConfig;
+  permissions: { executables: Record<string, PermissionClass> };
 }
 
 export const DEFAULT_CONFIG: AgentToolConfig = {
@@ -34,6 +36,7 @@ export const DEFAULT_CONFIG: AgentToolConfig = {
   versions: { packages: null, bundles: [], lockfile: "bun.lock", validate: [], commitMessage: "chore: bump package versions" },
   pr: { rejectClaudeBranding: false },
   images: { targets: {} },
+  permissions: { executables: {} },
 };
 
 function object(value: unknown, name: string): Record<string, unknown> {
@@ -59,7 +62,7 @@ export function parseConfig(source: string): AgentToolConfig {
   keys(input, Object.keys(DEFAULT_CONFIG), "config");
   if (input.schemaVersion !== 1) throw new Error("Unsupported config schemaVersion; expected 1.");
   const result = structuredClone(DEFAULT_CONFIG);
-  for (const section of ["subject", "merge", "review", "versions", "pr", "branch", "commits", "hooks", "binaries"] as const) {
+  for (const section of ["subject", "merge", "review", "versions", "pr", "branch", "commits", "hooks", "binaries", "permissions"] as const) {
     if (input[section] === undefined) continue;
     const settings = object(input[section], section);
     keys(settings, Object.keys(result[section]), section);
@@ -96,6 +99,9 @@ export function parseConfig(source: string): AgentToolConfig {
   if (!Array.isArray(result.versions.validate) || result.versions.validate.some(command => !strings(command) || command.length === 0 || !/^[\w.+-]+$/.test(command[0]!))) invalid("versions.validate");
   if (typeof result.versions.commitMessage !== "string" || !result.versions.commitMessage.trim() || /[\r\n]/.test(result.versions.commitMessage)) invalid("versions.commitMessage");
   if (typeof result.pr.rejectClaudeBranding !== "boolean") invalid("pr.rejectClaudeBranding");
+  // Names become literal tokens in harness rules, so keep them free of rule syntax.
+  const executables = object(result.permissions.executables, "permissions.executables");
+  for (const [name, value] of Object.entries(executables)) if (!/^[\w.+-]+$/.test(name) || !(typeof value === "string" && Object.hasOwn(CLASSES, value))) invalid(`permissions.executables.${name}`);
   validateWorkflowConfig(result);
   return result;
 }

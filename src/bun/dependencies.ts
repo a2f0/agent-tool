@@ -4,6 +4,7 @@ import path from "node:path";
 import { createLog } from "../commands/logFile";
 import { DEFAULT_LIMITS, printLogTail } from "../commands/output";
 import { assert, flag, option, output } from "../workflows/core";
+import { bunExecute } from "./execute";
 import { pinnedBun, type BunExecutable } from "./toolchain";
 import { lockedWorkspaceVersions, lostWorkspaceReferences } from "../version/lockfileVersions";
 import { packageDirectories, workspacePackage } from "./workspace";
@@ -19,7 +20,9 @@ const USAGE = `Usage:
   agent-tool bun install [--cwd <dir>]
   agent-tool bun add <name@version>... [--dev|--optional|--peer] [--exact] [--cwd <dir>]
   agent-tool bun update <name[@version]>... [--cwd <dir>]
-  agent-tool bun remove <name>... [--cwd <dir>]`;
+  agent-tool bun remove <name>... [--cwd <dir>]
+  agent-tool bun test [--cwd <dir>] [--log] [-- args...]
+  agent-tool bun x <executable> [--cwd <dir>] [--log] [-- args...]`;
 
 type Manifest = Record<string, unknown> & Partial<Record<Section, Record<string, string>>>;
 interface Requested { name: string; spec?: string }
@@ -175,8 +178,9 @@ function plan(action: "add" | "update" | "remove", manifest: Manifest, requested
   return [...groups].map(([flags, packages]) => ["add", ...(flags ? flags.split(" ") : []), ...packages]);
 }
 
-export function bunCommand(args: string[]): number {
+export function bunCommand(args: string[]): number | Promise<number> {
   const action = args.shift();
+  if (action === "test" || action === "x") return bunExecute(action, args);
   assert(action === "install" || action === "add" || action === "update" || action === "remove", USAGE);
   const target = path.resolve(option(args, "--cwd") ?? ".");
   assert(existsSync(path.join(target, "package.json")), `No package.json in ${target}.`);
