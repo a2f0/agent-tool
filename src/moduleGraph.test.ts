@@ -47,7 +47,7 @@ function stripNonCode(source: string): string {
     quoted ?? match.replace(/[^\n]/g, " "));
 }
 
-const SPECIFIER = /\b(?:import|export)\s+(?:type\s+)?(?:[\w*{}\s,$]+?\s+from\s+)?["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']\s*\)/g;
+const SPECIFIER = /\b(?:import|export)(?:\s+type\b)?\s*(?:[\w*{}\s,$]*?\bfrom\s*)?["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']\s*\)/g;
 
 function relativeImports(source: string): string[] {
   return [...stripNonCode(source).matchAll(SPECIFIER)].map(match => match[1] ?? match[2]).filter(specifier => specifier.startsWith("."));
@@ -124,8 +124,10 @@ describe("module graph", () => {
       '/* import { i } from "./i"; */',
       'const preload = `import { j } from "./j";`;',
       'import { k } from "node:fs";',
+      'import{l}from"./l";import type{M}from"./m";export*from"./n";import"./o";',
+      'import p, * as q from "./p";',
     ].join("\n");
-    expect(relativeImports(source)).toEqual(["./a", "./b", "./c", "./d", "./e", "./f", "./g"]);
+    expect(relativeImports(source)).toEqual(["./a", "./b", "./c", "./d", "./e", "./f", "./g", "./l", "./m", "./n", "./o", "./p"]);
   });
 
   test("detects a planted cycle and a planted layer violation", () => {
