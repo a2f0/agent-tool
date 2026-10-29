@@ -337,7 +337,8 @@ file. It replaces per-repository module-graph tests: put the section in
 - **Files**: `include` globs, relative to the directory the command runs in
   (`--repo`), select the sources scanned; `exclude` removes matches. Only `.ts`,
   `.tsx`, `.mts`, and `.cts` files are scanned; declaration files (`.d.ts`,
-  `.d.mts`, `.d.cts`) and anything under `node_modules` are skipped. Globs use
+  `.d.mts`, `.d.cts`) and anything under `node_modules` or `.git` are skipped;
+  hidden directories are scanned. Globs use
   Bun's syntax (`**`, `*`, `{a,b}`); they may not be absolute, contain `.` or
   `..` segments, or start with `!`. `include` must name at least one glob.
 - **Edges**: every import form counts, type-only ones included: `import`,
@@ -348,7 +349,8 @@ file. It replaces per-repository module-graph tests: put the section in
   followed; bare packages and path aliases are leaves. A specifier resolves
   as TypeScript does: the exact file, an emitted extension's source (`.js` to
   `.ts` or `.tsx`, `.jsx` to `.tsx`, `.mjs` to `.mts`, `.cjs` to `.cts`), then
-  `.ts`, `.tsx`, `/index.ts`, and `/index.tsx`. An import of a file outside the
+  `.ts`, `.tsx`, `/index.ts`, and `/index.tsx`; `.`, `..`, and a trailing slash
+  name a directory, so only its index matches. An import of a file outside the
   scanned set is a leaf.
 - **Cycles** are checked across every scanned file, tests included. The report
   lists the cycles a depth-first search finds, at least one through every
@@ -380,7 +382,8 @@ The command prints one JSON report and exits 0 only when `ok` is true:
 
 The scanner reads text, not a TypeScript syntax tree. A quote or backtick in
 JSX text (`<p>don't</p>`) reads as the start of a string, which can hide an
-import later on that line, or later in the file for a backtick.
+import later on that line, or later in the file for a backtick; `}/>` always
+reads as the end of a JSX tag.
 
 ## Portable skills
 

@@ -30,9 +30,11 @@ export function sourceFiles(root: string, config: GraphConfig): string[] {
   const excluded = matcher(config.exclude);
   const files = new Set<string>();
   for (const pattern of config.include) {
-    for (const file of new Bun.Glob(pattern).scanSync({ cwd: root, onlyFiles: true })) {
+    // Hidden directories hold sources too; Git metadata and installed packages never do.
+    for (const file of new Bun.Glob(pattern).scanSync({ cwd: root, onlyFiles: true, dot: true })) {
       const relative = file.split(path.sep).join("/");
-      if (SOURCE.test(relative) && !DECLARATION.test(relative) && !relative.split("/").includes("node_modules") && !excluded(relative)) files.add(relative);
+      const parts = relative.split("/");
+      if (SOURCE.test(relative) && !DECLARATION.test(relative) && !parts.includes("node_modules") && !parts.includes(".git") && !excluded(relative)) files.add(relative);
     }
   }
   return [...files].sort();
@@ -50,11 +52,16 @@ function isFile(root: string, file: string): boolean {
 export function resolveImport(root: string, from: string, specifier: string): string | undefined {
   const base = path.posix.normalize(path.posix.join(path.posix.dirname(from), specifier)).replace(/\/+$/, "");
   if (base.startsWith("../") || base === "..") return undefined;
+  // `.`, `..`, and a trailing slash name a directory, so only its index can match.
+  const directory = /(?:^|\/)\.{1,2}$|\/$/.test(specifier);
+  // `.` is the repository root itself, whose index has no directory prefix.
+  const prefix = base === "." ? "" : `${base}/`;
   const extension = path.posix.extname(base);
   const stem = base.slice(0, base.length - extension.length);
-  // `.` is the repository root itself, whose index has no directory prefix.
-  const candidates = base === "." ? ["index.ts", "index.tsx"]
-    : [base, ...(EMITTED[extension] ?? []).map(source => stem + source), `${base}.ts`, `${base}.tsx`, `${base}/index.ts`, `${base}/index.tsx`];
+  const candidates = [
+    ...(directory ? [] : [base, ...(EMITTED[extension] ?? []).map(source => stem + source), `${base}.ts`, `${base}.tsx`]),
+    `${prefix}index.ts`, `${prefix}index.tsx`,
+  ];
   return candidates.find(candidate => SOURCE.test(candidate) && !DECLARATION.test(candidate) && isFile(root, candidate));
 }
 

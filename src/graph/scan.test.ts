@@ -117,9 +117,14 @@ describe("relativeImports", () => {
     expect(relativeImports(source)).toEqual(["./a", "./b", "./c", "./d"]);
   });
 
-  test("reads JSX closing tags as code and skips a shebang", () => {
-    const tsx = '#!/usr/bin/env bun\nimport { A } from "./a";\nconst view = <a href="/x">ok</a>; import "./b";';
-    expect(relativeImports(tsx)).toEqual(["./a", "./b"]);
+  test("reads JSX closing and self-closing tags as code and skips a shebang", () => {
+    const tsx = [
+      '#!/usr/bin/env bun\nimport { A } from "./a";',
+      'const view = <a href="/x">ok</a>; import "./b";',
+      'const list = <><A x={1}/><B x={import("./c")}/><C {...props} /></>; import "./d";',
+      'const e = s.split(/>/); if (ok) { x = 1 } /"/.test(s); import "./e";',
+    ].join("\n");
+    expect(relativeImports(tsx)).toEqual(["./a", "./b", "./c", "./d", "./e"]);
   });
 
   test("keeps bare packages out of relative imports and preserves offsets", () => {

@@ -35,9 +35,10 @@ describe("sourceFiles", () => {
     const root = fixture({
       "src/a.ts": "", "src/b.tsx": "", "src/c.mts": "", "src/d.cts": "",
       "src/e.d.ts": "", "src/f.d.mts": "", "src/g.d.cts": "", "src/h.js": "", "src/i.json": "",
-      "src/node_modules/pkg/index.ts": "", "src/vendor/v.ts": "", "other/o.ts": "",
+      "src/node_modules/pkg/index.ts": "", "src/vendor/v.ts": "", "other/o.ts": "", "src/.hidden/h.ts": "", ".git/hooks/x.ts": "",
     });
-    expect(sourceFiles(root, config({ include: ["src/**"], exclude: ["**/vendor/**"] }))).toEqual(["src/a.ts", "src/b.tsx", "src/c.mts", "src/d.cts"]);
+    expect(sourceFiles(root, config({ include: ["src/**"], exclude: ["**/vendor/**"] }))).toEqual(["src/.hidden/h.ts", "src/a.ts", "src/b.tsx", "src/c.mts", "src/d.cts"]);
+    expect(sourceFiles(root, config({ include: ["**"], exclude: ["src/**"] }))).toEqual(["other/o.ts"]);
   });
 });
 
@@ -63,6 +64,10 @@ describe("resolveImport", () => {
     expect(resolveImport(repo, "src/deep/x.ts", "../a")).toBe("src/a.ts");
     expect(resolveImport(repo, "src/x.ts", "./both")).toBe("src/both.ts");
     expect(resolveImport(repo, "src/x.ts", "./dir/")).toBe("src/dir/index.ts");
+    expect(resolveImport(repo, "src/x.ts", "./both/")).toBe("src/both/index.ts");
+    expect(resolveImport(repo, "src/both/x.ts", ".")).toBe("src/both/index.ts");
+    expect(resolveImport(repo, "src/both/deep/x.ts", "..")).toBe("src/both/index.ts");
+    expect(resolveImport(repo, "src/both/deep/x.ts", "../.")).toBe("src/both/index.ts");
     expect(resolveImport(repo, "src/dir/x.ts", ".")).toBe("src/dir/index.ts");
     expect(resolveImport(repo, "src/dir/x.ts", "..")).toBe("src/index.ts");
   });

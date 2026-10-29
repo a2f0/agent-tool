@@ -39,6 +39,13 @@ export function stripNonCode(source: string): string {
     return text;
   };
   const lastCode = (i: number) => { let j = i - 1; while (j >= 0 && /\s/.test(out[j]!)) j--; return j; };
+  const regexAt = (i: number) => {
+    const last = out[lastCode(i)];
+    if (last === ")") return controlClose.has(lastCode(i));
+    // `}/>` closes a JSX element whose last attribute is an expression (`<A x={1}/>`).
+    if (last === "}" && source[i + 1] === ">") return false;
+    return startsRegex(before(i));
+  };
   // Open parentheses, each true when it opened a control-flow condition, and the offsets of `)`s that closed one.
   const parens: boolean[] = [];
   const controlClose = new Set<number>();
@@ -67,7 +74,7 @@ export function stripNonCode(source: string): string {
       const end = source.indexOf("*/", i + 2);
       const stop = end === -1 ? source.length : end + 2;
       blank(i, stop); i = stop;
-    } else if (char === "/" && (out[lastCode(i)] === ")" ? controlClose.has(lastCode(i)) : startsRegex(before(i)))) {
+    } else if (char === "/" && regexAt(i)) {
       // Skip to the closing slash, honoring escapes and character classes, where `/` is literal.
       const start = ++i;
       let inClass = false;
