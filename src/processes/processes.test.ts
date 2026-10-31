@@ -3,6 +3,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { adoptable } from "./commands";
 import { parseFields, parseRows, startOf } from "./table";
 
 const cli = path.resolve(import.meta.dir, "../index.ts");
@@ -46,6 +47,15 @@ test("reads ps rows and lsof fields", () => {
   ]);
   expect(parseFields("p10\nn/a\nn/b\np11\nn*:8080\n")).toEqual(new Map([[10, ["/a", "/b"]], [11, ["*:8080"]]]));
   expect(startOf(process.pid)).toMatch(/\d{2}:\d{2}:\d{2} \d{4}$/);
+});
+
+test("adopts a quick launcher's group members only with evidence they are its own", () => {
+  const row = (pid: number, started: string) => ({ pid, ppid: 1, pgid: 50, started, command: "x" });
+  const spawned = Date.parse("2026-10-30T21:43:01.400Z"), exited = Date.parse("2026-10-30T21:43:01.900Z");
+  const rows = [row(51, "Fri Oct 30 21:43:01 2026"), row(52, "Fri Oct 30 21:43:05 2026"), row(53, "Fri Oct 30 21:50:00 2026"), row(54, "Fri Oct 30 21:43:00 2026")];
+  // 51 started while the launcher ran (54 within the margin); 52 and 53 after it exited, as a
+  // reused group would; 53 still counts when it carries the record's id.
+  expect(adoptable(rows, new Set([53]), spawned, exited).map(item => item.pid)).toEqual([51, 53, 54]);
 });
 
 test("starts, lists and stops a recorded process group, including its children", async () => {

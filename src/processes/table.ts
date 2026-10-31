@@ -41,12 +41,13 @@ export function startOf(pid: number): string | undefined {
 /** lsof's output, or undefined when it is missing or failed rather than finding nothing. */
 function lsof(args: string[]): string | undefined {
   try {
-    return execFileSync("lsof", args, { encoding: "utf8", env: C_LOCALE, stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 });
+    return execFileSync("lsof", args, { encoding: "utf8", env: C_LOCALE, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
   } catch (error) {
-    // lsof exits 1 when nothing matches, or some files could not be read, with what it found on
-    // stdout; anything else (missing, killed, another status) is a failed inspection.
-    const result = error as { status?: number | null; stdout?: string };
-    return result.status === 1 ? result.stdout ?? "" : undefined;
+    // lsof exits 1 when nothing matches, perhaps with warnings. With another diagnostic, any other status, a
+    // missing binary or a signal, the inspection failed and may have missed what it looked for.
+    const result = error as { status?: number | null; stdout?: string; stderr?: string };
+    const failures = (result.stderr ?? "").split("\n").filter(line => line.trim() && !line.startsWith("lsof: WARNING"));
+    return result.status === 1 && failures.length === 0 ? result.stdout ?? "" : undefined;
   }
 }
 

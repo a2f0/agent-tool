@@ -8,7 +8,7 @@ import { createLog } from "../commands/logFile";
 import { plainText } from "../commands/output";
 import { assert, git, output } from "../workflows/core";
 import { ledgerDirectory, membersOf, newId, observe, readRecords, removeRecord, saveRecord, type ProcessRecord, type ProcessState } from "./ledger";
-import { ancestors, listeningPorts, processTable, startOf, workingDirectories, type ProcessRow } from "./table";
+import { ancestors, carrying, listeningPorts, processTable, startOf, workingDirectories, type ProcessRow } from "./table";
 
 const STOP_GRACE_MS = 5000;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -74,6 +74,19 @@ async function stopRecord(directory: string, record: ProcessRecord, grace = STOP
   return { id: record.id, stopped, remaining: stopped ? [] : live.map(row => row.pid) };
 }
 
+/**
+ * The members of a launcher's group that are provably its own once the launcher has exited and
+ * the group id could name another group: those carrying the record's id, or started while the
+ * launcher ran, to the second `ps` reports with a second's margin either side.
+ */
+export function adoptable(candidates: ProcessRow[], tagged: Set<number>, spawnedAt: number, exitedAt: number): ProcessRow[] {
+  const from = Math.floor(spawnedAt / 1000) * 1000 - 1000, until = exitedAt + 1000;
+  return candidates.filter(row => {
+    const at = Date.parse(`${row.started} UTC`);
+    return tagged.has(row.pid) || (at >= from && at <= until);
+  });
+}
+
 async function start(args: string[]): Promise<number> {
   let label: string | null = null, keep = false;
   while (args.length && args[0] !== "--") {
@@ -91,10 +104,12 @@ async function start(args: string[]): Promise<number> {
   let record: ProcessRecord | undefined;
   try {
     // Its own process group, so stopping it reaches everything it starts that stays in the group.
+    const spawnedAt = Date.now();
+    let exitedAt: number | undefined;
     const child = spawn(args[0]!, args.slice(1), { cwd: process.cwd(), detached: true, stdio: ["ignore", fd, fd], env: { ...process.env, AGENT_TOOL_PROCESS: id } });
     const exited = new Promise<{ code: number | null; error?: string }>(resolve => {
       child.once("error", error => resolve({ code: (error as NodeJS.ErrnoException).code === "ENOENT" ? 127 : 126, error: error.message }));
-      child.once("exit", code => resolve({ code }));
+      child.once("exit", code => { exitedAt = Date.now(); resolve({ code }); });
     });
     if (child.pid) {
       const started = startOf(child.pid);
@@ -123,9 +138,11 @@ async function start(args: string[]): Promise<number> {
         const { state, members } = membersOf(record, table);
         observe(directory, record, state, members);
       } else if (!table.has(child.pid)) {
-        // The launcher exited (perhaps before its identity could be read) but its group lives on:
-        // the group cannot have been reused while its members remain, so they are ours.
-        const survivors = [...table.values()].filter(row => row.pgid === child.pid);
+        // The launcher exited, perhaps before its identity could be read, and its group id may
+        // already name another group. A member is ours when it carries this record's id, or
+        // started while the launcher ran (to the second `ps` reports, with a second's margin).
+        const candidates = [...table.values()].filter(row => row.pgid === child.pid);
+        const survivors = adoptable(candidates, carrying(candidates.map(row => row.pid), "AGENT_TOOL_PROCESS", id), spawnedAt, exitedAt ?? Date.now());
         if (survivors.length) {
           record ??= { schemaVersion: 1, id, label, pid: child.pid, started: "", command: [...args], cwd: process.cwd(), log, startedAt: new Date().toISOString(), keep };
           record.members = survivors.map(row => ({ pid: row.pid, started: row.started }));
