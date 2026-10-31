@@ -44,6 +44,9 @@ export function saveRecord(directory: string, record: ProcessRecord): void {
 export function removeRecord(directory: string, id: string): void { rmSync(path.join(directory, `${id}.json`), { force: true }); }
 
 const ID = /^[a-f0-9]{8}$/;
+// Generous enough for any argv the OS accepts plus the member list, which keeps only live members.
+const MAX_RECORD_BYTES = 4 * 1024 * 1024;
+const MAX_MEMBERS = 1000;
 
 function valid(value: unknown): value is ProcessRecord {
   const record = value as ProcessRecord;
@@ -60,7 +63,7 @@ export function readRecords(directory: string): { records: ProcessRecord[]; skip
   for (const file of existsSync(directory) ? readdirSync(directory).filter(name => name.endsWith(".json")).sort() : []) {
     try {
       const full = path.join(directory, file), stat = lstatSync(full);
-      if (!stat.isFile() || stat.size > 64 * 1024) throw new Error("Not a process record file.");
+      if (!stat.isFile() || stat.size > MAX_RECORD_BYTES) throw new Error("Not a process record file.");
       const record = JSON.parse(readFileSync(full, "utf8")) as unknown;
       if (!valid(record) || `${record.id}.json` !== file) throw new Error("Invalid process record.");
       records.push(record);
@@ -79,14 +82,16 @@ export function membersOf(record: ProcessRecord, table: Map<number, ProcessRow>)
   const leader = table.get(record.pid);
   // Another process now holds the leader's pid, so the group id is no longer ours either.
   if (leader && leader.started !== record.started) return { state: "replaced", members: [] };
+  const seen = new Set((record.members ?? []).map(member => `${member.pid} ${member.started}`));
+  const known = (row: ProcessRow) => seen.has(`${row.pid} ${row.started}`);
   let group = [...table.values()].filter(row => row.pgid === record.pid);
   if (!leader) {
-    const seen = new Set((record.members ?? []).map(member => `${member.pid} ${member.started}`));
-    const unseen = group.filter(row => !seen.has(`${row.pid} ${row.started}`)).map(row => row.pid);
-    const tagged = carrying(unseen, "AGENT_TOOL_PROCESS", record.id);
-    group = group.filter(row => seen.has(`${row.pid} ${row.started}`) || tagged.has(row.pid));
+    const tagged = carrying(group.filter(row => !known(row)).map(row => row.pid), "AGENT_TOOL_PROCESS", record.id);
+    group = group.filter(row => known(row) || tagged.has(row.pid));
   }
-  const members = new Map(group.map(row => [row.pid, row]));
+  // Members seen before, wherever they are now: a descendant that left the group keeps its
+  // identity after its parent exits and it is no longer anyone's descendant.
+  const members = new Map([...group, ...[...table.values()].filter(known)].map(row => [row.pid, row]));
   // Children that left the group (setsid, a new process group) are still reached through their parents.
   for (let grew = true; grew;) {
     grew = false;
@@ -96,16 +101,12 @@ export function membersOf(record: ProcessRecord, table: Map<number, ProcessRow>)
   return { state: leader ? "running" : list.length ? "orphaned" : "exited", members: list };
 }
 
-/** Remembers the members seen while the leader runs, for when it has gone. */
+/** Remembers the live members seen while the leader runs, for when it has gone; dead ones are dropped. */
 export function observe(directory: string, record: ProcessRecord, state: ProcessState, members: ProcessRow[]): void {
   if (state !== "running") return;
-  const known = new Map((record.members ?? []).map(member => [`${member.pid} ${member.started}`, member]));
-  let changed = false;
-  for (const row of members) {
-    const key = `${row.pid} ${row.started}`;
-    if (!known.has(key)) { known.set(key, { pid: row.pid, started: row.started }); changed = true; }
-  }
-  if (!changed) return;
-  record.members = [...known.values()];
+  const next = members.slice(0, MAX_MEMBERS).map(row => ({ pid: row.pid, started: row.started }));
+  const key = (list: { pid: number; started: string }[]) => list.map(member => `${member.pid} ${member.started}`).sort().join("\n");
+  if (key(next) === key(record.members ?? [])) return;
+  record.members = next;
   try { saveRecord(directory, record); } catch { /* Best effort: an unrecorded member is only found while the leader runs. */ }
 }

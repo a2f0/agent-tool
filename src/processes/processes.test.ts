@@ -97,6 +97,24 @@ test("a process whose identity cannot be read is stopped, not left unrecorded", 
   expect(records(root)).toEqual([]);
 });
 
+test("a recorded descendant that left the group is stopped after its parent and the leader exit", async () => {
+  const root = repository();
+  const stubborn = 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)';
+  // The leader starts a detached descendant, waits to be listed, then exits.
+  const parent = `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(stubborn)}], { detached: true, stdio: "ignore" }); setTimeout(() => process.exit(0), 1500)`;
+  const started = agentTool(root, "proc", "start", "--", process.execPath, "-e", parent).json;
+  await sleep(700);
+  const members: { pid: number }[] = agentTool(root, "proc", "list").json.processes[0].members;
+  const descendant = members.find(member => member.pid !== started.pid)!.pid;
+  groups.push(descendant);
+  await sleep(1500);
+  expect(alive(started.pid)).toBe(false);
+  expect(agentTool(root, "proc", "list").json.processes[0]).toMatchObject({ state: "orphaned", members: [expect.objectContaining({ pid: descendant })] });
+  const result = agentTool(root, "teardown", "--apply");
+  expect(result.json.stopped).toEqual([{ id: started.id, stopped: true, remaining: [] }]);
+  expect(alive(descendant)).toBe(false);
+}, 30_000);
+
 test("a command that cannot start is reported at once and not recorded", () => {
   const root = repository();
   const result = agentTool(root, "proc", "start", "--", path.join(root, "missing-command"));
