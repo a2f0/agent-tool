@@ -80,14 +80,17 @@ export function readRecords(directory: string): { records: ProcessRecord[]; skip
  */
 export function membersOf(record: ProcessRecord, table: Map<number, ProcessRow>): { state: ProcessState; members: ProcessRow[] } {
   const leader = table.get(record.pid);
-  // Another process now holds the leader's pid, so the group id is no longer ours either.
-  if (leader && leader.started !== record.started) return { state: "replaced", members: [] };
+  const ours = !!leader && leader.started === record.started;
   const seen = new Set((record.members ?? []).map(member => `${member.pid} ${member.started}`));
   const known = (row: ProcessRow) => seen.has(`${row.pid} ${row.started}`);
-  let group = [...table.values()].filter(row => row.pgid === record.pid);
-  if (!leader) {
-    const tagged = carrying(group.filter(row => !known(row)).map(row => row.pid), "AGENT_TOOL_PROCESS", record.id);
-    group = group.filter(row => known(row) || tagged.has(row.pid));
+  let group: ProcessRow[] = [];
+  // Another process now holding the leader's pid makes the group id unreliable too: only
+  // remembered members still count.
+  if (ours) group = [...table.values()].filter(row => row.pgid === record.pid);
+  else if (!leader) {
+    const candidates = [...table.values()].filter(row => row.pgid === record.pid);
+    const tagged = carrying(candidates.filter(row => !known(row)).map(row => row.pid), "AGENT_TOOL_PROCESS", record.id);
+    group = candidates.filter(row => known(row) || tagged.has(row.pid));
   }
   // Members seen before, wherever they are now: a descendant that left the group keeps its
   // identity after its parent exits and it is no longer anyone's descendant.
@@ -98,7 +101,7 @@ export function membersOf(record: ProcessRecord, table: Map<number, ProcessRow>)
     for (const row of table.values()) if (!members.has(row.pid) && members.has(row.ppid)) { members.set(row.pid, row); grew = true; }
   }
   const list = [...members.values()].sort((a, b) => a.pid - b.pid);
-  return { state: leader ? "running" : list.length ? "orphaned" : "exited", members: list };
+  return { state: ours ? "running" : list.length ? "orphaned" : leader ? "replaced" : "exited", members: list };
 }
 
 /** Remembers the live members seen while the leader runs, for when it has gone; dead ones are dropped. */

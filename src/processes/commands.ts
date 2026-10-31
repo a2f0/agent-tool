@@ -52,7 +52,9 @@ async function stopRecord(directory: string, record: ProcessRecord, grace = STOP
     observe(directory, record, state, members);
     for (const member of members) known.set(member.pid, member.started);
     const live = [...known].filter(([pid, started]) => table.get(pid)?.started === started).map(([pid]) => table.get(pid)!);
-    return { group: alive(state), live };
+    // The group id is ours while our leader runs, or while a member we know still holds it;
+    // otherwise it may name someone else's group, and members are signalled one by one.
+    return { group: state === "running" || live.some(member => member.pgid === record.pid), live };
   };
   const send = (value: NodeJS.Signals) => {
     const { group, live } = look();
@@ -105,8 +107,9 @@ async function start(args: string[]): Promise<number> {
           await Promise.race([exited, bound(2000)]);
           throw new Error(`Could not record the process, so it was stopped: ${(error as Error).message}`);
         }
-      } else if (child.exitCode === null && child.signalCode === null) {
+      } else if (!(await Promise.race([exited, bound(300)]))) {
         // Running, but its identity could not be read, so it could never be stopped safely later.
+        // (One that already exited is reported below with its status.)
         signal(child.pid, "SIGKILL", true);
         await Promise.race([exited, bound(2000)]);
         throw new Error("Could not read the started process's identity with ps; stopped it. Nothing was recorded.");

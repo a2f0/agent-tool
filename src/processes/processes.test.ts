@@ -32,7 +32,8 @@ function agentTool(root: string, ...args: string[]) {
   return { status: result.status, stderr: result.stderr, json };
 }
 
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+// Running, not a zombie: this test's own children stay zombies until it reaps them.
+const alive = (pid: number) => { const stat = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim(); return stat !== "" && !stat.startsWith("Z"); };
 const records = (root: string) => { const directory = path.join(root, ".git/agent-tool/processes"); return existsSync(directory) ? readdirSync(directory) : []; };
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // A listening server that runs until killed.
@@ -195,6 +196,35 @@ test("a leaderless group counts only members it can prove are its own", async ()
   expect(result.json.stopped).toEqual([{ id: ours.id, stopped: true, remaining: [] }]);
   expect(alive(ourChild)).toBe(false);
   expect(alive(foreignChild)).toBe(true);
+}, 30_000);
+
+test("remembered members are stopped one by one when the group id may belong to someone else", async () => {
+  const root = repository();
+  const keepAlive = "setInterval(() => {}, 1000)";
+  const launcher = `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(keepAlive)}], { stdio: "ignore" }); setTimeout(() => process.exit(0), 100)`;
+  // A foreign group whose leader exited, so its id is free for a stale record to claim.
+  const foreign = spawn(process.execPath, ["-e", launcher], { detached: true, stdio: "ignore" });
+  groups.push(foreign.pid!);
+  // An unrelated live process now holding a recorded leader's pid.
+  const holder = spawn(process.execPath, ["-e", keepAlive], { detached: true, stdio: "ignore" });
+  children.push(holder);
+  // Our remembered members, each in a group of its own.
+  const mine = [0, 1].map(() => { const child = spawn(process.execPath, ["-e", keepAlive], { detached: true, stdio: "ignore" }); children.push(child); return child; });
+  await sleep(800);
+  const start = (pid: number) => spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } }).stdout.trim().replace(/\s+/g, " ");
+  const foreignChild = Number(spawnSync("pgrep", ["-g", String(foreign.pid)], { encoding: "utf8" }).stdout.trim().split("\n")[0]);
+  const directory = path.join(root, ".git/agent-tool/processes");
+  mkdirSync(directory, { recursive: true });
+  const record = (id: string, pid: number, member: ChildProcess) => writeFileSync(path.join(directory, `${id}.json`), JSON.stringify({ schemaVersion: 1, id, label: null, pid, started: "Thu Jan 1 00:00:00 2026", command: ["x"], cwd: root, log: "/dev/null", startedAt: new Date().toISOString(), keep: false, members: [{ pid: member.pid, started: start(member.pid!) }] }));
+  record("0000aaaa", foreign.pid!, mine[0]!);
+  record("0000bbbb", holder.pid!, mine[1]!);
+  const listed = Object.fromEntries(agentTool(root, "proc", "list").json.processes.map((item: { id: string; state: string }) => [item.id, item.state]));
+  expect(listed).toEqual({ "0000aaaa": "orphaned", "0000bbbb": "orphaned" });
+  const result = agentTool(root, "teardown", "--apply");
+  expect(result.json.stopped.every((item: { stopped: boolean }) => item.stopped)).toBe(true);
+  expect(mine.map(child => alive(child.pid!))).toEqual([false, false]);
+  expect(alive(foreignChild)).toBe(true);
+  expect(alive(holder.pid!)).toBe(true);
 }, 30_000);
 
 test("a process that cannot be recorded is stopped", async () => {
