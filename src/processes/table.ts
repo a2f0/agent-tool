@@ -7,37 +7,45 @@ import { readFileSync, readlinkSync } from "node:fs";
 export interface ProcessRow { pid: number; ppid: number; pgid: number; started: string; command: string }
 
 const C_LOCALE = { ...process.env, LC_ALL: "C", LANG: "C" };
-// `lstart` prints a fixed-width date of five fields, such as `Fri Oct 30 21:43:01 2026`.
-const ROW = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s(.*)$/;
+// `stat` is one token; `lstart` prints a fixed-width date of five fields, such as `Fri Oct 30 21:43:01 2026`.
+const ROW = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s(.*)$/;
 
+/**
+ * Rows of `ps -o pid=,ppid=,pgid=,stat=,lstart=,command=`. Zombies are left out: they have
+ * exited, cannot be signalled, and may never be reaped where PID 1 does not reap orphans.
+ */
 export function parseRows(text: string): ProcessRow[] {
   return text.split("\n").flatMap(line => {
     const match = ROW.exec(line);
-    return match ? [{ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), started: match[4]!.replace(/\s+/g, " "), command: match[5]!.trim() }] : [];
+    if (!match || match[4]!.startsWith("Z")) return [];
+    return [{ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), started: match[5]!.replace(/\s+/g, " "), command: match[6]!.trim() }];
   });
 }
 
-/** Every process, by pid. */
+/** Every live process, by pid. */
 export function processTable(): Map<number, ProcessRow> {
-  const text = execFileSync("ps", ["-A", "-o", "pid=,ppid=,pgid=,lstart=,command="], { encoding: "utf8", env: C_LOCALE, maxBuffer: 64 * 1024 * 1024 });
+  const text = execFileSync("ps", ["-A", "-o", "pid=,ppid=,pgid=,stat=,lstart=,command="], { encoding: "utf8", env: C_LOCALE, maxBuffer: 64 * 1024 * 1024 });
   return new Map(parseRows(text).map(row => [row.pid, row]));
 }
 
 /** When a running process started, as `ps` prints it, or undefined once it has gone. */
 export function startOf(pid: number): string | undefined {
   try {
-    const text = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env: C_LOCALE, stdio: ["ignore", "pipe", "ignore"] }).trim();
-    return text ? text.replace(/\s+/g, " ") : undefined;
+    const text = execFileSync("ps", ["-o", "stat=,lstart=", "-p", String(pid)], { encoding: "utf8", env: C_LOCALE, stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const match = /^(\S+)\s+(.+)$/.exec(text);
+    return match && !match[1]!.startsWith("Z") ? match[2]!.replace(/\s+/g, " ") : undefined;
   } catch { return undefined; }
 }
 
+/** lsof's output, or undefined when it is missing or failed rather than finding nothing. */
 function lsof(args: string[]): string | undefined {
   try {
     return execFileSync("lsof", args, { encoding: "utf8", env: C_LOCALE, stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 });
   } catch (error) {
-    // lsof exits 1 when nothing matches, with the matches it did find on stdout.
-    const result = error as { status?: number; stdout?: string; code?: string };
-    return result.code === "ENOENT" ? undefined : result.stdout ?? "";
+    // lsof exits 1 when nothing matches, or some files could not be read, with what it found on
+    // stdout; anything else (missing, killed, another status) is a failed inspection.
+    const result = error as { status?: number | null; stdout?: string };
+    return result.status === 1 ? result.stdout ?? "" : undefined;
   }
 }
 

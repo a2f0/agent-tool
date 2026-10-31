@@ -27,9 +27,9 @@ function signal(pid: number, value: NodeJS.Signals, group: boolean): void {
 
 interface Described { id: string; label: string | null; state: ProcessState; keep: boolean; pid: number; command: string[]; cwd: string; log: string; startedAt: string; members: { pid: number; command: string }[]; ports: string[] }
 
-function describe(directory: string, record: ProcessRecord, table: Map<number, ProcessRow>, ports: Map<number, string[]>): Described {
+// Read-only: `proc list` and report-only `teardown` never write records.
+function describe(record: ProcessRecord, table: Map<number, ProcessRow>, ports: Map<number, string[]>): Described {
   const { state, members } = membersOf(record, table);
-  observe(directory, record, state, members);
   return {
     id: record.id, label: record.label, state, keep: record.keep, pid: record.pid, command: record.command, cwd: record.cwd, log: record.log, startedAt: record.startedAt,
     members: members.map(row => ({ pid: row.pid, command: row.command })),
@@ -145,7 +145,7 @@ export async function procCommand(args: string[]): Promise<number> {
   if (action === "list") {
     assert(args.length === 0, "Usage: agent-tool proc list");
     const { records, skipped } = readRecords(directory), table = processTable(), { ports } = listeningPorts();
-    output({ processes: records.map(record => describe(directory, record, table, ports)), skipped });
+    output({ processes: records.map(record => describe(record, table, ports)), skipped });
     return 0;
   }
   assert(action === "stop", "Usage: agent-tool proc <start|list|stop>");
@@ -178,7 +178,7 @@ export interface TeardownReport {
 function survey(root: string, directory: string): Omit<TeardownReport, "ok" | "applied" | "stopped"> {
   const table = processTable(), { records, skipped } = readRecords(directory);
   const listening = listeningPorts(), cwd = workingDirectories(table.keys());
-  const described = records.map(record => describe(directory, record, table, listening.ports));
+  const described = records.map(record => describe(record, table, listening.ports));
   const owned = new Set(described.flatMap(item => alive(item.state) ? item.members.map(member => member.pid) : []));
   const excluded = ancestors(table);
   const untracked = [...cwd.cwd].flatMap(([pid, directoryOf]) => {
@@ -223,7 +223,8 @@ export async function teardownCommand(args: string[]): Promise<number> {
   if (apply) {
     const { records } = readRecords(directory), table = processTable();
     for (const record of records) {
-      const { state } = membersOf(record, table);
+      const { state, members } = membersOf(record, table);
+      observe(directory, record, state, members);
       if (!alive(state)) removeRecord(directory, record.id);
       else if (!record.keep) stopped.push(await stopRecord(directory, record));
     }

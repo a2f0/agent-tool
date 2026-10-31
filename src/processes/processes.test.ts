@@ -39,7 +39,7 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const SERVER = 'Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("x") }); setInterval(() => {}, 1000)';
 
 test("reads ps rows and lsof fields", () => {
-  expect(parseRows("  12     1    12 Fri Oct 30 21:43:01 2026 /bin/sh -c sleep 1\n  13    12    12 Sat Oct  3 01:02:03 2026 sleep 1\ngarbage\n")).toEqual([
+  expect(parseRows("  12     1    12 Ss   Fri Oct 30 21:43:01 2026 /bin/sh -c sleep 1\n  13    12    12 S+   Sat Oct  3 01:02:03 2026 sleep 1\n  14    12    12 Z    Sat Oct  3 01:02:04 2026 <defunct>\ngarbage\n")).toEqual([
     { pid: 12, ppid: 1, pgid: 12, started: "Fri Oct 30 21:43:01 2026", command: "/bin/sh -c sleep 1" },
     { pid: 13, ppid: 12, pgid: 12, started: "Sat Oct 3 01:02:03 2026", command: "sleep 1" },
   ]);

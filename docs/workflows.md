@@ -251,7 +251,13 @@ running past the work.
 the leader runs, `orphaned` when only its children remain, `exited`, or
 `replaced` when the leader's pid now names a different process (its start time
 differs), which is never signalled. Members are the group plus live descendants
-that left it; their listening TCP ports come from `lsof`. `proc stop` sends
+that left it; their listening TCP ports come from `lsof`, and zombies count as
+exited. `proc start`, `proc stop` and `teardown --apply` remember the members
+they see, by pid and start time, so a descendant that left the group is still
+stopped after its parent exits. Once the leader has gone, its pid and group id
+can be reused, so a member counts only when it was remembered or carries the
+record's `AGENT_TOOL_PROCESS`; macOS hides that variable for protected system
+binaries. `proc list` and `teardown` without `--apply` write nothing. `proc stop` sends
 SIGTERM to the group and to members outside it, SIGKILL after the grace period
 (five seconds by default), and removes the record once nothing remains.
 
@@ -264,7 +270,7 @@ SIGTERM to the group and to members outside it, SIGKILL after the grace period
   repository, with their listening ports, excluding agent-tool's own ancestors
   (the harness and shell that ran it) and pipeline siblings that do not listen;
 - `worktrees`: worktrees added to the repository, which may need removing;
-- `unavailable`: inspections the platform could not perform (no `lsof`).
+- `unavailable`: inspections that could not run (`lsof` missing or failing).
 
 It exits 1 while a leftover runs or an untracked process listens on a port.
 `--apply` stops leftovers and removes finished records; it never signals
