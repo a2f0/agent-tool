@@ -92,20 +92,29 @@ test("stop reaches a descendant that left the group, ignores SIGTERM and outlive
   expect(alive(descendant)).toBe(false);
 }, 30_000);
 
-test("a process whose identity cannot be read is stopped, not left unrecorded", async () => {
+test("nothing starts when ps cannot inspect processes", () => {
   const root = repository();
   // A PATH with git but no ps.
   const bin = path.join(root, ".bin");
   mkdirSync(bin);
   const gitPath = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
   symlinkSync(gitPath, path.join(bin, "git"));
-  const marker = path.join(root, "pid");
-  const result = spawnSync(process.execPath, [cli, "proc", "start", "--", process.execPath, "-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setInterval(() => {}, 1000)`], { cwd: root, encoding: "utf8", env: { ...process.env, PATH: bin }, timeout: 15_000 });
+  const marker = path.join(root, "started");
+  const result = spawnSync(process.execPath, [cli, "proc", "start", "--", process.execPath, "-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "")`], { cwd: root, encoding: "utf8", env: { ...process.env, PATH: bin }, timeout: 15_000 });
   expect(result.status).toBe(1);
-  expect(result.stderr).toContain("Could not read the started process's identity");
-  await sleep(300);
-  if (existsSync(marker)) expect(alive(Number(require("node:fs").readFileSync(marker, "utf8")))).toBe(false);
+  expect(result.stderr).toContain("Cannot inspect processes with ps, so nothing was started");
+  expect(existsSync(marker)).toBe(false);
   expect(records(root)).toEqual([]);
+});
+
+test("an unreadable record fails teardown", () => {
+  const root = repository();
+  const directory = path.join(root, ".git/agent-tool/processes");
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(path.join(directory, "0badc0de.json"), "{ not json");
+  const result = agentTool(root, "teardown");
+  expect(result.status).toBe(1);
+  expect(result.json.skipped).toEqual([{ file: "0badc0de.json", reason: expect.any(String) }]);
 });
 
 test("a recorded descendant that left the group is stopped after its parent and the leader exit", async () => {

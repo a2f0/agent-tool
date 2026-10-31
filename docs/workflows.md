@@ -271,10 +271,12 @@ SIGTERM to the group and to members outside it, SIGKILL after the grace period
   repository, with their listening ports, excluding agent-tool's own ancestors
   (the harness and shell that ran it) and pipeline siblings that do not listen;
 - `worktrees`: worktrees added to the repository, which may need removing;
-- `unavailable`: inspections that could not run (`lsof` missing or failing).
+- `unavailable`: inspections that could not run (`lsof` missing or failing);
+- `skipped`: record files that could not be read.
 
 It exits 1 while a leftover runs, an untracked process listens on a port, or an
-inspection is unavailable, since a server could then go unseen.
+inspection is unavailable or a record unreadable, since a running process could
+then go unseen. `proc start` refuses to start anything when `ps` cannot run.
 `--apply` stops leftovers and removes finished records; it never signals
 untracked processes or kept ones, and never removes worktrees, since they may be
 someone else's. Stop those deliberately, then run `teardown` again. Processes

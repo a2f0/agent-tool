@@ -100,6 +100,9 @@ async function start(args: string[]): Promise<number> {
   }
   assert(args.shift() === "--" && args[0], "Usage: agent-tool proc start [--label text] [--keep] -- <command> [args...]");
   const directory = ledgerDirectory();
+  // Without a working ps nothing started could be identified, recorded or stopped later.
+  try { processTable(); }
+  catch (error) { throw new Error(`Cannot inspect processes with ps, so nothing was started: ${(error as Error).message}`); }
   const id = newId(), { log, fd } = createLog("agent-tool-proc-");
   let record: ProcessRecord | undefined;
   try {
@@ -269,7 +272,8 @@ export async function teardownCommand(args: string[]): Promise<number> {
   }
   const found = survey(root, directory);
   // A clean report needs every inspection: without lsof a listening server would go unseen.
-  const ok = found.leftover.length === 0 && found.untracked.every(item => item.ports.length === 0) && found.unavailable.length === 0;
+  // Unreadable records may name running processes, so they fail teardown too.
+  const ok = found.leftover.length === 0 && found.untracked.every(item => item.ports.length === 0) && found.unavailable.length === 0 && found.skipped.length === 0;
   output({ ok, applied: apply, ...found, stopped } satisfies TeardownReport);
   return ok ? 0 : 1;
 }
