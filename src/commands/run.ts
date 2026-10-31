@@ -83,8 +83,9 @@ export async function runCommand(args: string[], record?: (receipt: RunReceipt) 
     // nothing else would notice them before the work is called done.
     let leftover: number | undefined;
     if (grouped && !interrupted && child.pid) {
+      // EPERM still means the group exists, now holding a process this user cannot signal.
       try { process.kill(-child.pid, 0); leftover = child.pid; }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "EPERM") leftover = child.pid; }
     }
     const receipt: RunReceipt = { status: exitCode === 0 ? "passed" : "failed", ...(label ? { label } : {}), exitCode, signal, durationMs: Math.round(performance.now() - started), outputBytes: fstatSync(fd).size, log, ...(leftover ? { leftoverProcessGroup: leftover } : {}) };
     record?.(receipt);

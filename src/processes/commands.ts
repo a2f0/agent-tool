@@ -191,12 +191,13 @@ export async function procCommand(args: string[]): Promise<number> {
   }
   assert(action === "stop", "Usage: agent-tool proc <start|list|stop>");
   const { all, ids, grace } = parseStopTargets(args);
-  const { records } = readRecords(directory);
+  const { records, skipped } = readRecords(directory);
   for (const id of ids) assert(records.some(record => record.id === id), `No recorded process '${id}'.`);
   const results = [];
   for (const record of records.filter(record => all || ids.includes(record.id))) results.push(await stopRecord(directory, record, grace));
-  output({ stopped: results });
-  return results.every(result => result.stopped) ? 0 : 1;
+  output({ stopped: results, skipped });
+  // An unreadable record may name processes --all could not stop.
+  return results.every(result => result.stopped) && (!all || skipped.length === 0) ? 0 : 1;
 }
 
 export interface TeardownReport {

@@ -115,6 +115,9 @@ test("an unreadable record fails teardown", () => {
   const result = agentTool(root, "teardown");
   expect(result.status).toBe(1);
   expect(result.json.skipped).toEqual([{ file: "0badc0de.json", reason: expect.any(String) }]);
+  const stopped = agentTool(root, "proc", "stop", "--all");
+  expect(stopped.status).toBe(1);
+  expect(stopped.json).toEqual({ stopped: [], skipped: [{ file: "0badc0de.json", reason: expect.any(String) }] });
 });
 
 test("a recorded descendant that left the group is stopped after its parent and the leader exit", async () => {
