@@ -38,25 +38,33 @@ const alive = (state: ProcessState) => state === "running" || state === "orphane
 
 /**
  * Stops one record's processes: SIGTERM to its group and to members outside it, then SIGKILL
- * after the grace period. Members are re-read from the live table each time, and only processes
- * matching the record (same leader start, same group or its descendants) are signalled.
+ * after the grace period. Every member seen is remembered with its start time, so a descendant
+ * that left the group and outlived its parent is still signalled, and only while it is the same
+ * process; the group is signalled only while its leader, or a member of it, is ours.
  */
 async function stopRecord(directory: string, record: ProcessRecord, grace = STOP_GRACE_MS): Promise<{ id: string; stopped: boolean; remaining: number[] }> {
-  const send = (value: NodeJS.Signals) => {
-    const { state, members } = membersOf(record, processTable());
-    if (!alive(state)) return 0;
-    signal(record.pid, value, true);
-    for (const member of members) if (member.pgid !== record.pid) signal(member.pid, value, false);
-    return members.length;
+  const known = new Map<number, string>();
+  const look = () => {
+    const table = processTable(), { state, members } = membersOf(record, table);
+    for (const member of members) known.set(member.pid, member.started);
+    const live = [...known].filter(([pid, started]) => table.get(pid)?.started === started).map(([pid]) => table.get(pid)!);
+    return { group: alive(state), live };
   };
+  const send = (value: NodeJS.Signals) => {
+    const { group, live } = look();
+    if (group) signal(record.pid, value, true);
+    for (const member of live) if (!group || member.pgid !== record.pid) signal(member.pid, value, false);
+  };
+  const running = () => { const { group, live } = look(); return group || live.length > 0; };
   send("SIGTERM");
   const deadline = performance.now() + grace;
-  while (performance.now() < deadline && alive(membersOf(record, processTable()).state)) await sleep(50);
+  while (performance.now() < deadline && running()) await sleep(50);
   send("SIGKILL");
-  for (let tries = 0; tries < 20 && alive(membersOf(record, processTable()).state); tries += 1) await sleep(50);
-  const { state, members } = membersOf(record, processTable());
-  if (!alive(state)) removeRecord(directory, record.id);
-  return { id: record.id, stopped: !alive(state), remaining: alive(state) ? members.map(row => row.pid) : [] };
+  for (let tries = 0; tries < 20 && running(); tries += 1) await sleep(50);
+  const { group, live } = look();
+  const stopped = !group && live.length === 0;
+  if (stopped) removeRecord(directory, record.id);
+  return { id: record.id, stopped, remaining: stopped ? [] : live.map(row => row.pid) };
 }
 
 async function start(args: string[]): Promise<number> {
@@ -86,6 +94,10 @@ async function start(args: string[]): Promise<number> {
       if (started) {
         record = { schemaVersion: 1, id, label, pid: child.pid, started, command: [...args], cwd: process.cwd(), log, startedAt: new Date().toISOString(), keep };
         saveRecord(directory, record);
+      } else if (child.exitCode === null && child.signalCode === null) {
+        // Running, but its identity could not be read, so it could never be stopped safely later.
+        signal(child.pid, "SIGKILL", true);
+        throw new Error("Could not read the started process's identity with ps; stopped it. Nothing was recorded.");
       }
     }
     // A command that fails at once is reported here rather than found later.

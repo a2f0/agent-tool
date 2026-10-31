@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parseFields, parseRows, startOf } from "./table";
@@ -64,6 +64,37 @@ test("starts, lists and stops a recorded process group, including its children",
   expect(members.filter(alive)).toEqual([]);
   expect(records(root)).toEqual([]);
   expect(agentTool(root, "proc", "stop", "deadbeef").status).toBe(1);
+});
+
+test("stop reaches a descendant that left the group, ignores SIGTERM and outlived its parent", async () => {
+  const root = repository();
+  const stubborn = 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)';
+  const parent = `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(stubborn)}], { detached: true, stdio: "ignore" }); setInterval(() => {}, 1000)`;
+  const started = agentTool(root, "proc", "start", "--", process.execPath, "-e", parent).json;
+  await sleep(800);
+  const members: { pid: number }[] = agentTool(root, "proc", "list").json.processes[0].members;
+  expect(members.length).toBe(2);
+  const descendant = members.find(member => member.pid !== started.pid)!.pid;
+  groups.push(descendant);
+  const stopped = agentTool(root, "proc", "stop", started.id, "--grace-ms", "500");
+  expect(stopped.json.stopped).toEqual([{ id: started.id, stopped: true, remaining: [] }]);
+  expect(alive(descendant)).toBe(false);
+}, 30_000);
+
+test("a process whose identity cannot be read is stopped, not left unrecorded", async () => {
+  const root = repository();
+  // A PATH with git but no ps.
+  const bin = path.join(root, ".bin");
+  mkdirSync(bin);
+  const gitPath = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+  symlinkSync(gitPath, path.join(bin, "git"));
+  const marker = path.join(root, "pid");
+  const result = spawnSync(process.execPath, [cli, "proc", "start", "--", process.execPath, "-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setInterval(() => {}, 1000)`], { cwd: root, encoding: "utf8", env: { ...process.env, PATH: bin }, timeout: 15_000 });
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("Could not read the started process's identity");
+  await sleep(300);
+  if (existsSync(marker)) expect(alive(Number(require("node:fs").readFileSync(marker, "utf8")))).toBe(false);
+  expect(records(root)).toEqual([]);
 });
 
 test("a command that cannot start is reported at once and not recorded", () => {
