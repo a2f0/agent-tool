@@ -6,7 +6,8 @@ import { readFileSync, readlinkSync } from "node:fs";
 
 export interface ProcessRow { pid: number; ppid: number; pgid: number; started: string; command: string }
 
-const C_LOCALE = { ...process.env, LC_ALL: "C", LANG: "C" };
+// One locale and time zone, so start times read the same in every shell that compares them.
+const C_LOCALE = { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" };
 // `stat` is one token; `lstart` prints a fixed-width date of five fields, such as `Fri Oct 30 21:43:01 2026`.
 const ROW = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s(.*)$/;
 

@@ -116,6 +116,22 @@ test("a recorded descendant that left the group is stopped after its parent and 
   expect(alive(descendant)).toBe(false);
 }, 30_000);
 
+test("a launcher that exits at once still leaves its survivors recorded and stoppable", async () => {
+  const root = repository();
+  const quick = `require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" }); process.exit(0)`;
+  for (const command of [[process.execPath, "-e", quick], ["sh", "-c", "sleep 300 >/dev/null 2>&1 &"]]) {
+    const started = agentTool(root, "proc", "start", "--", ...command);
+    expect(started.status).toBe(0);
+    expect(started.json.exited).toBe(0);
+    const listed = agentTool(root, "proc", "list").json.processes.find((item: { id: string }) => item.id === started.json.id);
+    expect(listed).toMatchObject({ state: "orphaned", members: [expect.anything()] });
+    const survivor = listed.members[0].pid;
+    const result = agentTool(root, "teardown", "--apply");
+    expect(result.json.stopped).toEqual([{ id: started.json.id, stopped: true, remaining: [] }]);
+    expect(alive(survivor)).toBe(false);
+  }
+}, 60_000);
+
 test("a command that cannot start is reported at once and not recorded", () => {
   const root = repository();
   const result = agentTool(root, "proc", "start", "--", path.join(root, "missing-command"));
@@ -211,7 +227,7 @@ test("remembered members are stopped one by one when the group id may belong to 
   // Our remembered members, each in a group of its own.
   const mine = [0, 1].map(() => { const child = spawn(process.execPath, ["-e", keepAlive], { detached: true, stdio: "ignore" }); children.push(child); return child; });
   await sleep(800);
-  const start = (pid: number) => spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } }).stdout.trim().replace(/\s+/g, " ");
+  const start = (pid: number) => spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C", TZ: "UTC" } }).stdout.trim().replace(/\s+/g, " ");
   const foreignChild = Number(spawnSync("pgrep", ["-g", String(foreign.pid)], { encoding: "utf8" }).stdout.trim().split("\n")[0]);
   const directory = path.join(root, ".git/agent-tool/processes");
   mkdirSync(directory, { recursive: true });

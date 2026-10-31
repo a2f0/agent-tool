@@ -109,7 +109,6 @@ async function start(args: string[]): Promise<number> {
         }
       } else if (!(await Promise.race([exited, bound(300)]))) {
         // Running, but its identity could not be read, so it could never be stopped safely later.
-        // (One that already exited is reported below with its status.)
         signal(child.pid, "SIGKILL", true);
         await Promise.race([exited, bound(2000)]);
         throw new Error("Could not read the started process's identity with ps; stopped it. Nothing was recorded.");
@@ -118,7 +117,26 @@ async function start(args: string[]): Promise<number> {
     // A command that fails at once is reported here rather than found later.
     const early = await Promise.race([exited, bound(300)]);
     child.unref();
-    if (record && !early) { const { state, members } = membersOf(record, processTable()); observe(directory, record, state, members); }
+    if (child.pid) {
+      const table = processTable();
+      if (table.get(child.pid)?.started === record?.started && record) {
+        const { state, members } = membersOf(record, table);
+        observe(directory, record, state, members);
+      } else if (!table.has(child.pid)) {
+        // The launcher exited (perhaps before its identity could be read) but its group lives on:
+        // the group cannot have been reused while its members remain, so they are ours.
+        const survivors = [...table.values()].filter(row => row.pgid === child.pid);
+        if (survivors.length) {
+          record ??= { schemaVersion: 1, id, label, pid: child.pid, started: "", command: [...args], cwd: process.cwd(), log, startedAt: new Date().toISOString(), keep };
+          record.members = survivors.map(row => ({ pid: row.pid, started: row.started }));
+          try { saveRecord(directory, record); }
+          catch (error) {
+            for (const row of survivors) signal(row.pid, "SIGKILL", false);
+            throw new Error(`Could not record the processes the command left running, so they were stopped: ${(error as Error).message}`);
+          }
+        }
+      }
+    }
     const receipt = { id, ...(label ? { label } : {}), pid: child.pid ?? null, keep, log, ...(early ? { exited: early.code, ...(early.error ? { error: early.error } : {}) } : {}) };
     if (early && record && !alive(membersOf(record, processTable()).state)) removeRecord(directory, id);
     output(receipt);
@@ -233,7 +251,8 @@ export async function teardownCommand(args: string[]): Promise<number> {
     }
   }
   const found = survey(root, directory);
-  const ok = found.leftover.length === 0 && found.untracked.every(item => item.ports.length === 0);
+  // A clean report needs every inspection: without lsof a listening server would go unseen.
+  const ok = found.leftover.length === 0 && found.untracked.every(item => item.ports.length === 0) && found.unavailable.length === 0;
   output({ ok, applied: apply, ...found, stopped } satisfies TeardownReport);
   return ok ? 0 : 1;
 }

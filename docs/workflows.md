@@ -243,7 +243,8 @@ in the current directory, in its own process group, with output in a private
 (`agent-tool/processes/`), so every worktree, session and harness of the clone
 sees it. It prints a JSON receipt with the record `id`, `pid` and `log`; a
 command that exits within its first 300 ms is reported with its exit status, and
-one that cannot start returns 127 or 126 without a record. Children see
+one that cannot start returns 127 or 126 without a record. Processes a quickly
+exiting command leaves in its group (`sh -c 'server &'`) stay recorded. Children see
 `AGENT_TOOL_PROCESS=<id>`. `--keep` marks a process the user asked to keep
 running past the work.
 
@@ -272,7 +273,8 @@ SIGTERM to the group and to members outside it, SIGKILL after the grace period
 - `worktrees`: worktrees added to the repository, which may need removing;
 - `unavailable`: inspections that could not run (`lsof` missing or failing).
 
-It exits 1 while a leftover runs or an untracked process listens on a port.
+It exits 1 while a leftover runs, an untracked process listens on a port, or an
+inspection is unavailable, since a server could then go unseen.
 `--apply` stops leftovers and removes finished records; it never signals
 untracked processes or kept ones, and never removes worktrees, since they may be
 someone else's. Stop those deliberately, then run `teardown` again. Processes
