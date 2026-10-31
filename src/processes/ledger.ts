@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { git } from "../workflows/core";
-import type { ProcessRow } from "./table";
+import { carrying, type ProcessRow } from "./table";
 
 export interface ProcessRecord {
   schemaVersion: 1;
@@ -22,6 +22,8 @@ export interface ProcessRecord {
   startedAt: string;
   /** Started to outlive the work, such as a dev server the user asked to keep: teardown reports it without failing. */
   keep: boolean;
+  /** Members seen while the leader ran, by start time, so they are still known once it has gone. */
+  members?: { pid: number; started: string }[];
 }
 
 export type ProcessState = "running" | "orphaned" | "exited" | "replaced";
@@ -48,7 +50,8 @@ function valid(value: unknown): value is ProcessRecord {
   return !!record && record.schemaVersion === 1 && typeof record.id === "string" && ID.test(record.id) && Number.isInteger(record.pid) && record.pid > 1
     && typeof record.started === "string" && Array.isArray(record.command) && record.command.every(arg => typeof arg === "string")
     && typeof record.cwd === "string" && typeof record.log === "string" && typeof record.startedAt === "string"
-    && (record.label === null || typeof record.label === "string") && typeof record.keep === "boolean";
+    && (record.label === null || typeof record.label === "string") && typeof record.keep === "boolean"
+    && (record.members === undefined || (Array.isArray(record.members) && record.members.every(member => Number.isInteger(member?.pid) && typeof member.started === "string")));
 }
 
 /** Every record, and the files that could not be read as one. */
@@ -66,12 +69,24 @@ export function readRecords(directory: string): { records: ProcessRecord[]; skip
   return { records, skipped };
 }
 
-/** The processes that belong to a record: its group, and the descendants of that group still alive. */
+/**
+ * The processes that belong to a record. While its leader runs, that is its group and the live
+ * descendants of the group. Once the leader has gone its pid, and so the group id, can be reused,
+ * so a leaderless member counts only when it was seen while the leader ran (same pid and start
+ * time) or carries the record's AGENT_TOOL_PROCESS id; descendants of counted members count too.
+ */
 export function membersOf(record: ProcessRecord, table: Map<number, ProcessRow>): { state: ProcessState; members: ProcessRow[] } {
   const leader = table.get(record.pid);
   // Another process now holds the leader's pid, so the group id is no longer ours either.
   if (leader && leader.started !== record.started) return { state: "replaced", members: [] };
-  const members = new Map([...table.values()].filter(row => row.pgid === record.pid).map(row => [row.pid, row]));
+  let group = [...table.values()].filter(row => row.pgid === record.pid);
+  if (!leader) {
+    const seen = new Set((record.members ?? []).map(member => `${member.pid} ${member.started}`));
+    const unseen = group.filter(row => !seen.has(`${row.pid} ${row.started}`)).map(row => row.pid);
+    const tagged = carrying(unseen, "AGENT_TOOL_PROCESS", record.id);
+    group = group.filter(row => seen.has(`${row.pid} ${row.started}`) || tagged.has(row.pid));
+  }
+  const members = new Map(group.map(row => [row.pid, row]));
   // Children that left the group (setsid, a new process group) are still reached through their parents.
   for (let grew = true; grew;) {
     grew = false;
@@ -79,4 +94,18 @@ export function membersOf(record: ProcessRecord, table: Map<number, ProcessRow>)
   }
   const list = [...members.values()].sort((a, b) => a.pid - b.pid);
   return { state: leader ? "running" : list.length ? "orphaned" : "exited", members: list };
+}
+
+/** Remembers the members seen while the leader runs, for when it has gone. */
+export function observe(directory: string, record: ProcessRecord, state: ProcessState, members: ProcessRow[]): void {
+  if (state !== "running") return;
+  const known = new Map((record.members ?? []).map(member => [`${member.pid} ${member.started}`, member]));
+  let changed = false;
+  for (const row of members) {
+    const key = `${row.pid} ${row.started}`;
+    if (!known.has(key)) { known.set(key, { pid: row.pid, started: row.started }); changed = true; }
+  }
+  if (!changed) return;
+  record.members = [...known.values()];
+  try { saveRecord(directory, record); } catch { /* Best effort: an unrecorded member is only found while the leader runs. */ }
 }

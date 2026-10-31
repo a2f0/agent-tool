@@ -7,11 +7,13 @@ import path from "node:path";
 import { createLog } from "../commands/logFile";
 import { plainText } from "../commands/output";
 import { assert, git, output } from "../workflows/core";
-import { ledgerDirectory, membersOf, newId, readRecords, removeRecord, saveRecord, type ProcessRecord, type ProcessState } from "./ledger";
+import { ledgerDirectory, membersOf, newId, observe, readRecords, removeRecord, saveRecord, type ProcessRecord, type ProcessState } from "./ledger";
 import { ancestors, listeningPorts, processTable, startOf, workingDirectories, type ProcessRow } from "./table";
 
 const STOP_GRACE_MS = 5000;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+// A bound on another wait that does not itself keep the process alive once that wait is over.
+const bound = (ms: number) => new Promise<undefined>(resolve => { (setTimeout(resolve, ms) as unknown as NodeJS.Timeout).unref(); });
 
 function within(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
@@ -25,8 +27,9 @@ function signal(pid: number, value: NodeJS.Signals, group: boolean): void {
 
 interface Described { id: string; label: string | null; state: ProcessState; keep: boolean; pid: number; command: string[]; cwd: string; log: string; startedAt: string; members: { pid: number; command: string }[]; ports: string[] }
 
-function describe(record: ProcessRecord, table: Map<number, ProcessRow>, ports: Map<number, string[]>): Described {
+function describe(directory: string, record: ProcessRecord, table: Map<number, ProcessRow>, ports: Map<number, string[]>): Described {
   const { state, members } = membersOf(record, table);
+  observe(directory, record, state, members);
   return {
     id: record.id, label: record.label, state, keep: record.keep, pid: record.pid, command: record.command, cwd: record.cwd, log: record.log, startedAt: record.startedAt,
     members: members.map(row => ({ pid: row.pid, command: row.command })),
@@ -46,6 +49,7 @@ async function stopRecord(directory: string, record: ProcessRecord, grace = STOP
   const known = new Map<number, string>();
   const look = () => {
     const table = processTable(), { state, members } = membersOf(record, table);
+    observe(directory, record, state, members);
     for (const member of members) known.set(member.pid, member.started);
     const live = [...known].filter(([pid, started]) => table.get(pid)?.started === started).map(([pid]) => table.get(pid)!);
     return { group: alive(state), live };
@@ -63,6 +67,7 @@ async function stopRecord(directory: string, record: ProcessRecord, grace = STOP
   for (let tries = 0; tries < 20 && running(); tries += 1) await sleep(50);
   const { group, live } = look();
   const stopped = !group && live.length === 0;
+  // observe() may have rewritten the record while stopping; remove it only after the last look.
   if (stopped) removeRecord(directory, record.id);
   return { id: record.id, stopped, remaining: stopped ? [] : live.map(row => row.pid) };
 }
@@ -93,16 +98,24 @@ async function start(args: string[]): Promise<number> {
       const started = startOf(child.pid);
       if (started) {
         record = { schemaVersion: 1, id, label, pid: child.pid, started, command: [...args], cwd: process.cwd(), log, startedAt: new Date().toISOString(), keep };
-        saveRecord(directory, record);
+        try { saveRecord(directory, record); }
+        catch (error) {
+          // An unrecorded process could never be found and stopped by teardown.
+          signal(child.pid, "SIGKILL", true);
+          await Promise.race([exited, bound(2000)]);
+          throw new Error(`Could not record the process, so it was stopped: ${(error as Error).message}`);
+        }
       } else if (child.exitCode === null && child.signalCode === null) {
         // Running, but its identity could not be read, so it could never be stopped safely later.
         signal(child.pid, "SIGKILL", true);
+        await Promise.race([exited, bound(2000)]);
         throw new Error("Could not read the started process's identity with ps; stopped it. Nothing was recorded.");
       }
     }
     // A command that fails at once is reported here rather than found later.
-    const early = await Promise.race([exited, sleep(300).then(() => undefined)]);
+    const early = await Promise.race([exited, bound(300)]);
     child.unref();
+    if (record && !early) { const { state, members } = membersOf(record, processTable()); observe(directory, record, state, members); }
     const receipt = { id, ...(label ? { label } : {}), pid: child.pid ?? null, keep, log, ...(early ? { exited: early.code, ...(early.error ? { error: early.error } : {}) } : {}) };
     if (early && record && !alive(membersOf(record, processTable()).state)) removeRecord(directory, id);
     output(receipt);
@@ -132,7 +145,7 @@ export async function procCommand(args: string[]): Promise<number> {
   if (action === "list") {
     assert(args.length === 0, "Usage: agent-tool proc list");
     const { records, skipped } = readRecords(directory), table = processTable(), { ports } = listeningPorts();
-    output({ processes: records.map(record => describe(record, table, ports)), skipped });
+    output({ processes: records.map(record => describe(directory, record, table, ports)), skipped });
     return 0;
   }
   assert(action === "stop", "Usage: agent-tool proc <start|list|stop>");
@@ -165,7 +178,7 @@ export interface TeardownReport {
 function survey(root: string, directory: string): Omit<TeardownReport, "ok" | "applied" | "stopped"> {
   const table = processTable(), { records, skipped } = readRecords(directory);
   const listening = listeningPorts(), cwd = workingDirectories(table.keys());
-  const described = records.map(record => describe(record, table, listening.ports));
+  const described = records.map(record => describe(directory, record, table, listening.ports));
   const owned = new Set(described.flatMap(item => alive(item.state) ? item.members.map(member => member.pid) : []));
   const excluded = ancestors(table);
   const untracked = [...cwd.cwd].flatMap(([pid, directoryOf]) => {

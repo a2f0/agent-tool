@@ -2,7 +2,7 @@
 // working directory, and listening TCP ports. Read through `ps`, `lsof` and, on Linux, `/proc`,
 // so it needs nothing beyond the operating system.
 import { execFileSync } from "node:child_process";
-import { readlinkSync } from "node:fs";
+import { readFileSync, readlinkSync } from "node:fs";
 
 export interface ProcessRow { pid: number; ppid: number; pgid: number; started: string; command: string }
 
@@ -73,5 +73,29 @@ export function listeningPorts(): { available: boolean; ports: Map<number, strin
 export function ancestors(table: Map<number, ProcessRow>, pid = process.pid): Set<number> {
   const found = new Set<number>();
   for (let current: number | undefined = pid; current && !found.has(current); current = table.get(current)?.ppid) found.add(current);
+  return found;
+}
+
+/**
+ * The processes among `pids` whose environment carries `NAME=value`, as `proc start` sets for
+ * everything it launches. macOS hides the environment of protected system binaries, which then
+ * never match.
+ */
+export function carrying(pids: number[], name: string, value: string): Set<number> {
+  const found = new Set<number>(), entry = `${name}=${value}`;
+  if (pids.length === 0) return found;
+  if (process.platform === "linux") {
+    for (const pid of pids) {
+      try { if (readFileSync(`/proc/${pid}/environ`, "latin1").split("\0").includes(entry)) found.add(pid); } catch { /* Gone or not ours. */ }
+    }
+    return found;
+  }
+  try {
+    const text = execFileSync("ps", ["-E", "-ww", "-o", "pid=,command=", "-p", pids.join(",")], { encoding: "utf8", env: C_LOCALE, stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 });
+    for (const line of text.split("\n")) {
+      const match = /^\s*(\d+)\s(.*)$/.exec(line);
+      if (match && ` ${match[2]} `.includes(` ${entry} `)) found.add(Number(match[1]));
+    }
+  } catch { /* None readable. */ }
   return found;
 }

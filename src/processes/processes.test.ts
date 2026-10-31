@@ -156,6 +156,41 @@ test("a record whose pid now names another process is dropped without signalling
   expect(records(root)).toEqual([]);
 });
 
+test("a leaderless group counts only members it can prove are its own", async () => {
+  const root = repository();
+  const keepAlive = "setInterval(() => {}, 1000)";
+  // Ours: the leader starts a child in its group and exits; the child carries the record's id.
+  const launcher = `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(keepAlive)}], { stdio: "ignore" }); setTimeout(() => process.exit(0), 100)`;
+  const ours = agentTool(root, "proc", "start", "--", process.execPath, "-e", launcher).json;
+  // Not ours: a group from elsewhere whose leader exited, under a record claiming its id.
+  const foreign = spawn(process.execPath, ["-e", launcher], { detached: true, stdio: "ignore" });
+  groups.push(foreign.pid!);
+  await sleep(800);
+  const directory = path.join(root, ".git/agent-tool/processes");
+  writeFileSync(path.join(directory, "0badc0de.json"), JSON.stringify({ schemaVersion: 1, id: "0badc0de", label: null, pid: foreign.pid, started: "Thu Jan 1 00:00:00 2026", command: ["x"], cwd: root, log: "/dev/null", startedAt: new Date().toISOString(), keep: false }));
+  const listed = Object.fromEntries(agentTool(root, "proc", "list").json.processes.map((item: { id: string; state: string; members: unknown[] }) => [item.id, item]));
+  expect(listed[ours.id]).toMatchObject({ state: "orphaned", members: [expect.anything()] });
+  expect(listed["0badc0de"]).toMatchObject({ state: "exited", members: [] });
+  const foreignChild = Number(spawnSync("pgrep", ["-g", String(foreign.pid)], { encoding: "utf8" }).stdout.trim().split("\n")[0]);
+  const ourChild = listed[ours.id].members[0].pid;
+  const result = agentTool(root, "teardown", "--apply");
+  expect(result.json.stopped).toEqual([{ id: ours.id, stopped: true, remaining: [] }]);
+  expect(alive(ourChild)).toBe(false);
+  expect(alive(foreignChild)).toBe(true);
+}, 30_000);
+
+test("a process that cannot be recorded is stopped", async () => {
+  const root = repository();
+  mkdirSync(path.join(root, ".git/agent-tool"), { recursive: true });
+  writeFileSync(path.join(root, ".git/agent-tool/processes"), "not a directory");
+  const marker = path.join(root, "pid");
+  const result = spawnSync(process.execPath, [cli, "proc", "start", "--", process.execPath, "-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setInterval(() => {}, 1000)`], { cwd: root, encoding: "utf8", timeout: 15_000 });
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("Could not record the process");
+  await sleep(300);
+  if (existsSync(marker)) expect(alive(Number(require("node:fs").readFileSync(marker, "utf8")))).toBe(false);
+});
+
 test("teardown lists added worktrees", () => {
   const root = repository();
   const other = path.join(path.dirname(root), `${path.basename(root)}-wt`);
