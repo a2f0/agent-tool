@@ -27,6 +27,7 @@ import { hooksCommand } from "./workflows/hooks";
 import { repoCommand, policyCommand, toolchainCommand } from "./workflows/repository";
 import { prWorkflowCommand } from "./workflows/pr";
 import { releaseCommand } from "./release/commands";
+import { procCommand, teardownCommand } from "./processes/commands";
 
 export const HELP = `agent-tool ${metadata.version}
 
@@ -34,6 +35,9 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
 
   run [--label text] [--max-bytes N] [--tail-lines N] -- <command> [args...]
   run-group <plan.json>                  Sequential checks with durable source-bound receipts
+  proc start [--label text] [--keep] -- <command> [args...]  Recorded long-running process
+  proc list | stop <id...>|--all [--grace-ms N]
+  teardown [--apply]                     What this checkout still runs; --apply stops recorded processes
   runs list [--head oid] [--branch name] [--since ISO-date]
   branch check [name...|--pre-push] | status
   branch create <name> [--base branch] [--remote origin]
@@ -111,6 +115,8 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
   if (command === "run") return runCommand(args);
   if (command === "ci") { usage(args.shift() === "gate", "Usage: ci gate <needs.json|-> [--policy policy.json]"); return gateCommand(args); }
   if (command === "release") return releaseCommand(args);
+  if (command === "proc") return procCommand(args);
+  if (command === "teardown") return teardownCommand(args);
   if (command === "logs") return inspectLog(args);
   if (command === "dependencies" && args[0] === "diff") {
     usage(args.length === 3 && args[1] === "--base" && !!args[2] && !args[2].startsWith("-"), "Usage: agent-tool dependencies diff --base <ref>");

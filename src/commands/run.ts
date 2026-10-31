@@ -6,7 +6,7 @@ import { createLog } from "./logFile";
 
 const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
-export interface RunReceipt { status: string; label?: string; exitCode: number; signal: string | null; durationMs: number; outputBytes: number; log: string }
+export interface RunReceipt { status: string; label?: string; exitCode: number; signal: string | null; durationMs: number; outputBytes: number; log: string; leftoverProcessGroup?: number }
 
 /** Run directly into a private file: child output never accumulates in memory. */
 export async function runCommand(args: string[], record?: (receipt: RunReceipt) => void, options: { quiet?: boolean; reraiseChildSignal?: boolean } = {}): Promise<number> {
@@ -79,9 +79,18 @@ export async function runCommand(args: string[], record?: (receipt: RunReceipt) 
       forward("SIGKILL");
     }
     const exitCode = signal ? 128 + (constants.signals[signal] ?? 0) : status ?? 1;
-    const receipt: RunReceipt = { status: exitCode === 0 ? "passed" : "failed", ...(label ? { label } : {}), exitCode, signal, durationMs: Math.round(performance.now() - started), outputBytes: fstatSync(fd).size, log };
+    // A finite command that left processes behind in its group, such as `server &`, is reported:
+    // nothing else would notice them before the work is called done.
+    let leftover: number | undefined;
+    if (grouped && !interrupted && child.pid) {
+      // EPERM still means the group exists, now holding a process this user cannot signal.
+      try { process.kill(-child.pid, 0); leftover = child.pid; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "EPERM") leftover = child.pid; }
+    }
+    const receipt: RunReceipt = { status: exitCode === 0 ? "passed" : "failed", ...(label ? { label } : {}), exitCode, signal, durationMs: Math.round(performance.now() - started), outputBytes: fstatSync(fd).size, log, ...(leftover ? { leftoverProcessGroup: leftover } : {}) };
     record?.(receipt);
     if (!options.quiet) writeSync(1, `${JSON.stringify(receipt)}\n`);
+    if (leftover) writeSync(2, `Processes this command started are still running in its process group ${leftover} (\`kill -TERM -${leftover}\`). Stop them, or start long-running processes with \`agent-tool proc start\`.\n`);
     if (exitCode !== 0) printLogTail(log, limits, 2);
   } finally {
     if (timer) clearTimeout(timer);

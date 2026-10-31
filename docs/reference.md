@@ -105,6 +105,9 @@ For repository workflow commands added alongside these interfaces, see
 | --- | --- |
 | `run [--label text] [--max-bytes N] [--tail-lines N] -- <command> [args...]` | Run with full local logs and compact results; preserve exit status |
 | `logs <file> [--max-bytes N] [--tail-lines N]` | Inspect a bounded, terminal-safe tail of a local file |
+| `proc start [--label text] [--keep] -- <command> [args...]` | Start a long-running process in its own group, logged privately and recorded for the repository |
+| `proc list` / `proc stop <id...>\|--all [--grace-ms N]` | Show recorded processes with their members and ports; stop them, SIGKILL after the grace period |
+| `teardown [--apply]` | Report what the checkout still runs or holds; `--apply` stops recorded processes not started with `--keep` |
 | `review claude\|codex\|opencode [effort] [--base ref]` | Review committed HEAD using a pinned raw-file snapshot |
 | `pr open [title] [--body-file file]` | Open a same-repository PR; body from the file or stdin; branch already pushed |
 | `pr logs [--head oid] [--max-bytes N] [--tail-lines N]` | Save each failed GitHub Actions job log of the PR head privately and show a bounded tail |
@@ -155,7 +158,11 @@ directory (or `--repo`), with inherited environment and stdin. Use an explicit
 shell only when the command needs shell syntax. The child receives regular files
 for stdout and stderr, so interactive/TTY programs should run directly. This
 works outside Git and does not depend on project policy or a package manager.
-Use it for finite commands; long-running servers need their own lifecycle.
+Use it for finite commands; start long-running servers with `proc start`
+([process teardown](workflows.md#process-teardown)). When the command exits but
+processes it started remain in its group, such as `server &`, the receipt adds
+`leftoverProcessGroup` and stderr says how to stop them; the exit status is
+unchanged.
 
 Both streams go directly to one private log: even gigabytes of output do not
 accumulate in the runner's memory. On completion, stdout contains one JSON

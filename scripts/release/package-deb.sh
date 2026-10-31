@@ -21,7 +21,7 @@ Section: devel
 Priority: optional
 Architecture: $2
 Maintainer: Agent Tool maintainers
-Depends: git, libc6 (>= 2.31)
+Depends: git, libc6 (>= 2.31), lsof, procps
 Recommends: gh
 Description: Portable cross-agent reviews, PR workflows, and shared skills
  Includes a standalone executable with embedded skill instructions.
