@@ -242,7 +242,8 @@ in the current directory, in its own process group, with output in a private
 `agent-tool-proc-*` log, and records it under the Git common directory
 (`agent-tool/processes/`), so every worktree, session and harness of the clone
 sees it. It prints a JSON receipt with the record `id`, `pid` and `log`; a
-command that exits within its first 300 ms is reported with its exit status, and
+command that exits within its first 300 ms is reported with its exit status (or
+`signal`, exiting 128 plus its number), and
 one that cannot start returns 127 or 126 without a record. Processes a quickly
 exiting command leaves in its group (`sh -c 'server &'`) stay recorded. Children see
 `AGENT_TOOL_PROCESS=<id>`. `--keep` marks a process the user asked to keep

@@ -176,6 +176,9 @@ test("a command that cannot start is reported at once and not recorded", () => {
   expect(result.status).toBe(127);
   expect(result.json.exited).toBe(127);
   expect(records(root)).toEqual([]);
+  const killed = agentTool(root, "proc", "start", "--", "sh", "-c", "kill -TERM $$");
+  expect(killed.status).toBe(143);
+  expect(killed.json).toMatchObject({ exited: null, signal: "SIGTERM" });
 });
 
 test("teardown fails on recorded leftovers and untracked listeners, and --apply stops only what it recorded", async () => {

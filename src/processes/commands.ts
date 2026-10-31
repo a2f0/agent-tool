@@ -3,6 +3,7 @@
 // may have left running in the repository before an agent says it is done.
 import { spawn } from "node:child_process";
 import { closeSync, realpathSync } from "node:fs";
+import { constants } from "node:os";
 import path from "node:path";
 import { createLog } from "../commands/logFile";
 import { plainText } from "../commands/output";
@@ -111,9 +112,9 @@ async function start(args: string[]): Promise<number> {
     const spawnedAt = Date.now();
     let exitedAt: number | undefined;
     const child = spawn(args[0]!, args.slice(1), { cwd: process.cwd(), detached: true, stdio: ["ignore", fd, fd], env: { ...process.env, AGENT_TOOL_PROCESS: id } });
-    const exited = new Promise<{ code: number | null; error?: string }>(resolve => {
+    const exited = new Promise<{ code: number | null; signal?: NodeJS.Signals | null; error?: string }>(resolve => {
       child.once("error", error => resolve({ code: (error as NodeJS.ErrnoException).code === "ENOENT" ? 127 : 126, error: error.message }));
-      child.once("exit", code => { exitedAt = Date.now(); resolve({ code }); });
+      child.once("exit", (code, signal) => { exitedAt = Date.now(); resolve({ code, signal }); });
     });
     if (child.pid) {
       const started = startOf(child.pid);
@@ -158,9 +159,10 @@ async function start(args: string[]): Promise<number> {
         }
       }
     }
-    const receipt = { id, ...(label ? { label } : {}), pid: child.pid ?? null, keep, log, ...(early ? { exited: early.code, ...(early.error ? { error: early.error } : {}) } : {}) };
+    const receipt = { id, ...(label ? { label } : {}), pid: child.pid ?? null, keep, log, ...(early ? { exited: early.code, ...(early.signal ? { signal: early.signal } : {}), ...(early.error ? { error: early.error } : {}) } : {}) };
     if (early && record && !alive(membersOf(record, processTable()).state)) removeRecord(directory, id);
     output(receipt);
+    if (early?.signal) return 128 + (constants.signals[early.signal] ?? 0);
     return early && early.code !== 0 ? (early.code ?? 1) : 0;
   } finally { closeSync(fd); }
 }
