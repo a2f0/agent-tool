@@ -226,6 +226,54 @@ local feature ref is absent before reporting pruning complete. Dependency/hook
 setup and live deployment checks remain repository-specific steps after cleanup. Fork cleanup
 requires explicit manual remote handling and is refused by this command.
 
+## Process teardown
+
+```sh
+agent-tool proc start --label site -- bun run dev
+agent-tool proc list
+agent-tool proc stop <id>
+agent-tool teardown
+agent-tool teardown --apply
+```
+
+Work is not finished while it leaves processes running. `proc start` runs a
+long-lived command (a dev server, a static server for measurements, a watcher)
+in the current directory, in its own process group, with output in a private
+`agent-tool-proc-*` log, and records it under the Git common directory
+(`agent-tool/processes/`), so every worktree, session and harness of the clone
+sees it. It prints a JSON receipt with the record `id`, `pid` and `log`; a
+command that exits within its first 300 ms is reported with its exit status, and
+one that cannot start returns 127 or 126 without a record. Children see
+`AGENT_TOOL_PROCESS=<id>`. `--keep` marks a process the user asked to keep
+running past the work.
+
+`proc list` reads each record against the live process table: `running` while
+the leader runs, `orphaned` when only its children remain, `exited`, or
+`replaced` when the leader's pid now names a different process (its start time
+differs), which is never signalled. Members are the group plus live descendants
+that left it; their listening TCP ports come from `lsof`. `proc stop` sends
+SIGTERM to the group and to members outside it, SIGKILL after the grace period
+(five seconds by default), and removes the record once nothing remains.
+
+`teardown` reports, for the repository holding the working directory:
+
+- `leftover`: recorded processes still running without `--keep`;
+- `kept`: those started with `--keep`;
+- `finished`: records whose processes have ended;
+- `untracked`: other processes whose working directory is inside the
+  repository, with their listening ports, excluding agent-tool's own ancestors
+  (the harness and shell that ran it) and pipeline siblings that do not listen;
+- `worktrees`: worktrees added to the repository, which may need removing;
+- `unavailable`: inspections the platform could not perform (no `lsof`).
+
+It exits 1 while a leftover runs or an untracked process listens on a port.
+`--apply` stops leftovers and removes finished records; it never signals
+untracked processes or kept ones, and never removes worktrees, since they may be
+someone else's. Stop those deliberately, then run `teardown` again. Processes
+that change directory out of the repository and leave the recorded group's
+process tree after their parent exits are invisible to it. From a matrix-style
+workspace, run it per checkout with `--repo <checkout>`.
+
 ## CI aggregate gates
 
 The aggregate job must run with `if: always()`. Pass GitHub's `needs` JSON to:

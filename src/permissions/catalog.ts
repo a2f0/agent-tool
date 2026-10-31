@@ -19,12 +19,13 @@ export type Decision = "allow" | "ask";
 export interface CatalogEntry { command: string; class: PermissionClass; applyClass?: PermissionClass }
 
 export const CATALOG: CatalogEntry[] = [
-  ...["--help", "--version", "logs", "runs list", "doctor", "config show", "branch check", "branch status", "commits check", "checks binaries", "repo context", "policy check", "toolchain check", "ci gate", "release plan", "release verify", "pr context", "pr checks", "pr logs", "pr preflight", "pr threads list", "versions plan", "versions check", "dependencies check-terraform-plan", "dependencies diff", "skills list", "skills check", "hooks check", "images list", "graph check", "permissions show", "permissions check"]
+  ...["--help", "--version", "logs", "runs list", "doctor", "config show", "branch check", "branch status", "commits check", "checks binaries", "repo context", "policy check", "toolchain check", "ci gate", "release plan", "release verify", "pr context", "pr checks", "pr logs", "pr preflight", "pr threads list", "versions plan", "versions check", "dependencies check-terraform-plan", "dependencies diff", "skills list", "skills check", "hooks check", "images list", "graph check", "permissions show", "permissions check", "proc list"]
     .map(command => ({ command, class: "read" as const })),
-  ...["bun install", "bun update", "bun remove", "bun test", "branch create", "versions bump", "versions prepare", "versions resolve-conflicts", "images build", "review", "init"]
+  ...["bun install", "bun update", "bun remove", "bun test", "branch create", "versions bump", "versions prepare", "versions resolve-conflicts", "images build", "review", "init", "proc stop"]
     .map(command => ({ command, class: "local" as const })),
   { command: "skills install", class: "read", applyClass: "local" },
   { command: "hooks install", class: "read", applyClass: "local" },
+  { command: "teardown", class: "read", applyClass: "local" },
   { command: "permissions install", class: "read", applyClass: "policy" },
   ...["branch push", "pr open", "pr threads reply", "pr threads resolve"].map(command => ({ command, class: "share" as const })),
   { command: "pr merge", class: "release" },
@@ -36,7 +37,7 @@ export const CATALOG: CatalogEntry[] = [
   { command: "openPr", class: "share" },
   { command: "squashMerge", class: "release" },
 ];
-// `run` and `run-group` execute arbitrary commands, so they stay unclassified and keep the harness default.
+// `run`, `run-group` and `proc start` execute arbitrary commands, so they stay unclassified and keep the harness default.
 // `bun x` runs only executables that `permissions.executables` classifies; project.ts adds those.
 // Package scripts are not classified, so `bun run` keeps the harness default.
 
