@@ -154,6 +154,22 @@ test("a launcher that exits at once still leaves its survivors recorded and stop
   }
 }, 60_000);
 
+test("a kept process started from inside another recorded one survives that one's teardown", async () => {
+  const root = repository();
+  const nested = `${JSON.stringify(process.execPath)} ${JSON.stringify(cli)} proc start --keep --label inner -- sleep 300 >/dev/null; sleep 300`;
+  const outer = agentTool(root, "proc", "start", "--label", "outer", "--", "sh", "-c", nested).json;
+  await sleep(2000);
+  const listed = agentTool(root, "proc", "list").json.processes;
+  const inner = listed.find((item: { label: string }) => item.label === "inner");
+  expect(inner).toMatchObject({ keep: true, state: "running" });
+  groups.push(inner.pid);
+  const result = agentTool(root, "teardown", "--apply");
+  expect(result.json.stopped).toEqual([{ id: outer.id, stopped: true, remaining: [] }]);
+  expect(alive(outer.pid)).toBe(false);
+  expect(alive(inner.pid)).toBe(true);
+  expect(agentTool(root, "proc", "stop", inner.id).status).toBe(0);
+}, 60_000);
+
 test("a command that cannot start is reported at once and not recorded", () => {
   const root = repository();
   const result = agentTool(root, "proc", "start", "--", path.join(root, "missing-command"));

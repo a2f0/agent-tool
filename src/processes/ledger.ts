@@ -78,7 +78,15 @@ export function readRecords(directory: string): { records: ProcessRecord[]; skip
  * so a leaderless member counts only when it was seen while the leader ran (same pid and start
  * time) or carries the record's AGENT_TOOL_PROCESS id; descendants of counted members count too.
  */
-export function membersOf(record: ProcessRecord, table: Map<number, ProcessRow>): { state: ProcessState; members: ProcessRow[] } {
+/** The live leaders of records other than `record`, which own their own process trees. */
+export function claimedBy(record: ProcessRecord, table: Map<number, ProcessRow>, others: ProcessRecord[]): Set<number> {
+  return new Set(others.filter(other => other.id !== record.id && table.get(other.pid)?.started === other.started).map(other => other.pid));
+}
+
+export function membersOf(record: ProcessRecord, table: Map<number, ProcessRow>, others: ProcessRecord[] = []): { state: ProcessState; members: ProcessRow[] } {
+  // Another record's live leader, and everything under it, belongs to that record, even when it
+  // was started from inside this one (a nested `proc start --keep`).
+  const claimed = claimedBy(record, table, others);
   const leader = table.get(record.pid);
   const ours = !!leader && leader.started === record.started;
   const seen = new Set((record.members ?? []).map(member => `${member.pid} ${member.started}`));
@@ -94,11 +102,11 @@ export function membersOf(record: ProcessRecord, table: Map<number, ProcessRow>)
   }
   // Members seen before, wherever they are now: a descendant that left the group keeps its
   // identity after its parent exits and it is no longer anyone's descendant.
-  const members = new Map([...group, ...[...table.values()].filter(known)].map(row => [row.pid, row]));
+  const members = new Map([...group, ...[...table.values()].filter(known)].filter(row => !claimed.has(row.pid)).map(row => [row.pid, row]));
   // Children that left the group (setsid, a new process group) are still reached through their parents.
   for (let grew = true; grew;) {
     grew = false;
-    for (const row of table.values()) if (!members.has(row.pid) && members.has(row.ppid)) { members.set(row.pid, row); grew = true; }
+    for (const row of table.values()) if (!members.has(row.pid) && !claimed.has(row.pid) && members.has(row.ppid)) { members.set(row.pid, row); grew = true; }
   }
   const list = [...members.values()].sort((a, b) => a.pid - b.pid);
   return { state: ours ? "running" : list.length ? "orphaned" : leader ? "replaced" : "exited", members: list };

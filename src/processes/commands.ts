@@ -7,7 +7,7 @@ import path from "node:path";
 import { createLog } from "../commands/logFile";
 import { plainText } from "../commands/output";
 import { assert, git, output } from "../workflows/core";
-import { ledgerDirectory, membersOf, newId, observe, readRecords, removeRecord, saveRecord, type ProcessRecord, type ProcessState } from "./ledger";
+import { claimedBy, ledgerDirectory, membersOf, newId, observe, readRecords, removeRecord, saveRecord, type ProcessRecord, type ProcessState } from "./ledger";
 import { ancestors, carrying, listeningPorts, processTable, startOf, workingDirectories, type ProcessRow } from "./table";
 
 const STOP_GRACE_MS = 5000;
@@ -28,8 +28,8 @@ function signal(pid: number, value: NodeJS.Signals, group: boolean): void {
 interface Described { id: string; label: string | null; state: ProcessState; keep: boolean; pid: number; command: string[]; cwd: string; log: string; startedAt: string; members: { pid: number; command: string }[]; ports: string[] }
 
 // Read-only: `proc list` and report-only `teardown` never write records.
-function describe(record: ProcessRecord, table: Map<number, ProcessRow>, ports: Map<number, string[]>): Described {
-  const { state, members } = membersOf(record, table);
+function describe(record: ProcessRecord, table: Map<number, ProcessRow>, ports: Map<number, string[]>, others: ProcessRecord[]): Described {
+  const { state, members } = membersOf(record, table, others);
   return {
     id: record.id, label: record.label, state, keep: record.keep, pid: record.pid, command: record.command, cwd: record.cwd, log: record.log, startedAt: record.startedAt,
     members: members.map(row => ({ pid: row.pid, command: row.command })),
@@ -48,10 +48,11 @@ const alive = (state: ProcessState) => state === "running" || state === "orphane
 async function stopRecord(directory: string, record: ProcessRecord, grace = STOP_GRACE_MS): Promise<{ id: string; stopped: boolean; remaining: number[] }> {
   const known = new Map<number, string>();
   const look = () => {
-    const table = processTable(), { state, members } = membersOf(record, table);
+    const table = processTable(), others = readRecords(directory).records, { state, members } = membersOf(record, table, others);
     observe(directory, record, state, members);
     for (const member of members) known.set(member.pid, member.started);
-    const live = [...known].filter(([pid, started]) => table.get(pid)?.started === started).map(([pid]) => table.get(pid)!);
+    const claimed = claimedBy(record, table, others);
+    const live = [...known].filter(([pid, started]) => table.get(pid)?.started === started && !claimed.has(pid)).map(([pid]) => table.get(pid)!);
     // The group id is ours while our leader runs, or while a member we know still holds it;
     // otherwise it may name someone else's group, and members are signalled one by one.
     return { group: state === "running" || live.some(member => member.pgid === record.pid), live };
@@ -138,7 +139,7 @@ async function start(args: string[]): Promise<number> {
     if (child.pid) {
       const table = processTable();
       if (table.get(child.pid)?.started === record?.started && record) {
-        const { state, members } = membersOf(record, table);
+        const { state, members } = membersOf(record, table, readRecords(directory).records);
         observe(directory, record, state, members);
       } else if (!table.has(child.pid)) {
         // The launcher exited, perhaps before its identity could be read, and its group id may
@@ -186,7 +187,7 @@ export async function procCommand(args: string[]): Promise<number> {
   if (action === "list") {
     assert(args.length === 0, "Usage: agent-tool proc list");
     const { records, skipped } = readRecords(directory), table = processTable(), { ports } = listeningPorts();
-    output({ processes: records.map(record => describe(record, table, ports)), skipped });
+    output({ processes: records.map(record => describe(record, table, ports, records)), skipped });
     return 0;
   }
   assert(action === "stop", "Usage: agent-tool proc <start|list|stop>");
@@ -220,7 +221,7 @@ export interface TeardownReport {
 function survey(root: string, directory: string): Omit<TeardownReport, "ok" | "applied" | "stopped"> {
   const table = processTable(), { records, skipped } = readRecords(directory);
   const listening = listeningPorts(), cwd = workingDirectories(table.keys());
-  const described = records.map(record => describe(record, table, listening.ports));
+  const described = records.map(record => describe(record, table, listening.ports, records));
   const owned = new Set(described.flatMap(item => alive(item.state) ? item.members.map(member => member.pid) : []));
   const excluded = ancestors(table);
   const untracked = [...cwd.cwd].flatMap(([pid, directoryOf]) => {
@@ -265,7 +266,7 @@ export async function teardownCommand(args: string[]): Promise<number> {
   if (apply) {
     const { records } = readRecords(directory), table = processTable();
     for (const record of records) {
-      const { state, members } = membersOf(record, table);
+      const { state, members } = membersOf(record, table, records);
       observe(directory, record, state, members);
       if (!alive(state)) removeRecord(directory, record.id);
       else if (!record.keep) stopped.push(await stopRecord(directory, record));
