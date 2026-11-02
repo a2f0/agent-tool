@@ -3,6 +3,7 @@ import path from "node:path";
 import { GRAPH_DEFAULTS, parseGraph, type GraphConfig } from "./graph/config";
 import { parseImages, type ImagesConfig } from "./images/config";
 import { CLASSES, type PermissionClass } from "./permissions/catalog";
+import { parseScreenshots, SCREENSHOTS_DEFAULTS, type ScreenshotsConfig } from "./screenshots/config";
 import { WORKFLOW_DEFAULTS, validateWorkflowConfig, type WorkflowConfig } from "./workflows/config";
 
 export interface RequiredCheck {
@@ -18,6 +19,7 @@ export interface AgentToolConfig extends WorkflowConfig {
   versions: { packages: string[] | null; bundles: string[]; lockfile: "bun.lock" | null; validate: string[][]; commitMessage: string };
   pr: { rejectClaudeBranding: boolean };
   images: ImagesConfig;
+  screenshots: ScreenshotsConfig;
   graph: GraphConfig;
   permissions: { executables: Record<string, PermissionClass> };
 }
@@ -38,6 +40,7 @@ export const DEFAULT_CONFIG: AgentToolConfig = {
   versions: { packages: null, bundles: [], lockfile: "bun.lock", validate: [], commitMessage: "chore: bump package versions" },
   pr: { rejectClaudeBranding: false },
   images: { targets: {} },
+  screenshots: structuredClone(SCREENSHOTS_DEFAULTS),
   graph: structuredClone(GRAPH_DEFAULTS),
   permissions: { executables: {} },
 };
@@ -72,6 +75,7 @@ export function parseConfig(source: string): AgentToolConfig {
     Object.assign(result[section], settings);
   }
   if (input.images !== undefined) result.images = parseImages(input.images);
+  if (input.screenshots !== undefined) result.screenshots = parseScreenshots(input.screenshots);
   if (input.graph !== undefined) result.graph = parseGraph(input.graph);
   if (input.branch !== undefined && !Object.hasOwn(input.branch as object, "enforce")) result.branch.enforce = true;
   const invalid = (setting: string): never => { throw new Error(`Invalid config setting '${setting}'.`); };

@@ -23,7 +23,7 @@ out of agent sessions where that matters.
 | Class | Decision | Commands |
 | --- | --- | --- |
 | `read` | allow | Context, checks, listings, previews, diagnostics, and logs |
-| `local` | allow | `bun install\|update\|remove\|test`, `bun x` for executables classified `local`, `branch create`, `versions`, `images build`, `review`, and applied skill or hook installs |
+| `local` | allow | `bun install\|update\|remove\|test`, `bun x` for executables classified `local`, `branch create`, `versions`, `images build`, `screenshots build`, `review`, and applied skill or hook installs |
 | `share` | allow | `branch push`, `pr open`, `pr threads reply\|resolve` |
 | `release` | ask | `pr merge`, `repo cleanup --apply`, and direct `gh pr merge`, `npm publish`, `bun publish` |
 | `intake` | ask | `bun add`, and direct `bun add`, `npm install`, `pnpm add`, `yarn add`, and `bunx`, `bun x`, `npx`, which can download a package |

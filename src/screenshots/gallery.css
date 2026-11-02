@@ -1,0 +1,523 @@
+/*
+ * Styles for <screenshot-gallery> and <screenshot-carousel>
+ * (@a2f0/agent-tool/screenshots/gallery.css). Every rule sits in :where(), so
+ * any site selector overrides it; restyle through the --shots-* custom
+ * properties first. Defaults follow prefers-color-scheme.
+ */
+
+:where(screenshot-gallery, screenshot-carousel) {
+  --shots-font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --shots-ink: #1d1d1f;
+  --shots-ink-muted: #6e6e73;
+  --shots-surface: #ffffff;
+  --shots-surface-raised: #f5f5f7;
+  --shots-border: #d2d2d7;
+  --shots-accent: #1d1d1f;
+  --shots-accent-ink: #ffffff;
+  --shots-focus: #0071e3;
+  --shots-radius: 12px;
+  --shots-button-size: 2.25rem;
+  --shots-bezel: #1c1c1e;
+  --shots-bezel-edge: #3a3a3c;
+  --shots-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
+  --shots-stage-height: min(60vh, 44rem);
+  --shots-stage-padding: 1rem;
+  --shots-thumb-height: 5.5rem;
+  --shots-thumb-max-width: 9rem;
+  --shots-backdrop: rgb(0 0 0 / 0.82);
+  --shots-expanded-z: 1000;
+  --shots-carousel-slide-width: clamp(11rem, 58vw, 15rem);
+  --shots-carousel-gap: 1.5rem;
+  --shots-carousel-padding: 1rem;
+  display: block;
+  color: var(--shots-ink);
+  font-family: var(--shots-font);
+}
+
+@media (prefers-color-scheme: dark) {
+  :where(screenshot-gallery, screenshot-carousel) {
+    --shots-ink: #f5f5f7;
+    --shots-ink-muted: #a1a1a6;
+    --shots-surface: #161617;
+    --shots-surface-raised: #232325;
+    --shots-border: #3a3a3c;
+    --shots-accent: #f5f5f7;
+    --shots-accent-ink: #161617;
+    --shots-focus: #2997ff;
+    --shots-bezel: #0b0b0c;
+    --shots-bezel-edge: #48484a;
+    --shots-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
+  }
+}
+
+:where(.shots-host) :where(button) {
+  font: inherit;
+  color: inherit;
+}
+
+:where(.shots-host) :where(button:focus-visible, a:focus-visible, [tabindex]:focus-visible) {
+  outline: 2px solid var(--shots-focus);
+  outline-offset: 2px;
+}
+
+:where(.shots-icon) {
+  display: inline-flex;
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+:where(.shots-icon svg) {
+  width: 100%;
+  height: 100%;
+}
+
+/* --- States --- */
+
+:where(.shots-status) {
+  display: grid;
+  place-items: center;
+  padding: 2rem 1rem;
+  border: 1px solid var(--shots-border);
+  border-radius: var(--shots-radius);
+  background: var(--shots-surface);
+  color: var(--shots-ink-muted);
+  text-align: center;
+}
+
+/* Loading reserves the gallery's height so the page does not jump when it arrives. */
+:where(screenshot-gallery) :where(.shots-status[data-state="loading"]) {
+  min-height: calc(var(--shots-stage-height) + var(--shots-thumb-height) + 7rem);
+}
+
+/* --- Gallery --- */
+
+:where(.shots-gallery) {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--shots-border);
+  border-radius: var(--shots-radius);
+  background: var(--shots-surface);
+  overflow: hidden;
+}
+
+:where(.shots-gallery[data-expanded]) {
+  position: fixed;
+  inset: 0;
+  z-index: var(--shots-expanded-z);
+  border: 0;
+  border-radius: 0;
+}
+
+:where(.shots-toolbar) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--shots-border);
+}
+
+:where(.shots-title) {
+  flex: 1 1 10rem;
+  margin: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:where(.shots-toggle) {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--shots-border);
+  border-radius: 999px;
+}
+
+:where(.shots-toggle-button) {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.75rem;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  cursor: pointer;
+}
+
+:where(.shots-toggle-button[aria-pressed="true"]) {
+  background: var(--shots-accent);
+  color: var(--shots-accent-ink);
+}
+
+:where(.shots-actions) {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+:where(.shots-icon-button) {
+  display: inline-grid;
+  place-items: center;
+  width: var(--shots-button-size);
+  height: var(--shots-button-size);
+  padding: 0;
+  border: 1px solid var(--shots-border);
+  border-radius: 999px;
+  background: var(--shots-surface);
+  cursor: pointer;
+}
+
+:where(.shots-icon-button:disabled) {
+  opacity: 0.4;
+  cursor: default;
+}
+
+:where(.shots-body) {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* The main panel: one screen per page of a horizontal scroll-snap track. */
+:where(.shots-track) {
+  position: relative;
+  display: flex;
+  height: var(--shots-stage-height);
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  background: var(--shots-surface-raised);
+}
+
+:where(.shots-gallery[data-expanded]) :where(.shots-track) {
+  flex: 1 1 auto;
+  height: auto;
+}
+
+:where(.shots-track)::-webkit-scrollbar {
+  display: none;
+}
+
+:where(.shots-slide) {
+  display: flex;
+  flex: 0 0 100%;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 100%;
+  padding: var(--shots-stage-padding);
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
+:where(.shots-frame) {
+  display: block;
+  box-sizing: content-box;
+  max-width: 100%;
+  padding: 0;
+  border: 1px solid var(--shots-border);
+  border-radius: calc(var(--shots-radius) / 2);
+  background: var(--shots-surface);
+  overflow: hidden;
+  cursor: zoom-in;
+}
+
+:where(.shots-image) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Phone and tablet captures sit in a device bezel sized from the capture (fitFrame). */
+:where(.shots-gallery[data-frame="phone"], .shots-gallery[data-frame="tablet"]) :where(.shots-frame:not(.shots-missing)) {
+  padding: var(--shots-frame-pad, 0.6rem);
+  border: 0;
+  border-radius: calc(var(--shots-frame-radius, 1.5rem) + var(--shots-frame-pad, 0.6rem));
+  background: var(--shots-bezel);
+  box-shadow: inset 0 0 0 1px var(--shots-bezel-edge), var(--shots-shadow);
+}
+
+:where(.shots-gallery[data-frame="phone"], .shots-gallery[data-frame="tablet"]) :where(.shots-frame:not(.shots-missing) .shots-image) {
+  border-radius: var(--shots-frame-radius, 1.5rem);
+}
+
+:where(.shots-missing) {
+  display: grid;
+  place-items: center;
+  max-width: 24rem;
+  padding: 1.5rem;
+  color: var(--shots-ink-muted);
+  text-align: center;
+  cursor: default;
+}
+
+:where(.shots-navrow) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 0.5rem;
+}
+
+:where(.shots-counter) {
+  min-width: 4.5rem;
+  margin: 0;
+  color: var(--shots-ink-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+:where(.shots-filmstrip) {
+  position: relative;
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.25rem 1rem 1rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+}
+
+:where(.shots-thumb) {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-width: var(--shots-thumb-max-width);
+  padding: 0.25rem;
+  border: 1px solid transparent;
+  border-radius: calc(var(--shots-radius) / 2);
+  background: none;
+  cursor: pointer;
+  scroll-snap-align: start;
+}
+
+:where(.shots-thumb[aria-current="true"]) {
+  border-color: var(--shots-accent);
+}
+
+/* The image keeps its capture's aspect ratio at a fixed height, cropped from the top only when wider than the cap. */
+:where(.shots-thumb-image) {
+  display: block;
+  height: var(--shots-thumb-height);
+  min-width: 4.5rem;
+  max-width: calc(var(--shots-thumb-max-width) - 0.5rem);
+  aspect-ratio: 3 / 4;
+  border-radius: 4px;
+  background: var(--shots-surface-raised);
+  overflow: hidden;
+}
+
+:where(.shots-thumb-image img) {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+}
+
+:where(.shots-thumb-label) {
+  max-width: calc(var(--shots-thumb-max-width) - 0.5rem);
+  overflow: hidden;
+  color: var(--shots-ink-muted);
+  font-size: 0.75rem;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:where(.shots-thumb[aria-current="true"]) :where(.shots-thumb-label) {
+  color: var(--shots-ink);
+}
+
+:where(.shots-lightbox) {
+  max-width: 100vw;
+  max-height: 100vh;
+  padding: 0;
+  border: 0;
+  background: none;
+  overflow: visible;
+}
+
+:where(.shots-lightbox)::backdrop {
+  background: var(--shots-backdrop);
+}
+
+:where(.shots-lightbox-backdrop) {
+  position: fixed;
+  inset: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-out;
+}
+
+:where(.shots-lightbox-frame) {
+  position: relative;
+}
+
+:where(.shots-lightbox-image) {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 94vw;
+  max-height: 92vh;
+  border-radius: var(--shots-lightbox-radius, 8px);
+}
+
+:where(.shots-lightbox[data-frame="phone"], .shots-lightbox[data-frame="tablet"]) :where(.shots-lightbox-frame) {
+  padding: var(--shots-frame-pad, 0.75rem);
+  border-radius: calc(var(--shots-frame-radius, 2rem) + var(--shots-frame-pad, 0.75rem));
+  background: var(--shots-bezel);
+  box-shadow: inset 0 0 0 1px var(--shots-bezel-edge);
+}
+
+:where(.shots-lightbox[data-frame="phone"], .shots-lightbox[data-frame="tablet"]) :where(.shots-lightbox-image) {
+  border-radius: var(--shots-frame-radius, 2rem);
+}
+
+:where(.shots-lightbox-close) {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  display: grid;
+  place-items: center;
+  width: var(--shots-button-size);
+  height: var(--shots-button-size);
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.9);
+  color: #1d1d1f;
+  cursor: pointer;
+}
+
+:where(.shots-lightbox) :where(.shots-missing) {
+  position: relative;
+  background: var(--shots-surface);
+  border-radius: var(--shots-radius);
+}
+
+/* --- Carousel --- */
+
+:where(.shots-carousel) {
+  position: relative;
+}
+
+:where(.shots-carousel-track) {
+  position: relative;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding: 0.5rem var(--shots-carousel-padding) 2.5rem;
+  scroll-padding-inline: var(--shots-carousel-padding);
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+
+:where(.shots-carousel-track)::-webkit-scrollbar {
+  display: none;
+}
+
+:where(.shots-carousel-list) {
+  display: flex;
+  gap: var(--shots-carousel-gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+:where(.shots-carousel-slide) {
+  flex: 0 0 var(--shots-carousel-slide-width);
+  scroll-snap-align: start;
+}
+
+:where(.shots-carousel-slide figure) {
+  margin: 0;
+}
+
+:where(.shots-carousel-slide figcaption) {
+  margin-top: 0.75rem;
+  color: var(--shots-ink-muted);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+:where(.shots-device) {
+  display: block;
+  color: inherit;
+  container-type: inline-size;
+}
+
+:where(.shots-device picture) {
+  display: block;
+}
+
+:where(.shots-device img) {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: calc(var(--shots-radius) / 2);
+}
+
+/* The bezel scales with the device's width, so it keeps its proportions at every size (FRAME_METRICS). */
+:where(.shots-carousel[data-frame="phone"], .shots-carousel[data-frame="tablet"]) :where(.shots-device picture) {
+  --shots-frame-pad: 3.5cqi;
+  --shots-frame-radius: calc((100cqi - 2 * var(--shots-frame-pad)) * 0.1214);
+  padding: var(--shots-frame-pad);
+  border-radius: calc(var(--shots-frame-radius) + var(--shots-frame-pad));
+  background: var(--shots-bezel);
+  box-shadow: inset 0 0 0 1px var(--shots-bezel-edge), var(--shots-shadow);
+}
+
+:where(.shots-carousel[data-frame="tablet"]) :where(.shots-device picture) {
+  --shots-frame-pad: 3cqi;
+  --shots-frame-radius: calc((100cqi - 2 * var(--shots-frame-pad)) * 0.025);
+}
+
+:where(.shots-carousel[data-frame="phone"], .shots-carousel[data-frame="tablet"]) :where(.shots-device img) {
+  border-radius: var(--shots-frame-radius);
+}
+
+:where(a.shots-device:focus-visible) {
+  outline: none;
+}
+
+:where(a.shots-device:focus-visible picture) {
+  outline: 2px solid var(--shots-focus);
+  outline-offset: 3px;
+}
+
+:where(.shots-carousel-controls) {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0 var(--shots-carousel-padding);
+}
+
+:where(.shots-carousel-step) {
+  display: inline-grid;
+  place-items: center;
+  width: var(--shots-button-size);
+  height: var(--shots-button-size);
+  padding: 0;
+  border: 1px solid var(--shots-border);
+  border-radius: 999px;
+  background: var(--shots-surface);
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :where(.shots-track, .shots-carousel-track, .shots-filmstrip) {
+    scroll-behavior: smooth;
+  }
+
+  :where(a.shots-device picture) {
+    transition: transform 200ms ease;
+  }
+
+  @media (hover: hover) {
+    :where(a.shots-device:hover picture) {
+      transform: translateY(-4px);
+    }
+  }
+}

@@ -15,6 +15,12 @@
   "bin": {
     "agent-tool": "src/index.ts"
   },
+  "exports": {
+    "./package.json": "./package.json",
+    "./screenshots/gallery": "./src/screenshots/gallery.ts",
+    "./screenshots/gallery.css": "./src/screenshots/gallery.css",
+    "./screenshots/manifest": "./src/screenshots/manifest.ts"
+  },
   "files": [
     "src",
     "skills",
@@ -29,12 +35,14 @@
     "agent:run": "bun src/index.ts run",
     "agent:logs": "bun src/index.ts logs",
     "test": "bun test --parallel src scripts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.browser.json",
     "generate": "bun scripts/build/bundle-skills.ts",
     "build": "bun run generate && bun build --compile --minify src/index.ts --outfile dist/agent-tool"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "21.0.4",
     "@types/bun": "1.4.3",
+    "happy-dom": "21.0.4",
     "typescript": "7.0.2"
   },
   "dependencies": {

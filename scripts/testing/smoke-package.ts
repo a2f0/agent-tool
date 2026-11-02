@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import path from "node:path";
 import metadata from "../../package.json";
+import { encodePng } from "../../src/images/png";
 
 const root = path.resolve(import.meta.dir, "../..");
 const temporary = mkdtempSync(path.join(tmpdir(), "agent-tool-package-"));
@@ -15,6 +16,7 @@ try {
   const packed = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" }).split("\n");
   assert.ok(packed.includes("package/src/index.ts"), "the package ships the CLI source");
   assert.deepEqual(packed.filter(file => /\.test(?:Utils)?\.ts$/.test(file)), [], "tests stay out of the package");
+  for (const file of ["gallery.ts", "gallery.css", "manifest.ts"]) assert.ok(packed.includes(`package/src/screenshots/${file}`), `the package ships screenshots/${file}`);
   mkdirSync(consumer);
   writeFileSync(path.join(consumer, "package.json"), JSON.stringify({
     name: "agent-tool-consumer-smoke",
@@ -67,8 +69,38 @@ try {
   writeFileSync(path.join(consumer, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, images: { targets: { web: { outputs: [{ path: "favicon.ico", sizes: [16, 32], layers: [{ source: "logo" }] }] } } } }));
   assert.deepEqual(JSON.parse(run("images", "build", "web", "--out", "public")).targets[0].written, ["public/favicon.ico"], "the installed renderer dependency loads");
   assert.equal(readFileSync(path.join(consumer, "public/favicon.ico")).readUInt16LE(4), 2);
+  // Screenshot staging from a capture directory, and the browser entry points through the exports map.
+  const capture = path.join(consumer, ".screenshots/mobile/light");
+  mkdirSync(capture, { recursive: true });
+  writeFileSync(path.join(capture, "home.png"), encodePng({ width: 3, height: 7, channels: 3, data: new Uint8Array(63) }));
+  writeFileSync(path.join(consumer, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, screenshots: { targets: { site: { dir: "public/shots", urlPrefix: "/shots/", projects: { mobile: "Phone" }, screens: ["home"] } } } }));
+  assert.equal(JSON.parse(run("screenshots", "build", "--json")).targets[0].entries, 1, "the installed CLI stages screenshots");
+  assert.deepEqual(JSON.parse(readFileSync(path.join(consumer, "public/shots/manifest.json"), "utf8")).entries[0].width, 3);
+  writeFileSync(path.join(consumer, "exports.ts"), [
+    'import { readFileSync } from "node:fs";',
+    'import { fileURLToPath } from "node:url";',
+    'import { EMPTY_MANIFEST, screenshotRoutes } from "@a2f0/agent-tool/screenshots/manifest";',
+    'import { defineScreenshotElements, fitFrame } from "@a2f0/agent-tool/screenshots/gallery";',
+    'const css = readFileSync(fileURLToPath(import.meta.resolve("@a2f0/agent-tool/screenshots/gallery.css")), "utf8");',
+    'const metadata = JSON.parse(readFileSync(fileURLToPath(import.meta.resolve("@a2f0/agent-tool/package.json")), "utf8"));',
+    'console.log(JSON.stringify({ routes: screenshotRoutes(EMPTY_MANIFEST).length, define: typeof defineScreenshotElements, fit: fitFrame("phone", 1170, 2532, 390, 844).height, css: css.includes("--shots-bezel"), version: metadata.version }));',
+  ].join("\n"));
+  const exported = JSON.parse(execFileSync(process.execPath, ["exports.ts"], { cwd: consumer, env, encoding: "utf8" }));
+  assert.deepEqual(exported, { routes: 1, define: "function", fit: 788, css: true, version: metadata.version }, "the browser entry points import without a DOM");
+  // Consumers type-check shipped TypeScript with their own settings; @tsconfig/strictest is the strictest in use.
+  writeFileSync(path.join(consumer, "browser.ts"), [
+    'import { defineScreenshotElements, type ScreenshotGalleryElement } from "@a2f0/agent-tool/screenshots/gallery";',
+    'import { screenshotHeading, type ScreenshotManifest } from "@a2f0/agent-tool/screenshots/manifest";',
+    'defineScreenshotElements();',
+    'const gallery = document.querySelector<ScreenshotGalleryElement>("screenshot-gallery");',
+    'gallery?.select({ project: "mobile" });',
+    'export const heading = (manifest: ScreenshotManifest) => screenshotHeading(manifest, "mobile", "home");',
+  ].join("\n"));
+  const browserConfig = JSON.parse(readFileSync(path.join(root, "tsconfig.browser.json"), "utf8"));
+  writeFileSync(path.join(consumer, "tsconfig.json"), JSON.stringify({ compilerOptions: browserConfig.compilerOptions, files: ["browser.ts"] }));
+  execFileSync(path.join(root, "node_modules/.bin/tsc"), ["-p", consumer], { cwd: consumer, env, stdio: "pipe" });
   assert.match(execFileSync(process.execPath, ["run", "agent-tool", "--help"], { cwd: consumer, env, encoding: "utf8" }), /agent-tool/);
-  console.log("Installed source package passed executable, script, policy, image rendering, and embedded-skills checks without install scripts or a build.");
+  console.log("Installed source package passed executable, script, policy, image rendering, screenshot staging, browser entry point, and embedded-skills checks without install scripts or a build.");
 } finally {
   rmSync(temporary, { recursive: true, force: true });
 }
