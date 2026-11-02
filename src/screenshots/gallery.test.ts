@@ -71,7 +71,7 @@ describe("<screenshot-gallery>", () => {
     expect($(element, ".shots-counter").textContent).toBe("1 / 1");
     expect($<HTMLButtonElement>(element, '[data-action="next"]').disabled).toBe(true);
     expect($(element, '[data-action="theme"]').getAttribute("aria-label")).toBe("Show dark theme");
-    expect($(element, '[data-action="expand"]').getAttribute("aria-label") ?? "Expand viewer").toBe("Expand viewer");
+    expect($(element, '[data-action="expand"]').getAttribute("aria-label")).toBe("Expand viewer");
   });
 
   test("a deep link opens its project and screen; the bezel follows the capture's shape", async () => {

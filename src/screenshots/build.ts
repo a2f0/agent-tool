@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { pngSize } from "../images/png";
 import { assertNoLinks, replaceFile } from "../system/files";
@@ -54,6 +54,27 @@ function select(config: ScreenshotsConfig, names: string[], out: string | undefi
   const selected = names.length ? [...new Set(names)] : available.filter(name => config.targets[name]!.dir !== null);
   if (!selected.length) throw new Error("No screenshots target has a dir; name one and pass --out <directory>.");
   return selected.map(name => [name, config.targets[name]!]);
+}
+
+/** The path with every existing ancestor's links resolved, so overlap checks see where writes really land. */
+function resolved(file: string): string {
+  const parts: string[] = [];
+  let current = path.resolve(file);
+  for (;;) {
+    try { return path.join(realpathSync(current), ...parts.reverse()); } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return path.join(current, ...parts.reverse());
+    parts.push(path.basename(current));
+    current = parent;
+  }
+}
+/** Whether either path is the other or contains it. */
+function overlaps(first: string, second: string): boolean {
+  const a = first.toLowerCase(), b = second.toLowerCase();
+  return a === b || a.startsWith(`${b}${path.sep}`) || b.startsWith(`${a}${path.sep}`);
 }
 
 function sameBytes(file: string, bytes: Uint8Array): boolean {
@@ -156,15 +177,19 @@ export interface ScreenshotsReceipt { source: string; capture: CaptureSummary | 
 export function buildScreenshots(root: string, config: ScreenshotsConfig, names: string[], out?: string, hooks: { afterCopy?: () => void } = {}): ScreenshotsReceipt {
   const selected = select(config, names, out);
   const source = path.resolve(root, config.source);
-  const dirs = new Map<string, string>();
+  // The source is usually a link to the shared store; compare where both really are.
+  const sources = [source, resolved(source)];
+  const claimed: { name: string; dirs: string[] }[] = [];
   const plans = selected.map(([name, target]) => {
     const dir = out ?? target.dir;
     if (dir === null) throw new Error(`Screenshots target '${name}' has no dir; pass --out <directory>.`);
     const absolute = path.resolve(root, dir);
-    if (absolute === source || absolute.startsWith(`${source}${path.sep}`) || source.startsWith(`${absolute}${path.sep}`)) throw new Error(`Screenshots target '${name}' writes into the capture source.`);
-    const owner = dirs.get(absolute.toLowerCase());
-    if (owner !== undefined) throw new Error(`Screenshots targets '${owner}' and '${name}' both write ${path.relative(root, absolute) || "."}.`);
-    dirs.set(absolute.toLowerCase(), name);
+    const dirs = [absolute, resolved(absolute)];
+    // Pruning or cleanup in an overlapping directory would delete captures or another target's images.
+    if (dirs.some(item => sources.some(other => overlaps(item, other)))) throw new Error(`Screenshots target '${name}' overlaps the capture source.`);
+    const owner = claimed.find(other => other.dirs.some(item => dirs.some(mine => overlaps(item, mine))));
+    if (owner) throw new Error(`Screenshots targets '${owner.name}' and '${name}' write overlapping directories.`);
+    claimed.push({ name, dirs });
     // An explicit --out is the caller's choice; configured directories are checked from the repository root.
     const base = out === undefined ? root : absolute;
     assertNoLinks(base, path.join(absolute, IMAGES));

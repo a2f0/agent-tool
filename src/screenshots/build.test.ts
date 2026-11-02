@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { encodePng } from "../images/png";
@@ -156,7 +156,22 @@ describe("staging screenshots", () => {
     mkdirSync(path.join(root, "site"));
     symlinkSync(temporary, path.join(root, "site/public"));
     expect(() => buildScreenshots(root, config, [])).toThrow("Refusing to write through symbolic link site/public.");
-    expect(() => buildScreenshots(root, config, ["site"], ".screenshots/out")).toThrow("Screenshots target 'site' writes into the capture source.");
+    expect(() => buildScreenshots(root, config, ["site"], ".screenshots/out")).toThrow("Screenshots target 'site' overlaps the capture source.");
+  });
+
+  test("refuses outputs that reach the capture store through a link, or overlap another target", () => {
+    const root = repository(captures, { linked: true, record: complete });
+    const store = readlinkSync(path.join(root, ".screenshots"));
+    for (const out of [store, path.join(store, "mobile"), path.dirname(store)]) {
+      expect(() => buildScreenshots(root, config, ["site"], out)).toThrow("Screenshots target 'site' overlaps the capture source.");
+    }
+    expect(readdirSync(path.join(store, "mobile/light")).sort()).toEqual(["home.png", "notes.png", "notes.txt", "retired.png"]);
+    const nested = parseScreenshots({ targets: {
+      outer: { dir: "public/shots", urlPrefix: "/shots/", projects: { mobile: "Phone" }, screens: ["home"] },
+      inner: { dir: "public/shots/img/extra", urlPrefix: "/extra/", projects: { mobile: "Phone" }, screens: ["notes"] },
+    } });
+    expect(() => buildScreenshots(root, nested, [])).toThrow("Screenshots targets 'outer' and 'inner' write overlapping directories.");
+    expect(buildScreenshots(root, nested, ["inner"]).targets[0]!.entries).toBe(2);
   });
 
   test("--out stages one target elsewhere, and a target without dir needs it", () => {

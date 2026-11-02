@@ -180,15 +180,17 @@ function defineGallery(): CustomElementConstructor {
     #announced = "";
 
     get manifestData(): ScreenshotManifest | null { return this.#data; }
-    set manifestData(value: ScreenshotManifest | null) { this.#data = value && parseScreenshotManifest(value); if (this.isConnected) this.#load(); }
+    set manifestData(value: ScreenshotManifest | null) { this.#data = value && parseScreenshotManifest(value); if (this.#connected) this.#load(); }
     get project(): string { return this.#project; }
     get theme(): string { return this.#theme; }
     get screen(): string | undefined { return this.#screens[this.#index]; }
 
-    connectedCallback(): void { this.#load(); }
-    disconnectedCallback(): void { this.#teardown(); }
+    #connected = false;
+    connectedCallback(): void { this.#connected = true; this.#load(); }
+    disconnectedCallback(): void { this.#connected = false; this.#teardown(); }
+    // An upgrade reports initial attributes before connecting; only later changes reload.
     attributeChangedCallback(_name: string, previous: string | null, next: string | null): void {
-      if (previous !== next && this.isConnected && !this.#data) this.#load();
+      if (previous !== next && this.#connected && !this.#data) this.#load();
     }
 
     #teardown(): void {
@@ -252,7 +254,7 @@ function defineGallery(): CustomElementConstructor {
         }, { signal });
         actions.append(theme);
       }
-      const expand = element("button", { type: "button", class: "shots-icon-button", "data-action": "expand", "aria-pressed": "false" }, [icon("expand")]);
+      const expand = element("button", { type: "button", class: "shots-icon-button", "data-action": "expand", "aria-pressed": "false", "aria-label": "Expand viewer", title: "Expand viewer" }, [icon("expand")]);
       expand.addEventListener("click", () => this.#setExpanded(!this.#expanded), { signal });
       actions.append(expand);
       toolbar.append(actions);
@@ -558,12 +560,13 @@ function defineCarousel(): CustomElementConstructor {
     #manifest: ScreenshotManifest | null = null;
 
     get manifestData(): ScreenshotManifest | null { return this.#data; }
-    set manifestData(value: ScreenshotManifest | null) { this.#data = value && parseScreenshotManifest(value); if (this.isConnected) this.#load(); }
+    set manifestData(value: ScreenshotManifest | null) { this.#data = value && parseScreenshotManifest(value); if (this.#connected) this.#load(); }
 
-    connectedCallback(): void { this.#load(); }
-    disconnectedCallback(): void { this.#abort?.abort(); this.#abort = null; }
+    #connected = false;
+    connectedCallback(): void { this.#connected = true; this.#load(); }
+    disconnectedCallback(): void { this.#connected = false; this.#abort?.abort(); this.#abort = null; }
     attributeChangedCallback(_name: string, previous: string | null, next: string | null): void {
-      if (previous !== next && this.isConnected) this.#load();
+      if (previous !== next && this.#connected) this.#load();
     }
 
     #load(): void {

@@ -12,6 +12,10 @@ describe("screenshot manifest helpers", () => {
     expect(() => parseScreenshotManifest({ projects: [], themes: [], screens: [], entries: [] })).toThrow("expected schemaVersion 1");
     expect(() => parseScreenshotManifest({ ...manifest, screens: ["home"] })).toThrow("screens are invalid");
     expect(() => parseScreenshotManifest({ ...manifest, entries: [{ ...entry("web", "light", "home"), width: 0 }] })).toThrow("entries are invalid");
+    expect(() => parseScreenshotManifest({ ...manifest, projects: [{ name: "mobile", label: "Phone", frame: "watch" }] })).toThrow("projects are invalid");
+    expect(() => parseScreenshotManifest({ ...manifest, screens: [{ name: "home", label: "Home", alt: 3 }] })).toThrow("screens are invalid");
+    expect(() => parseScreenshotManifest({ ...manifest, capture: { commit: "abc", finishedAt: 5 } })).toThrow("capture is invalid");
+    expect(parseScreenshotManifest({ ...manifest, capture: { commit: "abc", finishedAt: null } }).capture).toEqual({ commit: "abc", finishedAt: null });
   });
 
   test("screens per project keep manifest order across themes", () => {

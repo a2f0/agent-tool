@@ -43,21 +43,24 @@ export const PHONE_RATIO = 1.6;
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
-function named(value: unknown): value is { name: string; label: string } {
-  return isRecord(value) && typeof value["name"] === "string" && typeof value["label"] === "string";
+function text(value: unknown): value is string { return typeof value === "string"; }
+function optional(value: unknown): boolean { return value === undefined || text(value); }
+function named(value: unknown, extra: (item: Record<string, unknown>) => boolean = () => true): boolean {
+  return isRecord(value) && text(value["name"]) && text(value["label"]) && extra(value);
 }
+const FRAMES: readonly unknown[] = ["phone", "tablet", "none"];
 
 /** Checks a fetched or read manifest's shape; throws on anything this version cannot render. */
 export function parseScreenshotManifest(value: unknown): ScreenshotManifest {
   if (!isRecord(value) || value["schemaVersion"] !== 1) throw new Error("Unsupported screenshot manifest; expected schemaVersion 1.");
   const { projects, themes, screens, entries, capture } = value as Record<"projects" | "themes" | "screens" | "entries" | "capture", unknown>;
-  if (!Array.isArray(projects) || !projects.every(named)) throw new Error("Screenshot manifest projects are invalid.");
-  if (!Array.isArray(themes) || !themes.every(named)) throw new Error("Screenshot manifest themes are invalid.");
-  if (!Array.isArray(screens) || !screens.every(named)) throw new Error("Screenshot manifest screens are invalid.");
-  const entry = (item: unknown) => isRecord(item) && ["project", "theme", "name", "src"].every(key => typeof item[key] === "string")
-    && [item["width"], item["height"]].every(size => typeof size === "number" && size > 0);
+  if (!Array.isArray(projects) || !projects.every(item => named(item, project => project["frame"] === undefined || FRAMES.includes(project["frame"])))) throw new Error("Screenshot manifest projects are invalid.");
+  if (!Array.isArray(themes) || !themes.every(item => named(item))) throw new Error("Screenshot manifest themes are invalid.");
+  if (!Array.isArray(screens) || !screens.every(item => named(item, screen => optional(screen["alt"])))) throw new Error("Screenshot manifest screens are invalid.");
+  const entry = (item: unknown) => isRecord(item) && ["project", "theme", "name", "src"].every(key => text(item[key]))
+    && [item["width"], item["height"]].every(size => typeof size === "number" && Number.isFinite(size) && size > 0);
   if (!Array.isArray(entries) || !entries.every(entry)) throw new Error("Screenshot manifest entries are invalid.");
-  if (capture !== null && !(isRecord(capture) && typeof capture["commit"] === "string")) throw new Error("Screenshot manifest capture is invalid.");
+  if (capture !== null && !(isRecord(capture) && text(capture["commit"]) && (capture["finishedAt"] === null || text(capture["finishedAt"])))) throw new Error("Screenshot manifest capture is invalid.");
   return value as unknown as ScreenshotManifest;
 }
 
