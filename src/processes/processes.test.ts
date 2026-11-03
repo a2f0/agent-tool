@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpath
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { adoptable } from "./commands";
-import { parseFields, parseRows, startOf } from "./table";
+import { carrying, parseFields, parseRows, processTable, startOf } from "./table";
 
 const cli = path.resolve(import.meta.dir, "../index.ts");
 const temporary: string[] = [];
@@ -41,16 +41,16 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const SERVER = 'Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("x") }); setInterval(() => {}, 1000)';
 
 test("reads ps rows and lsof fields", () => {
-  expect(parseRows("  12     1    12 Ss   Fri Oct 30 21:43:01 2026 /bin/sh -c sleep 1\n  13    12    12 S+   Sat Oct  3 01:02:03 2026 sleep 1\n  14    12    12 Z    Sat Oct  3 01:02:04 2026 <defunct>\ngarbage\n")).toEqual([
-    { pid: 12, ppid: 1, pgid: 12, started: "Fri Oct 30 21:43:01 2026", command: "/bin/sh -c sleep 1" },
-    { pid: 13, ppid: 12, pgid: 12, started: "Sat Oct 3 01:02:03 2026", command: "sleep 1" },
+  expect(parseRows("  12     1    12 501 Ss   Fri Oct 30 21:43:01 2026 /bin/sh -c sleep 1\n  13    12    12 501 S+   Sat Oct  3 01:02:03 2026 sleep 1\n  14    12    12 501 Z    Sat Oct  3 01:02:04 2026 <defunct>\ngarbage\n")).toEqual([
+    { pid: 12, ppid: 1, pgid: 12, uid: 501, started: "Fri Oct 30 21:43:01 2026", command: "/bin/sh -c sleep 1" },
+    { pid: 13, ppid: 12, pgid: 12, uid: 501, started: "Sat Oct 3 01:02:03 2026", command: "sleep 1" },
   ]);
   expect(parseFields("p10\nn/a\nn/b\np11\nn*:8080\n")).toEqual(new Map([[10, ["/a", "/b"]], [11, ["*:8080"]]]));
   expect(startOf(process.pid)).toMatch(/\d{2}:\d{2}:\d{2} \d{4}$/);
 });
 
 test("adopts a quick launcher's group members only with evidence they are its own", () => {
-  const row = (pid: number, started: string) => ({ pid, ppid: 1, pgid: 50, started, command: "x" });
+  const row = (pid: number, started: string) => ({ pid, ppid: 1, pgid: 50, uid: 501, started, command: "x" });
   const spawned = Date.parse("2026-10-30T21:43:01.400Z"), exited = Date.parse("2026-10-30T21:43:01.900Z");
   const rows = [row(51, "Fri Oct 30 21:43:01 2026"), row(52, "Fri Oct 30 21:43:05 2026"), row(53, "Fri Oct 30 21:50:00 2026"), row(54, "Fri Oct 30 21:43:00 2026")];
   // 51 started while the launcher ran (54 within the margin); 52 and 53 after it exited, as a
@@ -155,12 +155,19 @@ test("late detached descendants remain owned after their leader exits", async ()
   await until(() => existsSync(ready));
   const descendant = Number(readFileSync(ready, "utf8"));
   groups.push(descendant);
+  const snapshot = processTable();
+  expect(carrying(snapshot, "AGENT_TOOL_PROCESS", started.id).has(descendant)).toBe(true);
+  // A cached snapshot is reusable without exposing its mutable cached set.
+  carrying(snapshot, "AGENT_TOOL_PROCESS", started.id).clear();
+  expect(carrying(snapshot, "AGENT_TOOL_PROCESS", started.id).has(descendant)).toBe(true);
+  const row = snapshot.get(descendant)!;
+  expect(carrying(new Map([[descendant, { ...row, uid: row.uid + 1 }]]), "AGENT_TOOL_PROCESS", started.id).size).toBe(0);
   const record = path.join(root, ".git/agent-tool/processes", `${started.id}.json`);
   const before = readFileSync(record, "utf8");
   expect(JSON.parse(before).members.map((item: { pid: number }) => item.pid)).not.toContain(descendant);
   expect(agentTool(root, "proc", "list").json.processes[0].members).toContainEqual(expect.objectContaining({ pid: descendant }));
   expect(readFileSync(record, "utf8")).toBe(before); // Listing stays read-only.
-  const foreign = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { cwd: root, detached: true, stdio: "ignore" });
+  const foreign = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", `AGENT_TOOL_PROCESS=${started.id}`], { cwd: root, detached: true, stdio: "ignore" });
   children.push(foreign);
   writeFileSync(exit, "");
   await until(() => !alive(started.pid));

@@ -4,28 +4,28 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, readlinkSync } from "node:fs";
 
-export interface ProcessRow { pid: number; ppid: number; pgid: number; started: string; command: string }
+export interface ProcessRow { pid: number; ppid: number; pgid: number; uid: number; started: string; command: string }
 
 // One locale and time zone, so start times read the same in every shell that compares them.
 const C_LOCALE = { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" };
 // `stat` is one token; `lstart` prints a fixed-width date of five fields, such as `Fri Oct 30 21:43:01 2026`.
-const ROW = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s(.*)$/;
+const ROW = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s(.*)$/;
 
 /**
- * Rows of `ps -o pid=,ppid=,pgid=,stat=,lstart=,command=`. Zombies are left out: they have
+ * Rows of `ps -ww -o pid=,ppid=,pgid=,uid=,stat=,lstart=,command=`. Zombies are left out: they have
  * exited, cannot be signalled, and may never be reaped where PID 1 does not reap orphans.
  */
 export function parseRows(text: string): ProcessRow[] {
   return text.split("\n").flatMap(line => {
     const match = ROW.exec(line);
-    if (!match || match[4]!.startsWith("Z")) return [];
-    return [{ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), started: match[5]!.replace(/\s+/g, " "), command: match[6]!.trim() }];
+    if (!match || match[5]!.startsWith("Z")) return [];
+    return [{ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), uid: Number(match[4]), started: match[6]!.replace(/\s+/g, " "), command: match[7]!.trim() }];
   });
 }
 
 /** Every live process, by pid. */
 export function processTable(): Map<number, ProcessRow> {
-  const text = execFileSync("ps", ["-A", "-o", "pid=,ppid=,pgid=,stat=,lstart=,command="], { encoding: "utf8", env: C_LOCALE, maxBuffer: 64 * 1024 * 1024 });
+  const text = execFileSync("ps", ["-A", "-ww", "-o", "pid=,ppid=,pgid=,uid=,stat=,lstart=,command="], { encoding: "utf8", env: C_LOCALE, maxBuffer: 64 * 1024 * 1024 });
   return new Map(parseRows(text).map(row => [row.pid, row]));
 }
 
@@ -86,26 +86,47 @@ export function ancestors(table: Map<number, ProcessRow>, pid = process.pid): Se
   return found;
 }
 
-/**
- * The processes among `pids` whose environment carries `NAME=value`, as `proc start` sets for
- * everything it launches. macOS hides the environment of protected system binaries, which then
- * never match.
- */
-export function carrying(pids: number[], name: string, value: string): Set<number> {
-  const found = new Set<number>(), entry = `${name}=${value}`;
-  if (pids.length === 0) return found;
-  if (process.platform === "linux") {
-    for (const pid of pids) {
-      try { if (readFileSync(`/proc/${pid}/environ`, "latin1").split("\0").includes(entry)) found.add(pid); } catch { /* Gone or not ours. */ }
+// Reuse one name's ownership scan for every record in the same immutable table
+// snapshot. A fresh processTable() gets a fresh scan, including during stop polls.
+const environmentCache = new WeakMap<Map<number, ProcessRow>, Map<string, Map<number, string>>>();
+
+/** Read tags only from current-user processes, never their argument strings. */
+export function carrying(table: Map<number, ProcessRow>, name: string, value: string): Set<number> {
+  let cache = environmentCache.get(table);
+  if (!cache) { cache = new Map(); environmentCache.set(table, cache); }
+  let values = cache.get(name);
+  if (!values) {
+    values = new Map();
+    cache.set(name, values);
+    const uid = process.getuid?.();
+    const candidates = [...table.values()].filter(row => uid !== undefined && row.uid === uid);
+    const prefix = `${name}=`;
+    if (process.platform === "linux") {
+      for (const row of candidates) {
+        try {
+          const entry = readFileSync(`/proc/${row.pid}/environ`, "latin1").split("\0").find(item => item.startsWith(prefix));
+          if (entry) values.set(row.pid, entry.slice(prefix.length));
+        } catch { /* Gone or not ours. */ }
+      }
+    } else if (process.platform === "darwin" && candidates.length) {
+      try {
+        const fields = "pid=,ppid=,pgid=,uid=,stat=,lstart=,command=";
+        const selected = candidates.map(row => row.pid).join(",");
+        const options = { encoding: "utf8" as const, env: C_LOCALE, stdio: ["ignore", "pipe", "ignore"] as ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 };
+        const expanded = parseRows(execFileSync("ps", ["-E", "-ww", "-o", fields, "-p", selected], options));
+        // ps appends the environment after argv. Strip the exact plain argv,
+        // and refuse changed identities/argv instead of mistaking them for tags.
+        const plain = new Map(parseRows(execFileSync("ps", ["-ww", "-o", fields, "-p", selected], options)).map(row => [row.pid, row]));
+        for (const row of expanded) {
+          const before = table.get(row.pid), after = plain.get(row.pid);
+          if (!before || !after || row.uid !== uid || before.uid !== uid || after.uid !== uid || row.started !== before.started || after.started !== before.started || after.command !== before.command) continue;
+          if (!row.command.startsWith(`${before.command} `)) continue;
+          const environment = row.command.slice(before.command.length + 1);
+          const entry = environment.split(/\s+/).find(item => item.startsWith(prefix));
+          if (entry) values.set(row.pid, entry.slice(prefix.length));
+        }
+      } catch { /* No reliable environment evidence. */ }
     }
-    return found;
   }
-  try {
-    const text = execFileSync("ps", ["-E", "-ww", "-o", "pid=,command=", "-p", pids.join(",")], { encoding: "utf8", env: C_LOCALE, stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 });
-    for (const line of text.split("\n")) {
-      const match = /^\s*(\d+)\s(.*)$/.exec(line);
-      if (match && ` ${match[2]} `.includes(` ${entry} `)) found.add(Number(match[1]));
-    }
-  } catch { /* None readable. */ }
-  return found;
+  return new Set([...values].filter(([, found]) => found === value).map(([pid]) => pid));
 }

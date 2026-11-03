@@ -147,7 +147,7 @@ async function start(args: string[]): Promise<number> {
         // already name another group. A member is ours when it carries this record's id, or
         // started while the launcher ran (to the second `ps` reports, with a second's margin).
         const candidates = [...table.values()].filter(row => row.pgid === child.pid);
-        const survivors = adoptable(candidates, carrying(candidates.map(row => row.pid), "AGENT_TOOL_PROCESS", id), spawnedAt, exitedAt ?? Date.now());
+        const survivors = adoptable(candidates, carrying(table, "AGENT_TOOL_PROCESS", id), spawnedAt, exitedAt ?? Date.now());
         if (survivors.length) {
           record ??= { schemaVersion: 1, id, label, pid: child.pid, started: "", command: [...args], cwd: process.cwd(), log, startedAt: new Date().toISOString(), keep };
           record.members = survivors.map(row => ({ pid: row.pid, started: row.started }));
