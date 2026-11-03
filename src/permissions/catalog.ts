@@ -5,7 +5,7 @@
  */
 export const CLASSES = {
   read: { decision: "allow", description: "Reads local or GitHub state without changing it." },
-  local: { decision: "allow", description: "Changes only this checkout: files, local branches, lockfile installs, and versions of declared dependencies." },
+  local: { decision: "allow", description: "Changes only this checkout: files, local branches, lockfile installs, and versions of declared or already-resolved dependencies." },
   share: { decision: "allow", description: "Publishes work for review without changing a shared branch: pushes a feature branch, opens a PR, answers review threads, or prunes a merged PR's feature branch." },
   release: { decision: "ask", description: "Merges into a shared branch, publishes a package, or deletes remote state." },
   intake: { decision: "ask", description: "Brings new third-party code into the repository." },
@@ -53,8 +53,9 @@ export const GUARDS: { command: string; class: PermissionClass }[] = [
 export const INVOCATIONS = ["bun run agent-tool", "node_modules/.bin/agent-tool", "agent-tool"];
 
 const rank = (value: PermissionClass) => CLASSES[value].decision === "ask" ? 1 : 0;
+/** Select the stricter decision; on ties label the rule by its applied effect, not its preview. */
 export function strictest(entry: CatalogEntry): PermissionClass {
-  return entry.applyClass && rank(entry.applyClass) > rank(entry.class) ? entry.applyClass : entry.class;
+  return entry.applyClass && rank(entry.applyClass) >= rank(entry.class) ? entry.applyClass : entry.class;
 }
 
 export interface ClaudePermissions { allow: string[]; ask: string[] }
@@ -88,7 +89,8 @@ export function codexRules(project: CatalogEntry[] = []): string {
   const lines = [
     "# Managed by agent-tool; regenerate with `agent-tool permissions install --apply`.",
     "# Codex applies the most restrictive matching rule. Commands with an --apply form",
-    "# use their stricter class here because prefix rules cannot match trailing flags.",
+    "# use their stricter decision because prefix rules cannot match trailing flags.",
+    "# Equal decisions group under the applied effect, not the read-only preview.",
   ];
   const groups = new Map<string, { prefix: string[]; last: string[]; class: PermissionClass }>();
   const add = (tokens: string[], value: PermissionClass) => {

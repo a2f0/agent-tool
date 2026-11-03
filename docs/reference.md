@@ -127,6 +127,8 @@ For repository workflow commands added alongside these interfaces, see
 | `skills check [--harness all\|claude\|codex\|opencode\|hermes]` | Read-only CI check for current managed skills |
 | `bun install [--cwd dir]` | Frozen-lockfile install with the Bun that `.mise.toml` pins; requires an existing lockfile |
 | `bun update <name[@version]>... [--cwd dir]` | Change versions of declared registry dependencies only, keeping each one's section |
+| `bun update --catalog <default\|name> <name@version>... [--cwd dir]` | Change only existing root catalog entries to explicit registry specs; preserve references and catalog layout |
+| `bun update --resolved <name>... [--cwd dir]` | Refresh already-resolved transitive registry names within owner ranges with owning Bun 1.4.4+; refuse any non-target resolution or manifest change |
 | `bun remove <name>... [--cwd dir]` | Remove declared dependencies only |
 | `bun add <name@version>... [--dev\|--optional\|--peer] [--exact] [--cwd dir]` | Add new dependencies; the one dependency verb that asks for approval |
 | `bun test\|x <executable> [--cwd dir] [--log] [-- args...]` | Run the test runner or an installed executable with the pinned Bun; `--log` captures output like `run` |

@@ -71,6 +71,8 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   bun install [--cwd <dir>]             Frozen-lockfile install with the pinned Bun
   bun add <name@version>... [--dev|--optional|--peer] [--exact] [--cwd <dir>]
   bun update <name[@version]>... [--cwd <dir>]  Change versions of declared dependencies only
+  bun update --catalog <default|name> <name@version>... [--cwd <dir>]  Existing catalog entries only
+  bun update --resolved <name>... [--cwd <dir>]  Existing transitive resolutions only (Bun 1.4.4+)
   bun remove <name>... [--cwd <dir>]    Remove declared dependencies only
   bun test [--cwd <dir>] [--log] [-- args...]
   bun x <executable> [--cwd <dir>] [--log] [-- args...]  Installed executables only, never fetched
