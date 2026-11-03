@@ -281,7 +281,9 @@
   text-align: center;
 }
 
+/* Every thumbnail of a project has one width: the stage's typical capture shape (--_shots-thumb-ratio, set by the element) at the thumbnail height, within the 4.5rem to max-width range. */
 .shots-filmstrip {
+  --_shots-thumb-width: clamp(4.5rem, calc(var(--_shots-thumb-height) * var(--_shots-thumb-ratio, 0.75)), calc(var(--_shots-thumb-max-width) - 0.5rem));
   position: relative;
   display: flex;
   gap: 0.5rem;
@@ -296,7 +298,8 @@
   flex: 0 0 auto;
   flex-direction: column;
   gap: 0.25rem;
-  max-width: var(--_shots-thumb-max-width);
+  box-sizing: content-box;
+  width: var(--_shots-thumb-width);
   padding: 0.25rem;
   border: 1px solid transparent;
   border-radius: calc(var(--_shots-radius) / 2);
@@ -309,13 +312,11 @@
   border-color: var(--_shots-accent);
 }
 
-/* The image keeps its capture's aspect ratio at a fixed height, cropped from the top only when wider than the cap. */
+/* A capture of another shape is cropped to the thumbnail, keeping its top. */
 .shots-thumb-image {
   display: block;
+  width: 100%;
   height: var(--_shots-thumb-height);
-  min-width: 4.5rem;
-  max-width: calc(var(--_shots-thumb-max-width) - 0.5rem);
-  aspect-ratio: 3 / 4;
   border-radius: 4px;
   background: var(--_shots-surface-raised);
   overflow: hidden;
@@ -329,8 +330,11 @@
   object-position: top;
 }
 
+/* Long labels never widen a thumbnail; they end in an ellipsis, with the full label in the button's title. */
 .shots-thumb-label {
-  max-width: calc(var(--_shots-thumb-max-width) - 0.5rem);
+  display: block;
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   color: var(--_shots-ink-muted);
   font-size: 0.75rem;
@@ -501,9 +505,20 @@
 
 .shots-carousel-controls {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 0.5rem;
   padding: 0 var(--_shots-carousel-padding);
+}
+
+/* The view-all link sits at the start of the controls row, before the step buttons. */
+.shots-carousel-view-all {
+  margin-inline-end: auto;
+  color: var(--shots-link, var(--_shots-ink));
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
 }
 
 .shots-carousel-step {

@@ -73,6 +73,58 @@ export function loopCopies(viewportWidth: number, copyWidth: number): number {
   return copyWidth > 0 ? Math.max(1, Math.ceil(viewportWidth / copyWidth)) : 1;
 }
 
+/** Wheel travel, in CSS pixels on a gesture's dominant axis, that steps one screen. */
+export const WHEEL_STEP_THRESHOLD = 30;
+/** A pause between wheel events this long, in milliseconds, ends a gesture, including a trackpad's inertia. */
+export const WHEEL_GESTURE_IDLE = 200;
+
+export interface WheelStepper {
+  /** Adds one wheel event's `delta` (pixels, signed) at `time` (ms); returns the step it completes: -1, 1, or 0. */
+  push(delta: number, time: number): -1 | 0 | 1;
+  reset(): void;
+}
+
+/**
+ * Turns a stream of wheel deltas into screen steps. Deltas accumulate until
+ * they reach `threshold`, so small wheel ticks add up, then the gesture steps
+ * once: further travel in the same direction, such as a trackpad's inertial
+ * tail, is ignored until the wheel pauses for `idle` ms. Travel of `threshold`
+ * in the other direction is a new gesture and steps back at once.
+ */
+export function createWheelStepper(threshold = WHEEL_STEP_THRESHOLD, idle = WHEEL_GESTURE_IDLE): WheelStepper {
+  let total = 0, last = -Infinity, stepped: -1 | 0 | 1 = 0;
+  return {
+    push(delta, time) {
+      if (!(time - last < idle)) { total = 0; stepped = 0; }
+      last = time;
+      if (!delta || !Number.isFinite(delta)) return 0;
+      const direction = delta > 0 ? 1 : -1;
+      // The step's own direction keeps the gesture going; an opposing blip does not add up.
+      if (direction === stepped) { total = 0; return 0; }
+      if (total && Math.sign(total) !== direction) total = 0;
+      total += delta;
+      if (Math.abs(total) < threshold) return 0;
+      total = 0;
+      stepped = direction;
+      return direction;
+    },
+    reset() { total = 0; last = -Infinity; stepped = 0; },
+  };
+}
+
+/** A wheel event's delta in CSS pixels; `page` is the size of one page of the scroller. */
+export function wheelPixels(delta: number, deltaMode: number, page: number): number {
+  return deltaMode === 1 ? delta * 16 : deltaMode === 2 ? delta * page : delta;
+}
+
+/** Median width-to-height ratio of the captures, so one odd capture does not resize every thumbnail. */
+export function typicalRatio(entries: readonly { width: number; height: number }[]): number | undefined {
+  const ratios = entries.filter(entry => entry.width > 0 && entry.height > 0).map(entry => entry.width / entry.height).sort((a, b) => a - b);
+  if (!ratios.length) return undefined;
+  const middle = ratios.length >> 1;
+  return ratios.length % 2 ? ratios[middle]! : (ratios[middle - 1]! + ratios[middle]!) / 2;
+}
+
 export interface ScreenshotChangeDetail { project: string; theme: string; screen: string; index: number; total: number }
 
 export interface ScreenshotGalleryElement extends HTMLElement {
@@ -191,6 +243,7 @@ function defineGallery(): CustomElementConstructor {
     #overflow = "";
     #rendered = false;
     #announced = "";
+    #wheel = createWheelStepper();
 
     constructor() {
       super();
@@ -280,6 +333,7 @@ function defineGallery(): CustomElementConstructor {
 
       const track = element("div", { class: "shots-track", tabindex: "0", role: "group", "aria-roledescription": "carousel" });
       onScrollSettle(track, () => this.#settle(), signal);
+      track.addEventListener("wheel", (event: WheelEvent) => this.#onWheel(event), { passive: false, signal });
       const previous = element("button", { type: "button", class: "shots-icon-button", "data-action": "previous", "aria-label": "Previous screen" }, [icon("prev")]);
       const next = element("button", { type: "button", class: "shots-icon-button", "data-action": "next", "aria-label": "Next screen" }, [icon("next")]);
       previous.addEventListener("click", () => this.step(-1), { signal });
@@ -316,6 +370,30 @@ function defineGallery(): CustomElementConstructor {
       else if (event.key === "ArrowLeft" || (inside && event.key === "ArrowUp")) { event.preventDefault(); this.step(-1); }
     }
 
+    /**
+     * Steps once per wheel gesture over the main panel, instead of letting
+     * scroll snapping pull a small scroll back to the same screen. Horizontal
+     * travel (a trackpad swipe, a tilt wheel, Shift with a wheel) always steps;
+     * vertical travel steps only while the gallery is expanded, or with
+     * `vertical-wheel` until the first or last screen, so the page still scrolls.
+     */
+    #onWheel(event: WheelEvent): void {
+      const track = this.#track;
+      if (!track || event.defaultPrevented || event.ctrlKey || event.metaKey) return;
+      let x = event.deltaX, y = event.deltaY;
+      if (event.shiftKey && !x) { x = y; y = 0; }
+      const horizontal = Math.abs(x) > Math.abs(y);
+      const delta = wheelPixels(horizontal ? x : y, event.deltaMode, horizontal ? track.clientWidth : track.clientHeight);
+      if (!delta) return;
+      const next = this.#index + Math.sign(delta);
+      const inRange = next >= 0 && next < this.#screens.length;
+      if (!horizontal && !this.#expanded && (!this.hasAttribute("vertical-wheel") || !inRange)) return;
+      event.preventDefault();
+      const step = this.#wheel.push(delta, event.timeStamp);
+      // The wheel does not wrap: past either end it waits, like a native scroller.
+      if (step && this.#index + step >= 0 && this.#index + step < this.#screens.length) this.#select(this.#index + step, scrollBehavior());
+    }
+
     #setExpanded(expanded: boolean): void {
       if (expanded === this.#expanded || !this.#root) return;
       this.#expanded = expanded;
@@ -340,14 +418,20 @@ function defineGallery(): CustomElementConstructor {
       this.#screens = projectScreens(manifest, this.#project);
       this.#index = Math.max(0, screen === undefined ? 0 : this.#screens.indexOf(screen));
       this.#loaded.clear();
+      this.#wheel.reset();
       const frame = projectFrame(manifest, this.#project);
       this.#root!.dataset["frame"] = frame;
       this.#root!.dataset["project"] = this.#project;
       for (const button of this.#root!.querySelectorAll<HTMLButtonElement>(".shots-toggle-button")) button.setAttribute("aria-pressed", String(button.dataset["project"] === this.#project));
       track.setAttribute("aria-label", `${projectInfo(manifest, this.#project).label} screens`);
       track.replaceChildren(...this.#screens.map((_, index) => element("div", { class: "shots-slide", "data-index": index, role: "group", "aria-roledescription": "slide" })));
+      // Every thumbnail of a project has the same width, from its captures' typical shape.
+      const ratio = typicalRatio(manifest.entries.filter(entry => entry.project === this.#project));
+      if (ratio) strip.style.setProperty("--_shots-thumb-ratio", String(Math.round(ratio * 10000) / 10000));
+      else strip.style.removeProperty("--_shots-thumb-ratio");
       strip.replaceChildren(...this.#screens.map((name, index) => {
-        const button = element("button", { type: "button", class: "shots-thumb", "data-index": index, "aria-current": "false" }, [element("span", { class: "shots-thumb-image" }), element("span", { class: "shots-thumb-label", text: screenInfo(manifest, name).label })]);
+        const label = screenInfo(manifest, name).label;
+        const button = element("button", { type: "button", class: "shots-thumb", "data-index": index, "aria-current": "false", title: label }, [element("span", { class: "shots-thumb-image" }), element("span", { class: "shots-thumb-label", text: label })]);
         button.addEventListener("click", () => this.#select(index, scrollBehavior()), { signal: this.#abort!.signal });
         return button;
       }));
@@ -398,7 +482,6 @@ function defineGallery(): CustomElementConstructor {
         const holder = thumb.querySelector(".shots-thumb-image")!;
         thumb.setAttribute("aria-label", screenInfo(manifest, name).label);
         if (!entry) { holder.replaceChildren(element("span", { class: "shots-thumb-missing" })); continue; }
-        holder.setAttribute("style", `aspect-ratio: ${entry.width} / ${entry.height}`);
         holder.replaceChildren(element("img", { src: entry.src, alt: "", loading: "lazy", decoding: "async", width: entry.width, height: entry.height }));
       }
       this.#fit();
@@ -569,7 +652,7 @@ function defineGallery(): CustomElementConstructor {
 
 function defineCarousel(): CustomElementConstructor {
   return class ScreenshotCarousel extends HTMLElement implements ScreenshotCarouselElement {
-    static observedAttributes = ["manifest", "project", "limit"];
+    static observedAttributes = ["manifest", "project", "limit", "view-all-href", "view-all-label"];
     #data: ScreenshotManifest | null = null;
     #abort: AbortController | null = null;
     #track: HTMLDivElement | null = null;
@@ -646,7 +729,9 @@ function defineCarousel(): CustomElementConstructor {
           const picture = element("picture", {}, slide.dark ? [element("source", { media: "(prefers-color-scheme: dark)", srcset: slide.dark.src, width: slide.dark.width, height: slide.dark.height })] : []);
           picture.append(element("img", {
             src: slide.light.src, alt: clone ? "" : screen.alt ?? `${screen.label}, ${projectInfo(manifest, project).label.toLowerCase()} screenshot`,
-            width: slide.light.width, height: slide.light.height, loading: !clone && index < 3 ? "eager" : "lazy", decoding: "async",
+            width: slide.light.width, height: slide.light.height, decoding: "async",
+            // The first original rests at the start edge on load: fetch it first, and the rest as they near the viewport.
+            loading: !clone && index === 0 ? "eager" : "lazy", fetchpriority: !clone && index === 0 ? "high" : undefined,
           }));
           const device = linkBase
             ? element("a", { class: "shots-device", href: screenshotPath(linkBase, project, slide.name), tabindex: clone ? "-1" : undefined }, [picture])
@@ -662,12 +747,15 @@ function defineCarousel(): CustomElementConstructor {
       const track = element("div", { class: "shots-carousel-track", tabindex: "0" }, [list]);
       this.#track = track;
       const root = element("div", { class: "shots-carousel", role: "region", "aria-roledescription": "carousel", "aria-label": this.getAttribute("label") ?? "Screenshots", "data-frame": frame }, [track]);
+      const controls = element("div", { class: "shots-carousel-controls" });
+      const viewAll = this.getAttribute("view-all-href");
+      if (viewAll) controls.append(element("a", { class: "shots-carousel-view-all", href: viewAll, text: this.getAttribute("view-all-label") || "View all screenshots" }));
       if (loop) {
         const previous = element("button", { type: "button", class: "shots-carousel-step", "data-step": "-1", "aria-label": "Previous screens" }, [icon("prev")]);
         const next = element("button", { type: "button", class: "shots-carousel-step", "data-step": "1", "aria-label": "Next screens" }, [icon("next")]);
         previous.addEventListener("click", () => this.step(-1), { signal });
         next.addEventListener("click", () => this.step(1), { signal });
-        root.append(element("div", { class: "shots-carousel-controls" }, [previous, next]));
+        controls.append(previous, next);
         onScrollSettle(track, () => this.#normalize(), signal);
         if (typeof ResizeObserver === "function") {
           const observer = new ResizeObserver(() => this.#resize());
@@ -675,6 +763,7 @@ function defineCarousel(): CustomElementConstructor {
           signal.addEventListener("abort", () => observer.disconnect());
         }
       }
+      if (controls.childElementCount) root.append(controls);
       this.replaceChildren(root);
       if (loop) this.#jump(copies * slides.length + (keep ?? 0));
     }
