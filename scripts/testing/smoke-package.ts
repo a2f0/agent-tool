@@ -11,6 +11,8 @@ const temporary = mkdtempSync(path.join(tmpdir(), "agent-tool-package-"));
 const consumer = path.join(temporary, "consumer");
 const archive = path.join(temporary, "agent-tool.tgz");
 const env = { ...process.env, AGENT_TOOL_CONFIG: undefined };
+const manager = process.argv[2] ?? "bun";
+assert.ok(manager === "bun" || manager === "npm", "Usage: smoke-package.ts [bun|npm]");
 try {
   execFileSync(process.execPath, ["pm", "pack", "--ignore-scripts", "--quiet", "--filename", archive], { cwd: root, env });
   const packed = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" }).split("\n");
@@ -24,7 +26,8 @@ try {
     dependencies: { [metadata.name]: `file:${archive}` },
     scripts: { "agent-tool": `bun node_modules/${metadata.name}/src/index.ts` },
   }));
-  execFileSync(process.execPath, ["install", "--ignore-scripts"], { cwd: consumer, env, stdio: "pipe" });
+  if (manager === "npm") execFileSync("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: consumer, env, stdio: "pipe" });
+  else execFileSync(process.execPath, ["install", "--ignore-scripts"], { cwd: consumer, env, stdio: "pipe" });
   const executable = path.join(consumer, "node_modules/.bin/agent-tool");
   const run = (...args: string[]) => execFileSync(executable, args, { cwd: consumer, env, encoding: "utf8" });
   assert.equal(run("--version").trim(), metadata.version);
@@ -45,6 +48,19 @@ try {
   run("skills", "install", "--apply");
   assert.equal(JSON.parse(check()).ok, true);
   const dependencySkill = readFileSync(path.join(root, "skills/update-dependencies/SKILL.md"), "utf8");
+  for (const [harness, directory] of [["claude", ".claude"], ["codex", ".agents"], ["opencode", ".opencode"], ["hermes", ".agents"]]) {
+    const selected = path.join(temporary, `consumer-${harness}`);
+    mkdirSync(selected);
+    execFileSync("git", ["init", "--quiet", selected], { env, stdio: "pipe" });
+    run("--repo", selected, "skills", "install", "--harness", harness!, "--apply");
+    assert.equal(JSON.parse(run("--repo", selected, "skills", "check", "--harness", harness!)).ok, true);
+    assert.equal(readFileSync(path.join(selected, directory!, "skills/update-dependencies/SKILL.md"), "utf8"), dependencySkill);
+    assert.equal(existsSync(path.join(selected, ".hermes")), false, "skill discovery does not grant trust or create an adapter");
+  }
+  // Exercise the installed tarball, not this checkout's source CLI, against real owning-manager fixtures.
+  execFileSync(process.execPath, ["test", "src/bun/dependencyModes.test.ts", "src/bun/dependencyModesSafety.test.ts"], {
+    cwd: root, stdio: "inherit", env: { ...env, AGENT_TOOL_TEST_CLI: path.join(consumer, "node_modules", metadata.name, "src/index.ts") },
+  });
   for (const harness of [".agents", ".claude"]) {
     assert.equal(readFileSync(path.join(consumer, harness, "skills/update-dependencies/SKILL.md"), "utf8"), dependencySkill, "installed harness policies match the canonical dependency-upgrade skill");
   }
@@ -137,7 +153,8 @@ try {
   writeFileSync(path.join(consumer, "tsconfig.json"), JSON.stringify({ compilerOptions: browserConfig.compilerOptions, files: ["browser.ts"] }));
   execFileSync(path.join(root, "node_modules/.bin/tsc"), ["-p", consumer], { cwd: consumer, env, stdio: "pipe" });
   assert.match(execFileSync(process.execPath, ["run", "agent-tool", "--help"], { cwd: consumer, env, encoding: "utf8" }), /agent-tool/);
-  console.log("Installed source package passed executable, script, policy, image rendering, screenshot staging, browser entry point, and embedded-skills checks without install scripts or a build.");
+  if (manager === "npm") assert.equal(execFileSync("npm", ["exec", "--no", "--", "agent-tool", "--version"], { cwd: consumer, env, encoding: "utf8" }).trim(), metadata.version);
+  console.log(`Installed ${manager} source package passed executable, script, policy, real dependency modes, image rendering, screenshot staging, browser entry point, and four-harness embedded-skills checks without install scripts or a build.`);
 } finally {
   rmSync(temporary, { recursive: true, force: true });
 }

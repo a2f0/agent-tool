@@ -23,7 +23,7 @@ out of agent sessions where that matters.
 | Class | Decision | Commands |
 | --- | --- | --- |
 | `read` | allow | Context, checks, listings, previews, diagnostics, and logs |
-| `local` | allow | `bun install\|update\|remove\|test`, `bun x` for executables classified `local`, `branch create`, `versions`, `images build`, `screenshots build`, `review`, and applied skill or hook installs |
+| `local` | allow | `bun install\|update\|remove\|test`, `bun x` for executables classified `local`, `branch create`, `versions`, `images build`, `screenshots build`, `review`, `teardown --apply`, and applied skill or hook installs |
 | `share` | allow | `branch push`, `pr open`, `pr cancel-runs`, `pr threads reply\|resolve`, `repo cleanup --apply` |
 | `release` | ask | `pr merge`, and direct `gh pr merge`, `npm publish`, `bun publish` |
 | `intake` | ask | `bun add`, and direct `bun add`, `npm install`, `pnpm add`, `yarn add`, and `bunx`, `bun x`, `npx`, which can download a package |
@@ -64,7 +64,37 @@ per-package changes, and each Bun invocation.
   could resolve from the registry instead. Without a version it moves to `latest`, keeping an
   exact pin exact; an explicit version is written as given, exact versions with
   `--exact`. Peer ranges are a
-  compatibility contract and are never rewritten.
+  compatibility contract and are never rewritten. A `catalog:` reference directs
+  the caller to the explicit shared-catalog form below rather than replacing the reference.
+- `bun update --catalog <default|name> <name@version>...` changes only existing
+  registry entries in one root catalog. It accepts top-level `catalog`/`catalogs`
+  or those fields inside `workspaces`, including `catalogs.default`, without
+  creating a catalog, adding entries, moving sections, changing references, or
+  widening workspace membership. Ambiguous duplicate layouts, non-registry
+  sources, workspace-package names, and entries used by a `catalog:` peer range
+  are refused. Choose the shared catalog explicitly even from a workspace;
+  the change affects every reference to that entry. Explicit specs are written
+  as given (exact or ranged); omitting a version is refused. After the frozen
+  preflight, the helper changes only the selected entries and runs the owning
+  Bun's `install`, then a frozen reinstall. It never uses `bun add --catalog`,
+  which could create declarations. Receipts add `catalogChanges`.
+- `bun update --resolved <name>...` refreshes every locked copy of the named
+  **transitive** registry packages within their existing owners' ranges. It runs
+  `bun update <name>...` at the lockfile root with the owning **Bun 1.4.4 or newer**;
+  it does not select a newer global manager. Older owners fail before mutation
+  because they can turn the same command into a direct addition. The CLI's
+  minimum runtime remains 1.3.11. Names must already resolve unambiguously in the
+  text lockfile and cannot be declared directly in any workspace. Versions,
+  globs, aliases, source switches, `--latest`, and arbitrary manager flags are
+  refused. Every manifest must remain byte-identical; every non-target lock
+  resolution and lock metadata field must remain unchanged. If Bun needs to
+  add/remove/change a non-target child, the helper restores the original files:
+  this is an explicitly unsupported target-only case, not a broad refresh.
+  Prefer a supported owning-dependency upgrade rather than hand-editing the lock
+  or bypassing approvals. Receipts add `scope: "resolved-targets"` and
+  `resolvedChanges` with lock keys and old/new resolutions. A no-op is not proof
+  an advisory is fixed: inspect logs (Bun can warn and retain a transitive
+  resolution), compare the graph, and re-audit.
 - `bun remove <name>...` removes only declared names.
 - `bun add <name@version>...` adds only names that are not declared, with an
   explicit registry or `workspace:` version. Use `--dev`, `--optional`, or
@@ -78,7 +108,11 @@ changes anything, it runs `bun install --frozen-lockfile --lockfile-only` and
 stops if `package.json` declares something the lockfile does not cover, so a
 hand-added package cannot be resolved as a side effect of an allowed change. They
 also refuse while a version-pinned workspace reference no longer matches its
-workspace, since Bun would fetch that name from the registry.
+workspace, since Bun would fetch that name from the registry. Catalog and resolved
+modes additionally compare declarations against the lock before invoking even the
+frozen preflight, so stale declarations cannot trigger metadata resolution.
+They keep release-age, override, patch, and registry policy; neither mode passes
+flags that widen those settings. Both finish with a frozen reinstall.
 `versions prepare`, which refreshes the lockfile for bumped and new workspace
 packages, likewise refuses when any third-party declaration, in any section of
 any workspace, or a root catalog, override, or patch differs from what
@@ -102,7 +136,17 @@ violations. A frozen install may change neither file, which
 also covers the project's own lifecycle scripts. The files are restored too if
 the manifest cannot be read afterward. `node_modules` is not restored; the next frozen
 install rebuilds it. Updating a dependency can still bring new transitive
-packages; the lockfile diff is where review sees them.
+packages; the lockfile diff is where review sees them. The resolved-only form is
+stricter: unrelated lock entries cannot change at all. Catalog and resolved modes
+also reject linked manifests/lockfiles; rollback atomically replaces a file that
+a lifecycle script changed into a link without overwriting its outside target.
+Restoration refuses linked parent directories and reports any files it could not
+restore. These checks are not a sandbox for lifecycle scripts or concurrent writers.
+
+The catalog update mechanism follows [Bun's catalog documentation](https://bun.com/docs/pm/catalogs)
+(edit existing entries, then install). The resolved operation follows the
+[current update contract](https://bun.com/docs/pm/cli/update), with stricter
+postconditions and a conservatively verified owning-manager floor.
 
 ## Tests and executables
 
@@ -167,8 +211,14 @@ agent-tool permissions check              # CI
 - `.codex/rules/agent-tool.rules` holds prefix rules. Codex applies the most
   restrictive matching rule, so its `prompt` rules also override a broader user
   rule such as `prefix_rule(pattern=["gh"], decision="allow")`. Prefix rules
-  cannot match a trailing flag, so a command with an `--apply` form prompts in
-  every form. A locally edited rules file is refused rather than overwritten.
+  cannot match a trailing flag, so a command whose `--apply` form **asks** prompts
+  in every form. When both forms allow, they still allow. Generated grouping uses
+  the stricter decision and, on a decision tie, the applied effect: cleanup is
+  grouped under `share`, teardown and applied skill/hook installs under `local`,
+  not their read-only previews. These labels are descriptive, not additional
+  permission ranks. This regrouping changes no effective allow/ask decision,
+  expanded command prefix, runtime guard, or harness trust. A locally edited
+  rules file is refused rather than overwritten.
 
 The rules take effect only outside bypass modes. Each harness also has limits
 that the rules cannot change:

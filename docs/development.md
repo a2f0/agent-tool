@@ -84,7 +84,21 @@ smoke runs all three review adapters through local stubs with Bun and Node absen
 from PATH; no live model calls are made. CI runs these checks on Linux/macOS,
 tests the minimum supported Bun runtime, and builds Debian packaging on Linux.
 Local source integration tests use disposable Git repositories, bare remotes,
-and API stubs to check guard behavior without mutating GitHub.
+and API stubs to check guard behavior without mutating GitHub. Dependency-mode
+integration tests use real Bun installs against a loopback registry with real
+package tarballs; the manager and lockfile writer are never stubbed. Set
+`AGENT_TOOL_TEST_BUN` to the owning manager's absolute executable when testing a
+separate minimum CLI runtime, and `AGENT_TOOL_TEST_CLI` to an installed package's
+`src/index.ts` to exercise the same fixtures against a packed consumer. These are
+test-only selectors, not production overrides for the pinned-manager guard.
+The package smoke runs those same fixtures through the installed tarball and
+checks each of the four skill harnesses. Pass `npm` to
+`bun scripts/testing/smoke-package.ts npm` for a Node/npm consumer install and
+`npm exec` check, with the intended Node/npm on PATH. Running package smoke on
+Bun 1.3.11 also needs `AGENT_TOOL_TEST_BUN` pointing at the development pin,
+since the resolved-update capability requires a newer owning manager even
+though its CLI runs on the supported minimum. CI records that executable before
+switching runtimes; it does not widen the consumer's production pin.
 
 The `agent:run` and `agent:logs` package scripts run the source CLI's `run` and
 `logs` commands. Inspect the runner's bounded failure tail,

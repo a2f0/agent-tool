@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { CATALOG, CLASSES, claudePermissions, codexRules } from "./catalog";
+import { CATALOG, CLASSES, GUARDS, INVOCATIONS, claudePermissions, codexRules, strictest, type PermissionClass } from "./catalog";
 import { checkPermissions, installPermissions } from "./install";
 import { HELP } from "../cli";
 import { parseConfig } from "../config";
@@ -40,6 +40,43 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
   // Prefix rules cannot see a trailing --apply, so Codex prompts for the whole command.
   expect(codex).toContain('prefix_rule(pattern=["agent-tool", "permissions", "install"], decision="prompt"');
   expect(codex).not.toMatch(/"repo", "cleanup"\], decision="prompt"/);
+});
+
+test("apply semantics label generated groups without changing any permission decision or prefix", () => {
+  const codex = codexRules();
+  const groups = new Map<string, string[]>();
+  let label = "";
+  const actual: { tokens: (string | string[])[]; decision: string }[] = [];
+  for (const line of codex.split("\n")) {
+    const heading = /^# (\w+):/.exec(line);
+    if (heading) label = heading[1]!;
+    const rule = /^prefix_rule\(pattern=(\[.*\]), decision="(allow|prompt)"/.exec(line);
+    if (!rule) continue;
+    groups.set(label, [...(groups.get(label) ?? []), line]);
+    actual.push({ tokens: JSON.parse(rule[1]!), decision: rule[2]! });
+  }
+  for (const invocation of INVOCATIONS) {
+    const prefix = invocation.split(" ").map(word => JSON.stringify(word)).join(", ");
+    expect(groups.get("share")?.join("\n")).toContain(`pattern=[${prefix}, "repo", "cleanup"]`);
+    expect(groups.get("local")?.join("\n")).toContain('"teardown"');
+  }
+  // Expand grouped prefixes, so regrouping cannot hide a changed match or decision.
+  const expand = (tokens: (string | string[])[]): string[][] => tokens.reduce<string[][]>((rows, token) => rows.flatMap(row => (Array.isArray(token) ? token : [token]).map(value => [...row, value])), [[]]);
+  const effective = actual.flatMap(({ tokens, decision }) => expand(tokens).map(words => `${words.join(" ")}=${decision}`)).sort();
+  const oldDecision = (base: PermissionClass, apply?: PermissionClass) => CLASSES[base].decision === "ask" || (apply && CLASSES[apply].decision === "ask") ? "ask" : "allow";
+  const expected = [
+    ...INVOCATIONS.flatMap(invocation => CATALOG.map(entry => `${invocation} ${entry.command}=${oldDecision(entry.class, entry.applyClass) === "ask" ? "prompt" : "allow"}`)),
+    ...GUARDS.map(entry => `${entry.command}=${CLASSES[entry.class].decision === "ask" ? "prompt" : "allow"}`),
+  ].sort();
+  expect(effective).toEqual(expected);
+  const claude = claudePermissions();
+  const oldAllow = INVOCATIONS.flatMap(invocation => CATALOG.filter(entry => oldDecision(entry.class, entry.applyClass) === "allow").map(entry => `Bash(${invocation} ${entry.command}${entry.command.startsWith("--") ? "" : " *"})`));
+  expect(claude).toEqual({ allow: oldAllow, ask: [] });
+  for (const base of Object.keys(CLASSES) as PermissionClass[]) for (const apply of Object.keys(CLASSES) as PermissionClass[]) {
+    expect(CLASSES[strictest({ command: "fixture", class: base, applyClass: apply })].decision).toBe(oldDecision(base, apply));
+  }
+  expect(strictest({ command: "fixture", class: "read", applyClass: "local" })).toBe("local");
+  expect(strictest({ command: "fixture", class: "read", applyClass: "share" })).toBe("share");
 });
 
 test("every classified command is a real CLI command", () => {
