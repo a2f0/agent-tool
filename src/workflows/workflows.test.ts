@@ -121,6 +121,10 @@ const fields=a[a.indexOf('--json')+1], say=(value)=>console.log(JSON.stringify(v
 const pr={number:1,state:s.status,title:'chore: workflow',url:'https://github.com/o/r/pull/1',headRefName:'chore/workflow',headRefOid:s.apiHead,baseRefName:'main',baseRefOid:s.liveBase,isDraft:false,mergeable:'MERGEABLE',mergeStateStatus:'CLEAN',isCrossRepository:false,mergeCommit:{oid:s.commit}};
 if(a[0]==='repo')say({nameWithOwner:'o/r',defaultBranchRef:{name:s.defaultBranch??'main'},url:'file://'+s.remote,sshUrl:'file://'+s.remote});
 else if(a[0]==='config')console.log('https');
+else if(a[0]==='api' && a.some(value=>value.includes('/compare/')))say({behind_by:s.behindBy??0});
+else if(a[0]==='run' && a[1]==='cancel'){appendFileSync(process.env.API_STATE+'.cancelled',a[2]+'\\n');if((s.cancelFail??[]).includes(Number(a[2]))){console.error('cannot cancel');process.exit(1);}}
+else if(a[0]==='run' && a[1]==='view' && a.includes('--json'))say({status:s.viewStatus??'in_progress'});
+else if(a[0]==='run' && a[1]==='list' && !a.includes('--workflow'))say(s.runs??[]);
 else if(a[0]==='pr' && a[1]==='checks')say(s.checks);
 else if(a[0]==='pr' && fields==='headRefOid,statusCheckRollup')say({headRefOid:s.apiHead,statusCheckRollup:s.checks});
 else if(a[0]==='pr')say(pr);
@@ -154,6 +158,51 @@ test("CI waiter does not pass no-check races, duplicate pending jobs, or head dr
   f.save({ checks: [{ name: "test", workflow: "CI", state: "SUCCESS" }, { name: "test", workflow: "CI", state: "PENDING" }] }); result = f.run(["pr", "checks"]); expect(result.status).toBe(1); expect(JSON.parse(result.stdout).waiting).toBe(true);
   f.save({ apiHead: "a".repeat(40) }); result = f.run(["pr", "checks"]); expect(result.status).toBe(1); expect(result.stderr).toContain("HEAD changed");
   f.save(); expect(f.run(["pr", "checks", "--wait"]).status).toBe(0);
+});
+test("CI waiter stops once the head falls behind its live base, unless --allow-behind", () => {
+  const f = githubFixture(); f.save({ checks: [{ name: "test", workflow: "CI", state: "PENDING" }], behindBy: 2 });
+  let result = f.run(["pr", "checks", "--wait", "--timeout", "60"]); expect(result.status).toBe(1);
+  const report = JSON.parse(result.stdout);
+  expect(report).toMatchObject({ ok: false, waiting: false, behind: true, base: { branch: "main", liveOid: f.commit, behindBy: 2, behind: true } });
+  expect(report.reason).toContain(`pr cancel-runs --head ${f.commit}`);
+  result = f.run(["pr", "checks", "--allow-behind"]); expect(result.status).toBe(1);
+  expect(JSON.parse(result.stdout)).toMatchObject({ waiting: true, behind: true });
+});
+test("green checks on a head behind its base pass only with --allow-behind", () => {
+  const f = githubFixture(); f.save({ behindBy: 1 });
+  expect(f.run(["pr", "checks"]).status).toBe(1);
+  expect(f.run(["pr", "checks", "--allow-behind"]).status).toBe(0);
+  f.save({ behindBy: 0 }); const result = f.run(["pr", "checks", "--wait"]); expect(result.status).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, behind: false, base: { behindBy: 0 } });
+});
+test("a CI wait compares once per live base OID rather than once per poll", () => {
+  const f = githubFixture(); f.save({ checks: [{ name: "test", workflow: "CI", state: "PENDING" }] });
+  expect(f.run(["pr", "checks", "--wait", "--timeout", "1", "--interval", "1"]).status).toBe(1);
+  const calls = readFileSync(f.stateFile + ".calls", "utf8").split("\n");
+  expect(calls.filter(line => line.includes("statusCheckRollup")).length).toBeGreaterThan(1);
+  expect(calls.filter(line => line.includes("/compare/"))).toHaveLength(1);
+}, 20_000);
+test("pr cancel-runs cancels a head's unfinished runs on the PR branch only", () => {
+  const f = githubFixture(); const old = "b".repeat(40);
+  const run = (id: number, extra: Record<string, unknown> = {}) => ({ databaseId: id, status: "in_progress", headSha: old, headBranch: "chore/workflow", workflowName: "CI", event: "pull_request", url: `https://example.com/run/${id}`, ...extra });
+  f.save({ runs: [run(1), run(2, { status: "queued" }), run(3, { status: "completed" }), run(4, { headBranch: "main" }), run(5, { headSha: "c".repeat(40) }), run(6)], cancelFail: [6], viewStatus: "completed" });
+  let result = f.run(["pr", "cancel-runs", "--head", old]); expect(result.status).toBe(0);
+  const report = JSON.parse(result.stdout);
+  expect(report.runs.map((r: { id: number; outcome: string }) => [r.id, r.outcome])).toEqual([[1, "cancelled"], [2, "cancelled"], [6, "finished"]]);
+  expect(readFileSync(f.stateFile + ".cancelled", "utf8").trim().split("\n")).toEqual(["1", "2", "6"]);
+  f.save({ runs: [run(6)], cancelFail: [6], viewStatus: "in_progress" });
+  result = f.run(["pr", "cancel-runs", "--head", old]); expect(result.status).toBe(1);
+  expect(JSON.parse(result.stdout).runs[0]).toMatchObject({ id: 6, outcome: "failed", error: "cannot cancel" });
+  expect(f.run(["pr", "cancel-runs"]).stderr).toContain("Usage: pr cancel-runs");
+});
+test("pr cancel-runs keeps the current head's CI unless that head is behind its base", () => {
+  const f = githubFixture();
+  f.save({ runs: [{ databaseId: 7, status: "in_progress", headSha: f.commit, headBranch: "chore/workflow", workflowName: "CI", event: "push", url: "u" }] });
+  let result = f.run(["pr", "cancel-runs", "--head", f.commit]); expect(result.status).toBe(1);
+  expect(result.stderr).toContain("contains its live base");
+  f.save({ runs: [{ databaseId: 7, status: "in_progress", headSha: f.commit, headBranch: "chore/workflow", workflowName: "CI", event: "push", url: "u" }], behindBy: 3 });
+  result = f.run(["pr", "cancel-runs", "--head", f.commit]); expect(result.status).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({ base: { behindBy: 3 }, runs: [{ id: 7, outcome: "cancelled" }] });
 });
 test("CI wait timeout prefers --timeout, then the caller's default, then 900 seconds", () => {
   expect(timeoutOptions([])).toEqual({ timeoutMs: 900_000, intervalMs: 10_000 });

@@ -56,7 +56,8 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   review <claude|codex|opencode> [effort] [--base <local-ref>]
   pr open [title] [--body-file file]    Body from the file or stdin; branch already pushed
   pr merge <subject-or-empty> <head-oid> <base-branch>
-  pr context | checks [--wait] [--head oid] [--timeout seconds]
+  pr context | checks [--wait] [--head oid] [--allow-behind] [--timeout seconds]
+  pr cancel-runs --head <oid>           Cancel unfinished Actions runs of a superseded head
   pr logs [--head oid] [--max-bytes N] [--tail-lines N]  Failed GitHub Actions job logs
   pr preflight <reviewed-head> <base-branch> <reviewed-base>
   pr threads list | reply <comment-id> [--body-file file] | resolve <thread-id>
@@ -239,7 +240,7 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
     return review(root, name!, effort, base);
   }
   if (command === "pr") {
-    if (["context", "checks", "logs", "preflight", "threads"].includes(args[0]!)) return prWorkflowCommand(args);
+    if (["context", "checks", "cancel-runs", "logs", "preflight", "threads"].includes(args[0]!)) return prWorkflowCommand(args);
     const action = args.shift();
     if (action === "open") {
       const index = args.indexOf("--body-file");

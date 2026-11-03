@@ -113,6 +113,8 @@ For repository workflow commands added alongside these interfaces, see
 | `teardown [--apply]` | Report what the checkout still runs or holds; `--apply` stops recorded processes not started with `--keep` |
 | `review claude\|codex\|opencode [effort] [--base ref]` | Review committed HEAD using a pinned raw-file snapshot |
 | `pr open [title] [--body-file file]` | Open a same-repository PR; body from the file or stdin; branch already pushed |
+| `pr checks [--wait] [--head oid] [--allow-behind] [--timeout seconds] [--interval seconds]` | Report or wait for the PR head's checks; stop when the head falls behind its live base |
+| `pr cancel-runs --head <oid>` | Cancel the unfinished GitHub Actions runs of a superseded PR head |
 | `pr logs [--head oid] [--max-bytes N] [--tail-lines N]` | Save each failed GitHub Actions job log of the PR head privately and show a bounded tail |
 | `pr merge <subject-or-empty> <head-oid> <base-branch>` | Check CI and synchronously squash the reviewed HEAD |
 | `versions plan\|bump\|check <base-oid>` | Plan, rewrite, or check package versions against an exact base |
