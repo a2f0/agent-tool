@@ -178,6 +178,12 @@ The module re-exports everything from `screenshots/manifest`, and adds:
   `nearestSlide(scrollLeft, offset, pitch, count)`,
   `loopSlide(index, count, copies)`, and
   `loopCopies(viewportWidth, copyWidth)` are the carousel's scroll math.
+- The gallery's wheel handling: `createWheelStepper(threshold?, idle?)`
+  returns a `WheelStepper` whose `push(delta, time)` turns wheel deltas into
+  -1, 0, or 1 screen steps (defaults `WHEEL_STEP_THRESHOLD`, 30px, and
+  `WHEEL_GESTURE_IDLE`, 200ms); `wheelPixels(delta, deltaMode, page)` converts
+  line and page deltas to pixels; `typicalRatio(entries)` is the median
+  width-to-height ratio that sizes the thumbnails.
 
 ### `<screenshot-gallery>`
 
@@ -192,6 +198,7 @@ The module re-exports everything from `screenshots/manifest`, and adds:
 | `label` | The region's accessible name, default `Screenshots` |
 | `empty-message`, `error-message` | Text for a manifest with no entries, or one that failed to load |
 | `no-history` | Leave the URL and title alone |
+| `vertical-wheel` | A vertical wheel over the main panel steps screens too, until the first or last screen |
 
 Templates fill `{screen}`, `{project}`, `{projectLower}`, and `{heading}` from
 the manifest's labels.
@@ -200,15 +207,26 @@ the manifest's labels.
   when there are several projects, a theme toggle when there are several
   themes, and an expand button that fills the viewport (Escape restores it).
 - The main panel is a horizontal scroll-snap track of every screen of the
-  selected device: swipe, trackpad, or shift-wheel scrolling moves between
-  screens, and a scroll that settles selects its screen. Previous and next
-  buttons wrap at either end, beside an `n / total` counter.
-- A filmstrip of thumbnails at a fixed height, keeping each capture's aspect
-  ratio between a 4.5rem minimum and `--shots-thumb-max-width`; outside that
-  range the image is cropped, keeping its top, so a phone thumbnail shows the
-  top of the screen large enough to read rather than the whole screen at
-  2.5rem wide.
-  The active thumbnail has `aria-current="true"` and is kept visible by
+  selected device: a touch swipe scrolls it natively, and a scroll that
+  settles selects its screen. Previous and next buttons wrap at either end,
+  beside an `n / total` counter.
+- The wheel steps the main panel one screen per gesture rather than scrolling
+  it, since scroll snapping would pull a small scroll back to the same screen.
+  Deltas add up until they reach 30px, so small ticks step too; the gesture
+  then steps once, ignoring the rest of its travel, such as a trackpad's
+  inertia, until the wheel pauses for 200ms or reverses. Horizontal travel (a
+  trackpad swipe, a tilt wheel, or Shift with a wheel) always steps. Vertical
+  travel scrolls the page, so a tall panel never traps it, except while the
+  gallery is expanded or with `vertical-wheel`, which steps until the first or
+  last screen and then lets the page scroll. The wheel does not wrap, and
+  Ctrl or Command with a wheel (zoom) is left alone.
+- A filmstrip of thumbnails at a fixed height and one width per device: the
+  median shape of its captures at that height, between 4.5rem and
+  `--shots-thumb-max-width`. A capture of another shape is cropped, keeping its
+  top, so a phone thumbnail shows the top of the screen large enough to read
+  rather than the whole screen at 2.5rem wide. Labels never widen a thumbnail:
+  long ones end in an ellipsis, and the thumbnail's `title` holds the full
+  label. The active thumbnail has `aria-current="true"` and is kept visible by
   scrolling only the strip, never the page.
 - Phone and tablet captures sit in a device bezel sized from the capture's
   width and height, scaled to fit the stage; other captures get a thin border.
@@ -240,6 +258,7 @@ first, and `screenshot-error` with `{ error }` when the manifest fails to load.
 | `link-base` | When set, each slide links to `<link-base>/<project>/<screen>/` |
 | `limit` | Show only the first N screens |
 | `label` | The region's accessible name, default `Screenshots` |
+| `view-all-href`, `view-all-label` | A link to the full gallery at the start of the controls row, before the step buttons; the label defaults to `View all screenshots` |
 
 It shows every captured screen of the project, in manifest order, each in the
 project's bezel with its label as a caption. Each slide is a `<picture>` whose
@@ -249,7 +268,11 @@ of the slides sit on both sides, hidden from assistive technology and the
 tab order but clickable, and once
 scrolling settles the track jumps silently back to the same slide among the
 originals. Previous and next buttons scroll by the slides that fit, or by one
-when every slide fits. Images are lazy except the first three; smooth
+when every slide fits. The first original slide's image, which rests at the start edge on load, is
+eager with `fetchpriority="high"`; every other image, copies included, is
+lazy. A `view-all-href` link renders with the controls (also when there is one
+screen and no step buttons), so a page need not place its own link beside the
+element; style it with `.shots-carousel-view-all` or `--shots-link`. Smooth
 scrolling and hover motion follow `prefers-reduced-motion`. With one screen it
 does not loop, and with none the element is hidden. If the manifest fails to
 load, the fallback children stay and `screenshot-error` fires. There is no
@@ -289,6 +312,7 @@ site's CSS loads in.
 | `--shots-lightbox-radius` | Corner radius of a frameless lightbox image |
 | `--shots-expanded-z` | Stacking order of the expanded gallery |
 | `--shots-carousel-slide-width`, `--shots-carousel-gap`, `--shots-carousel-padding` | Carousel slide width, gap, and inline padding |
+| `--shots-link` | The carousel's view-all link, default `--shots-ink` |
 
 Class names (`shots-gallery`, `shots-toolbar`, `shots-track`, `shots-slide`,
 `shots-frame`, `shots-filmstrip`, `shots-thumb`, `shots-lightbox`,
@@ -338,7 +362,8 @@ const heading = project && screen ? screenshotHeading(manifest, project, screen)
 A home page adds the carousel the same way:
 
 ```astro
-<screenshot-carousel manifest="/screenshot-gallery/manifest.json" project="mobile" link-base="/screenshots" label="Example on a phone"></screenshot-carousel>
+<screenshot-carousel manifest="/screenshot-gallery/manifest.json" project="mobile" link-base="/screenshots" label="Example on a phone"
+  view-all-href="/screenshots/" view-all-label="See every screen"></screenshot-carousel>
 ```
 
 `screenshotRoutes` gives each route `props` of `{ project, screen }` (none for

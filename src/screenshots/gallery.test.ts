@@ -52,6 +52,44 @@ describe("layout math", () => {
   });
 });
 
+describe("wheel stepping", () => {
+  test("small ticks add up to one step; a gesture steps once however long its inertia runs", async () => {
+    const { createWheelStepper } = await gallery();
+    const stepper = createWheelStepper(30, 200);
+    // 40px ticks: the first reaches the threshold, the rest of the burst is the same gesture.
+    expect([0, 50, 100, 150].map(time => stepper.push(40, time))).toEqual([1, 0, 0, 0]);
+    // After a pause, the next tick is a new gesture.
+    expect(stepper.push(40, 400)).toBe(1);
+    // 10px ticks accumulate before stepping.
+    expect([700, 720, 740].map(time => stepper.push(10, time))).toEqual([0, 0, 1]);
+    // A trackpad swipe: rising then decaying deltas every 16ms for 1.5s steps once.
+    stepper.reset();
+    const stream = Array.from({ length: 95 }, (_, frame) => Math.max(1, Math.round(frame < 5 ? 8 + frame * 12 : 60 * 0.95 ** (frame - 5))));
+    const steps = stream.map((delta, frame) => stepper.push(-delta, 2000 + frame * 16)).filter(Boolean);
+    expect(steps).toEqual([-1]);
+  });
+
+  test("a reversal steps back at once; an opposing blip in inertia does not", async () => {
+    const { createWheelStepper } = await gallery();
+    const stepper = createWheelStepper(30, 200);
+    expect(stepper.push(50, 0)).toBe(1);
+    expect([stepper.push(20, 16), stepper.push(-2, 32), stepper.push(15, 48), stepper.push(-1, 64), stepper.push(10, 80)]).toEqual([0, 0, 0, 0, 0]);
+    expect([stepper.push(-20, 96), stepper.push(-20, 112), stepper.push(-20, 128)]).toEqual([0, -1, 0]);
+    // Direction changes before a step start over rather than cancelling out.
+    stepper.reset();
+    expect([stepper.push(20, 0), stepper.push(-20, 10), stepper.push(-20, 20)]).toEqual([0, 0, -1]);
+    expect([stepper.push(0, 30), stepper.push(Number.NaN, 40)]).toEqual([0, 0]);
+  });
+
+  test("wheel deltas convert to pixels, and the thumbnail ratio is the captures' median", async () => {
+    const { typicalRatio, wheelPixels } = await gallery();
+    expect([wheelPixels(3, 0, 800), wheelPixels(3, 1, 800), wheelPixels(-1, 2, 800)]).toEqual([3, 48, -800]);
+    expect(typicalRatio([])).toBeUndefined();
+    expect(typicalRatio([{ width: 1170, height: 2532 }, { width: 1170, height: 9000 }, { width: 1170, height: 2532 }])).toBeCloseTo(1170 / 2532, 6);
+    expect(typicalRatio([{ width: 100, height: 100 }, { width: 200, height: 100 }, { width: 0, height: 10 }])).toBe(1.5);
+  });
+});
+
 describe("<screenshot-gallery>", () => {
   test("defining twice is harmless, and importing touches no DOM", async () => {
     const { defineScreenshotElements } = await gallery();
@@ -85,7 +123,7 @@ describe("<screenshot-gallery>", () => {
     expect(missing.textContent).toBe("No light-theme capture of Org Manager in the phone layout.");
     // Every thumbnail shows an image, from another theme when needed, with the capture's aspect ratio.
     expect($$(element, ".shots-thumb img").length).toBe(3);
-    expect($(element, ".shots-thumb-image").getAttribute("style")).toContain("aspect-ratio: 1170 / 2532");
+    expect($(element, ".shots-filmstrip").style.getPropertyValue("--_shots-thumb-ratio")).toBe("0.4621");
   });
 
   test("the path under base-path is a deep link too", async () => {
@@ -186,6 +224,44 @@ describe("<screenshot-gallery>", () => {
     expect(document.body.style.overflow).toBe("");
   });
 
+  test("thumbnails share the project's width and carry their full label as a title", async () => {
+    const element = await mount({ "initial-project": "mobile" });
+    expect(Number($(element, ".shots-filmstrip").style.getPropertyValue("--_shots-thumb-ratio"))).toBeCloseTo(1170 / 2532, 3);
+    expect($$(element, ".shots-thumb").map(thumb => thumb.getAttribute("title"))).toEqual(["Home", "Notes", "Org Manager"]);
+    expect($$(element, ".shots-thumb-image").map(holder => holder.getAttribute("style"))).toEqual([null, null, null]);
+    element.select({ project: "web" });
+    expect(Number($(element, ".shots-filmstrip").style.getPropertyValue("--_shots-thumb-ratio"))).toBeCloseTo(1.6, 3);
+  });
+
+  test("the wheel steps horizontally always and vertically only when expanded or opted in, without wrapping", async () => {
+    const element = await mount({ "initial-project": "mobile" });
+    const track = $(element, ".shots-track");
+    let time = 0;
+    const wheel = (deltaX: number, deltaY: number, init: WheelEventInit = {}) => {
+      time += 1000;
+      const event = new WheelEvent("wheel", { deltaX, deltaY, bubbles: true, cancelable: true, ...init });
+      // happy-dom's WheelEvent lacks the modifier keys a browser's has.
+      for (const [name, value] of Object.entries({ timeStamp: time, shiftKey: init.shiftKey ?? false, ctrlKey: init.ctrlKey ?? false, metaKey: false })) Object.defineProperty(event, name, { value });
+      track.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    expect([wheel(40, 0), element.screen]).toEqual([true, "notes"]);
+    expect([wheel(0, 40, { shiftKey: true }), element.screen]).toEqual([true, "org-manager"]);
+    // Past the last screen the wheel waits rather than wrapping.
+    expect([wheel(40, 0), element.screen]).toEqual([true, "org-manager"]);
+    // Vertical wheel scrolls the page.
+    expect([wheel(0, -40), element.screen]).toEqual([false, "org-manager"]);
+    expect([wheel(0, -40, { ctrlKey: true }), element.screen]).toEqual([false, "org-manager"]);
+    $(element, '[data-action="expand"]').click();
+    expect([wheel(0, -40), element.screen]).toEqual([true, "notes"]);
+    $(element, '[data-action="expand"]').click();
+    element.setAttribute("vertical-wheel", "");
+    expect([wheel(0, -40), element.screen]).toEqual([true, "home"]);
+    // At the first screen, vertical travel goes back to the page.
+    expect([wheel(0, -40), element.screen]).toEqual([false, "home"]);
+    expect([wheel(0, 3, { deltaMode: 1 }), element.screen]).toEqual([true, "notes"]);
+  });
+
   test("loading, empty, and error states", async () => {
     const original = globalThis.fetch;
     try {
@@ -239,6 +315,10 @@ describe("<screenshot-carousel>", () => {
     expect(slides.map(slide => slide.querySelector("a")!.getAttribute("tabindex"))).toEqual(["-1", "-1", "-1", null, null, null, "-1", "-1", "-1"]);
     expect(slides[0]!.querySelector("img")!.getAttribute("loading")).toBe("lazy");
     expect(real[0]!.querySelector("img")!.getAttribute("loading")).toBe("eager");
+    expect(real.map(slide => slide.querySelector("img")!.getAttribute("fetchpriority"))).toEqual(["high", null, null]);
+    expect(real.slice(1).map(slide => slide.querySelector("img")!.getAttribute("loading"))).toEqual(["lazy", "lazy"]);
+    expect(slides.filter(slide => slide.querySelector("img")!.hasAttribute("fetchpriority")).length).toBe(1);
+    expect($(carousel, ".shots-carousel-view-all")).toBeNull();
     expect($$(carousel, ".shots-carousel-step").map(button => button.getAttribute("aria-label"))).toEqual(["Previous screens", "Next screens"]);
   });
 
@@ -254,6 +334,14 @@ describe("<screenshot-carousel>", () => {
     const single = make({ project: "ipad" });
     expect([$$(single, ".shots-carousel-slide").length, $$(single, ".shots-carousel-step").length]).toEqual([1, 0]);
     expect($(single, ".shots-carousel").dataset.frame).toBe("tablet");
+    const linked = make({ project: "ipad", "view-all-href": "/screenshots/", "view-all-label": "All screenshots" });
+    const link = $(linked, ".shots-carousel-controls .shots-carousel-view-all");
+    expect([link.getAttribute("href"), link.textContent, $$(linked, ".shots-carousel-step").length]).toEqual(["/screenshots/", "All screenshots", 0]);
+    const looping = make({ project: "mobile", "view-all-href": "/screenshots/" });
+    expect($$(looping, ".shots-carousel-controls > *").map(part => part.className)).toEqual(["shots-carousel-view-all", "shots-carousel-step", "shots-carousel-step"]);
+    expect($(looping, ".shots-carousel-view-all").textContent).toBe("View all screenshots");
+    looping.removeAttribute("view-all-href");
+    expect($(looping, ".shots-carousel-view-all")).toBeNull();
     const none = make({ project: "missing" });
     expect([none.hidden, none.childElementCount]).toEqual([true, 0]);
   });
