@@ -143,10 +143,32 @@ function runBun(bun: BunExecutable, directory: string, args: string[]) {
 
 function resolvedPlan(root: string, version: string, requested: Requested[], workspaceNames: Set<string>) {
   assert(Bun.semver.satisfies(version, ">=1.4.4"), `Resolved-only updates require the owning Bun 1.4.4 or newer (found ${version}); older Bun can add a direct declaration. Upgrade the project's pin through its normal approval workflow first.`);
+  const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
+  const strings = (value: unknown) => object(value) && Object.values(value).every(item => typeof item === "string");
+  const info = (value: unknown) => object(value) && SECTIONS.every(section => value[section] === undefined || strings(value[section]));
+  const overrides = (value: unknown): boolean => object(value) && Object.values(value).every(item => typeof item === "string" || overrides(item));
+  const tuple = (value: unknown): boolean => {
+    if (!Array.isArray(value) || typeof value[0] !== "string") return false;
+    const at = value[0].indexOf("@", value[0].startsWith("@") ? 1 : 0);
+    // Bun explicitly accepts @root: for an anonymous root referenced by file:.
+    if (at < 1 && !value[0].startsWith("@root:")) return false;
+    const resolution = value[0].slice(at + 1);
+    // v1/v2/v3 share package tuples. v2 tightens Bun's semantic checks; v3
+    // adds scoped override objects, not a new npm tuple layout.
+    if (EXACT.test(resolution)) return value.length === 4 && typeof value[1] === "string" && info(value[2]) && typeof value[3] === "string";
+    if (resolution.startsWith("workspace:")) return value.length === 1;
+    // Non-registry entries can coexist, but cannot be selected for refresh.
+    return (value.length === 2 || value.length === 3) && info(value[1]) && (value.length === 2 || typeof value[2] === "string");
+  };
   const readLock = () => {
-    const lock = Bun.JSONC.parse(readFileSync(path.join(root, "bun.lock"), "utf8")) as Record<string, unknown> & { packages: Record<string, unknown[]> };
-    assert(lock && (lock.lockfileVersion === 1 || lock.lockfileVersion === 2) && lock.packages && typeof lock.packages === "object" && !Array.isArray(lock.packages), "Resolved-only updates need a supported text bun.lock with packages.");
-    return lock;
+    const lock = Bun.JSONC.parse(readFileSync(path.join(root, "bun.lock"), "utf8"));
+    assert(object(lock) && [1, 2, 3].includes(lock.lockfileVersion as number)
+      && object(lock.workspaces) && info(lock.workspaces[""]) && Object.values(lock.workspaces).every(info)
+      && object(lock.packages) && Object.values(lock.packages).every(tuple)
+      && (lock.overrides === undefined || overrides(lock.overrides)), "Resolved-only updates need a supported text bun.lock (versions 1, 2, or 3) with valid workspaces, packages, and overrides.");
+    // Bun's frozen preflight remains the authority for resolution, integrity,
+    // and configuration semantics after this fail-closed structural check.
+    return lock as Record<string, unknown> & { packages: Record<string, unknown[]> };
   };
   const keyName = (key: string) => { const parts = key.split("/"); return parts.at(-2)?.startsWith("@") ? parts.slice(-2).join("/") : parts.at(-1)!; };
   const registry = (tuple: unknown, name: string) => Array.isArray(tuple) && typeof tuple[0] === "string" && tuple[0].startsWith(`${name}@`) && EXACT.test(tuple[0].slice(name.length + 1));
