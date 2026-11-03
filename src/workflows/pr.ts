@@ -181,7 +181,9 @@ export async function prWorkflowCommand(args: string[]): Promise<number> {
   const inspect = () => {
     const value = checkSnapshot(identity, expected);
     // Read the base every time: a retargeted PR must be compared with its new base.
-    const branch = pullRequest(identity.prNumber, identity.repo).baseRefName;
+    const pr = pullRequest(identity.prNumber, identity.repo);
+    assert(pr.headRefOid === expected && pr.state === "OPEN", "PR HEAD or state changed while waiting.");
+    const branch = pr.baseRefName;
     if (!compared.has(branch)) compared.set(branch, new Map());
     const base = baseFreshness(identity.repo, expected, branch, compared.get(branch));
     // A head behind its base cannot ship as reviewed, so waiting on its CI only spends runner time.

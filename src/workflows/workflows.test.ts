@@ -127,7 +127,11 @@ else if(a[0]==='run' && a[1]==='view' && a.includes('--json'))say({status:s.view
 else if(a[0]==='run' && a[1]==='list' && !a.includes('--workflow'))say(s.runs??[]);
 else if(a[0]==='pr' && a[1]==='checks')say(s.checks);
 else if(a[0]==='pr' && fields==='headRefOid,statusCheckRollup')say({headRefOid:s.apiHead,statusCheckRollup:s.checks});
-else if(a[0]==='pr')say(pr);
+else if(a[0]==='pr'){
+ // closeOnView closes the PR from that full view onward, to reach checks made after the first reads.
+ if(s.closeOnView&&fields&&fields.startsWith('number,url,state')){const file=process.env.API_STATE+'.views',count=(existsSync(file)?Number(readFileSync(file,'utf8')):0)+1;writeFileSync(file,String(count));if(count>=s.closeOnView)pr.state='CLOSED';}
+ say(pr);
+}
 else if(a[0]==='run'){
  const file=process.env.API_STATE+'.polls', count=existsSync(file)?Number(readFileSync(file,'utf8')):0;writeFileSync(file,String(count+1));
  say([{databaseId:42,headSha:s.commit,status:count===0?'in_progress':'completed',conclusion:'success',url:'https://example.com/run/42'}]);
@@ -174,6 +178,12 @@ test("green checks on a head behind its base pass only with --allow-behind", () 
   expect(f.run(["pr", "checks", "--allow-behind"]).status).toBe(0);
   f.save({ behindBy: 0 }); const result = f.run(["pr", "checks", "--wait"]); expect(result.status).toBe(0);
   expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, behind: false, base: { behindBy: 0 } });
+});
+test("CI waiter refuses a closed PR seen by its base read", () => {
+  const f = githubFixture(); f.save({ closeOnView: 2 });
+  const result = f.run(["pr", "checks", "--allow-behind"]); expect(result.status).toBe(1);
+  expect(readFileSync(f.stateFile + ".views", "utf8")).toBe("2");
+  expect(result.stderr).toContain("state changed");
 });
 test("CI waiter compares a retargeted PR with its new base", () => {
   const f = githubFixture(); f.git(["push", "origin", "main:refs/heads/release"]);
