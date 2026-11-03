@@ -175,16 +175,22 @@ describe("staging screenshots", () => {
   });
 
   test("refuses capture directories or files linked into an output", () => {
-    for (const [link, target] of [["mobile", "site/public/screenshot-gallery/img/mobile"], ["mobile/light/home.png", "site/public/screenshot-gallery/img/mobile/light/home.png"]] as const) {
+    for (const [link, target] of [
+      ["mobile", "site/public/screenshot-gallery/img/mobile"],
+      ["mobile/light/home.png", "site/public/screenshot-gallery/img/mobile/light/home.png"],
+      // Unlisted names are not staged, but pruning would still delete what they point at.
+      ["mobile/light/retired.png", "site/public/screenshot-gallery/img/mobile/light/retired.png"],
+      ["tablet", "site/public/screenshot-gallery/img/tablet"],
+    ] as const) {
       const root = repository({ "web/light/home.png": png(144, 90) });
       const original = path.join(root, target);
       mkdirSync(path.dirname(original), { recursive: true });
-      if (link === "mobile") { mkdirSync(path.join(original, "light"), { recursive: true }); writeFileSync(path.join(original, "light/home.png"), png(39, 84)); }
+      if (!link.endsWith(".png")) { mkdirSync(path.join(original, "light"), { recursive: true }); writeFileSync(path.join(original, "light/home.png"), png(39, 84)); }
       else writeFileSync(original, png(39, 84));
       mkdirSync(path.dirname(path.join(root, ".screenshots", link)), { recursive: true });
       symlinkSync(original, path.join(root, ".screenshots", link));
       expect(() => buildScreenshots(root, config, [])).toThrow(`.screenshots/${link} links into a screenshots output directory.`);
-      expect(existsSync(link === "mobile" ? path.join(original, "light/home.png") : original)).toBe(true);
+      expect(existsSync(link.endsWith(".png") ? original : path.join(original, "light/home.png"))).toBe(true);
     }
   });
 

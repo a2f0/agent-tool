@@ -77,6 +77,29 @@ function overlaps(first: string, second: string): boolean {
   return a === b || a.startsWith(`${b}${path.sep}`) || b.startsWith(`${a}${path.sep}`);
 }
 
+/** The first link anywhere in the capture tree whose target overlaps an output, following linked directories once. */
+function linkedInto(source: string, outputs: string[]): string | undefined {
+  const visited = new Set<string>();
+  const walk = (dir: string): string | undefined => {
+    let real: string;
+    try { real = realpathSync(dir); } catch { return undefined; }
+    if (visited.has(real)) return undefined;
+    visited.add(real);
+    let names: string[];
+    try { names = readdirSync(dir); } catch { return undefined; }
+    for (const name of names) {
+      const entry = path.join(dir, name), stats = lstatSync(entry, { throwIfNoEntry: false });
+      if (stats?.isSymbolicLink() && outputs.some(output => overlaps(resolved(entry), output))) return entry;
+      if (stats?.isDirectory() || (stats?.isSymbolicLink() && lstatSync(resolved(entry), { throwIfNoEntry: false })?.isDirectory())) {
+        const found = walk(entry);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  };
+  return walk(source);
+}
+
 function sameBytes(file: string, bytes: Uint8Array): boolean {
   const stats = lstatSync(file, { throwIfNoEntry: false });
   return !!stats?.isFile() && stats.size === bytes.length && Buffer.compare(readFileSync(file), bytes) === 0;
@@ -196,17 +219,10 @@ export function buildScreenshots(root: string, config: ScreenshotsConfig, names:
     assertNoLinks(base, path.join(absolute, MANIFEST));
     return { name, target, dir, absolute, base };
   });
-  // A capture directory or file linked into an output would be pruned or cleaned up with it.
+  // A capture linked into an output would be pruned or cleaned up with it.
   const outputs = plans.flatMap(plan => [plan.absolute, resolved(plan.absolute)]);
-  for (const plan of plans) {
-    for (const project of plan.target.projects) {
-      for (const theme of plan.target.themes) {
-        for (const file of [path.join(source, project.dir), path.join(source, project.dir, theme), ...plan.target.screens.map(screen => path.join(source, project.dir, theme, `${screen.name}.png`))]) {
-          if (outputs.some(output => overlaps(resolved(file), output))) throw new Error(`${path.relative(root, file)} links into a screenshots output directory.`);
-        }
-      }
-    }
-  }
+  const linked = linkedInto(source, outputs);
+  if (linked) throw new Error(`${path.relative(root, linked)} links into a screenshots output directory.`);
   const before = readRecord(source);
   let staged: Staged[] = [];
   try {

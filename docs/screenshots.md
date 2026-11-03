@@ -167,7 +167,10 @@ the manifest's labels.
   screens, and a scroll that settles selects its screen. Previous and next
   buttons wrap at either end, beside an `n / total` counter.
 - A filmstrip of thumbnails at a fixed height, keeping each capture's aspect
-  ratio (cropped from the top only when wider than `--shots-thumb-max-width`).
+  ratio between a 4.5rem minimum and `--shots-thumb-max-width`; outside that
+  range the image is cropped, keeping its top, so a phone thumbnail shows the
+  top of the screen large enough to read rather than the whole screen at
+  2.5rem wide.
   The active thumbnail has `aria-current="true"` and is kept visible by
   scrolling only the strip, never the page.
 - Phone and tablet captures sit in a device bezel sized from the capture's
