@@ -28,9 +28,10 @@ function readRecord(source: string): string | undefined {
  * record (CI, an unlinked clone) copies as is; a linked, non-empty store
  * without one is refused, since its images name no commit.
  */
-export function checkCapture(source: string, raw: string | undefined): CaptureSummary | null {
+export function checkCapture(root: string, source: string, raw: string | undefined): CaptureSummary | null {
   if (raw === undefined) {
-    const linked = lstatSync(source, { throwIfNoEntry: false })?.isSymbolicLink() ?? false;
+    // Linked anywhere below the repository root, as `.screenshots` or through a parent directory.
+    const linked = resolved(source) !== path.join(resolved(root), path.relative(root, source));
     let contents: string[] = [];
     try { contents = readdirSync(source); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     if (linked && contents.length > 0) throw new Error("The shared screenshots have no capture record; capture once through the take-screenshots skill.");
@@ -226,7 +227,7 @@ export function buildScreenshots(root: string, config: ScreenshotsConfig, names:
   const before = readRecord(source);
   let staged: Staged[] = [];
   try {
-    const capture = checkCapture(source, before);
+    const capture = checkCapture(root, source, before);
     staged = plans.map(plan => stageTarget(root, source, plan.name, plan.target, plan.dir, plan.base, capture));
     hooks.afterCopy?.();
     if (readRecord(source) !== before) throw new Error("A screenshot capture started while copying; build again once it finishes.");

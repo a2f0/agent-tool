@@ -135,6 +135,14 @@ describe("staging screenshots", () => {
     const root = repository(captures, { linked: true });
     expect(() => buildScreenshots(root, config, [])).toThrow("The shared screenshots have no capture record; capture once through the take-screenshots skill.");
     expect(existsSync(path.join(gallery(root), "manifest.json"))).toBe(false);
+    // A store linked through a parent directory is linked too.
+    const parent = path.join(temporary, "parent-linked");
+    mkdirSync(parent);
+    const shared = path.join(temporary, "shared-parent");
+    mkdirSync(path.join(shared, "shots/mobile/light"), { recursive: true });
+    writeFileSync(path.join(shared, "shots/mobile/light/home.png"), png(39, 84));
+    symlinkSync(shared, path.join(parent, "captures"));
+    expect(() => buildScreenshots(parent, { ...config, source: "captures/shots" }, [])).toThrow("The shared screenshots have no capture record");
     // An empty linked store has nothing to vouch for.
     expect(buildScreenshots(repository({}, { linked: true }), config, []).targets[0]!.entries).toBe(0);
   });

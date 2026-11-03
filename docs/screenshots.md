@@ -91,7 +91,8 @@ and refuses:
   `incomplete`, ...);
 - a record that names no 40-hex `commit`, or is not `dirty: false`;
 - a record that changed while copying (a capture started); and
-- a linked, non-empty store with no record, since its images name no commit.
+- a non-empty store with no record that is linked, as the source or through
+  a parent directory, since its images name no commit.
 
 On any refusal or error it removes the outputs it owns, so a site never builds
 from a partial or unverified gallery. A missing source, or a link to a store
