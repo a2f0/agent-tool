@@ -626,7 +626,8 @@ function defineCarousel(): CustomElementConstructor {
           const device = linkBase
             ? element("a", { class: "shots-device", href: screenshotPath(linkBase, project, slide.name), tabindex: clone ? "-1" : undefined }, [picture])
             : element("div", { class: "shots-device" }, [picture]);
-          const item = element("li", { class: "shots-carousel-slide", "data-index": index, "aria-hidden": clone ? "true" : undefined, inert: clone || undefined }, [
+          // Copies stay clickable where they show, but out of the accessibility tree and tab order.
+          const item = element("li", { class: "shots-carousel-slide", "data-index": index, "aria-hidden": clone ? "true" : undefined, "data-clone": clone || undefined }, [
             element("figure", {}, [device, element("figcaption", { text: screen.label })]),
           ]);
           this.#slides.push(item);

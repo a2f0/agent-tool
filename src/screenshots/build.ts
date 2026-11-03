@@ -196,6 +196,17 @@ export function buildScreenshots(root: string, config: ScreenshotsConfig, names:
     assertNoLinks(base, path.join(absolute, MANIFEST));
     return { name, target, dir, absolute, base };
   });
+  // A capture directory or file linked into an output would be pruned or cleaned up with it.
+  const outputs = plans.flatMap(plan => [plan.absolute, resolved(plan.absolute)]);
+  for (const plan of plans) {
+    for (const project of plan.target.projects) {
+      for (const theme of plan.target.themes) {
+        for (const file of [path.join(source, project.dir), path.join(source, project.dir, theme), ...plan.target.screens.map(screen => path.join(source, project.dir, theme, `${screen.name}.png`))]) {
+          if (outputs.some(output => overlaps(resolved(file), output))) throw new Error(`${path.relative(root, file)} links into a screenshots output directory.`);
+        }
+      }
+    }
+  }
   const before = readRecord(source);
   let staged: Staged[] = [];
   try {

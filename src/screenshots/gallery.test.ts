@@ -231,6 +231,9 @@ describe("<screenshot-carousel>", () => {
     // A screen captured only in dark still gets a slide.
     expect(real[2]!.querySelector("img")!.getAttribute("src")).toBe("/img/mobile/dark/org-manager.png?v=1");
     expect(slides[0]!.querySelector("img")!.getAttribute("alt")).toBe("");
+    // Copies are hidden from assistive technology and the tab order, yet still clickable where they show.
+    expect(slides.map(slide => slide.hasAttribute("inert"))).toEqual(Array(9).fill(false));
+    expect(slides.map(slide => slide.querySelector("a")!.getAttribute("tabindex"))).toEqual(["-1", "-1", "-1", null, null, null, "-1", "-1", "-1"]);
     expect(slides[0]!.querySelector("img")!.getAttribute("loading")).toBe("lazy");
     expect(real[0]!.querySelector("img")!.getAttribute("loading")).toBe("eager");
     expect($$(carousel, ".shots-carousel-step").map(button => button.getAttribute("aria-label"))).toEqual(["Previous screens", "Next screens"]);

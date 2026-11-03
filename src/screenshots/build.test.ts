@@ -174,6 +174,20 @@ describe("staging screenshots", () => {
     expect(buildScreenshots(root, nested, ["inner"]).targets[0]!.entries).toBe(2);
   });
 
+  test("refuses capture directories or files linked into an output", () => {
+    for (const [link, target] of [["mobile", "site/public/screenshot-gallery/img/mobile"], ["mobile/light/home.png", "site/public/screenshot-gallery/img/mobile/light/home.png"]] as const) {
+      const root = repository({ "web/light/home.png": png(144, 90) });
+      const original = path.join(root, target);
+      mkdirSync(path.dirname(original), { recursive: true });
+      if (link === "mobile") { mkdirSync(path.join(original, "light"), { recursive: true }); writeFileSync(path.join(original, "light/home.png"), png(39, 84)); }
+      else writeFileSync(original, png(39, 84));
+      mkdirSync(path.dirname(path.join(root, ".screenshots", link)), { recursive: true });
+      symlinkSync(original, path.join(root, ".screenshots", link));
+      expect(() => buildScreenshots(root, config, [])).toThrow(`.screenshots/${link} links into a screenshots output directory.`);
+      expect(existsSync(link === "mobile" ? path.join(original, "light/home.png") : original)).toBe(true);
+    }
+  });
+
   test("--out stages one target elsewhere, and a target without dir needs it", () => {
     const root = repository(captures);
     const loose = parseScreenshots({ targets: { upload: { urlPrefix: "https://cdn.example/shots/", projects: { mobile: "Phone" }, screens: ["home"] } } });

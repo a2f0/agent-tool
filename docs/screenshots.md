@@ -76,7 +76,9 @@ before a site's dev server and build, and ignore `<dir>` in Git. The summary
 names the capture commit, and `--json` prints
 `{ source, capture, targets: [{ name, dir, manifest, entries, projects, written, unchanged, removed }] }`.
 Writes refuse symbolic links between the repository root (or `--out`) and the
-outputs.
+outputs, and `build` refuses an output that overlaps the capture source or
+another target, or a capture directory or file linked into an output, since
+pruning would delete it.
 
 ### Shared-capture guard
 
@@ -203,7 +205,8 @@ It shows every captured screen of the project, in manifest order, each in the
 project's bezel with its label as a caption. Each slide is a `<picture>` whose
 light capture is the image and whose dark capture, when there is one, is a
 `(prefers-color-scheme: dark)` source. The row loops in both directions: copies
-of the slides sit on both sides, marked `aria-hidden` and `inert`, and once
+of the slides sit on both sides, hidden from assistive technology and the
+tab order but clickable, and once
 scrolling settles the track jumps silently back to the same slide among the
 originals. Previous and next buttons scroll by the slides that fit, or by one
 when every slide fits. Images are lazy except the first three; smooth
