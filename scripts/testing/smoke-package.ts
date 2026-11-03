@@ -48,6 +48,43 @@ try {
   for (const harness of [".agents", ".claude"]) {
     assert.equal(readFileSync(path.join(consumer, harness, "skills/update-dependencies/SKILL.md"), "utf8"), dependencySkill, "installed harness policies match the canonical dependency-upgrade skill");
   }
+  // A separate Git checkout, invoked from elsewhere, needs no workspace layout
+  // or Hermes installation/trust mutation to receive the portable bundle.
+  const standalone = path.join(temporary, "standalone");
+  mkdirSync(standalone);
+  execFileSync("git", ["init", "--quiet", standalone], { env, stdio: "pipe" });
+  const hermes = (...args: string[]) => run("--repo", standalone, "skills", ...args, "--harness", "hermes");
+  assert.equal(JSON.parse(hermes("install")).applied, false);
+  assert.equal(existsSync(path.join(standalone, ".agents")), false);
+  assert.throws(() => hermes("check"), "Hermes checks fail on missing skills");
+  hermes("install", "--apply");
+  assert.equal(JSON.parse(hermes("check")).ok, true);
+  const owned = readFileSync(path.join(standalone, ".agent-tool-skills.json"), "utf8");
+  assert.ok(JSON.parse(run("--repo", standalone, "skills", "install", "--harness", "codex", "--apply")).changes.every((item: { status: string }) => item.status === "unchanged"));
+  assert.equal(readFileSync(path.join(standalone, ".agent-tool-skills.json"), "utf8"), owned, "Hermes and Codex share ownership");
+  assert.equal(readFileSync(path.join(standalone, ".agents/skills/update-dependencies/SKILL.md"), "utf8"), dependencySkill);
+  assert.equal(existsSync(path.join(standalone, ".hermes")), false, "installation never creates Hermes configuration or a duplicate bundle");
+  // The portable fallback for harnesses without background jobs retains the
+  // inner failure receipt; an exited outer process is not a successful check.
+  const background = JSON.parse(run("--repo", standalone, "proc", "start", "--label", "finite-check", "--", executable, "run", "--label", "expected-failure", "--", process.execPath, "-e", 'setTimeout(() => { console.log("background evidence"); process.exit(3); }, 1000)'));
+  try {
+    const deadline = performance.now() + 10_000;
+    let state: string | undefined;
+    do {
+      await Bun.sleep(50);
+      state = JSON.parse(run("--repo", standalone, "proc", "list")).processes.find((item: { id: string }) => item.id === background.id)?.state;
+    } while (state === "running" && performance.now() < deadline);
+    assert.equal(state, "exited");
+    const outerLog = run("logs", background.log, "--max-bytes", "8192");
+    assert.match(outerLog, /"status":"failed"/);
+    assert.match(outerLog, /"exitCode":3/);
+    assert.match(outerLog, /background evidence/);
+    const receipt = JSON.parse(readFileSync(background.log, "utf8").split("\n")[0]!);
+    rmSync(path.dirname(receipt.log), { recursive: true, force: true });
+  } finally {
+    run("--repo", standalone, "proc", "stop", background.id);
+    rmSync(path.dirname(background.log), { recursive: true, force: true });
+  }
   const plan = path.join(consumer, "plan.json");
   const safe = { format_version: "1.2", terraform_version: "1.14.0", complete: true, planned_values: {}, configuration: {}, resource_changes: [] };
   writeFileSync(plan, JSON.stringify(safe));

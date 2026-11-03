@@ -1,7 +1,7 @@
 # CLI reference
 
 A CLI for independent agent code reviews, guarded GitHub PR operations, package
-version management, and portable skills for Claude Code, Codex, and OpenCode.
+version management, and portable skills for Claude Code, Codex, OpenCode, and Hermes.
 
 - **Review** a committed branch with a different agent than the one that wrote
   it, using a pinned, read-only snapshot.
@@ -123,8 +123,8 @@ For repository workflow commands added alongside these interfaces, see
 | `dependencies check-terraform-plan <json-file>` | Read-only screening for destructive or incomplete Terraform JSON plans |
 | `dependencies diff --base <ref>` | Declared dependencies added, removed, or changed in every tracked `package.json`, and the new third-party package names |
 | `skills list` | List embedded portable skills |
-| `skills install [--harness all\|claude\|codex\|opencode] [--apply]` | Preview by default; install or update managed skills |
-| `skills check [--harness all\|claude\|codex\|opencode]` | Read-only CI check for current managed skills |
+| `skills install [--harness all\|claude\|codex\|opencode\|hermes] [--apply]` | Preview by default; install or update managed skills |
+| `skills check [--harness all\|claude\|codex\|opencode\|hermes]` | Read-only CI check for current managed skills |
 | `bun install [--cwd dir]` | Frozen-lockfile install with the Bun that `.mise.toml` pins; requires an existing lockfile |
 | `bun update <name[@version]>... [--cwd dir]` | Change versions of declared registry dependencies only, keeping each one's section |
 | `bun remove <name>... [--cwd dir]` | Remove declared dependencies only |
@@ -438,13 +438,33 @@ writes the same bytes where each harness discovers them:
 | Claude Code | `.claude/skills` |
 | Codex | `.agents/skills` |
 | OpenCode alone | `.opencode/skills` |
-| All three | `.agents/skills` and `.claude/skills`; OpenCode discovers both |
+| Hermes | `.agents/skills` (trusted projects) |
+| All four | `.agents/skills` and `.claude/skills`; OpenCode discovers both |
 
 Discovery paths follow the [Codex](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills),
-[Claude Code](https://code.claude.com/docs/en/skills), and
-[OpenCode](https://opencode.ai/docs/skills/) documentation. Restart the harness
+[Claude Code](https://code.claude.com/docs/en/skills),
+[OpenCode](https://opencode.ai/docs/skills/), and
+[Hermes](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills#project-local-skills)
+documentation. Restart the harness
 if new skills do not appear. OpenCode may list identical skills from both
 paths.
+
+Hermes uses the same `.agents/skills` files and ownership records as Codex;
+`skills install --harness hermes --apply` and `skills check --harness hermes`
+select only that shared directory. The default `all` still installs just two
+directories, so existing installations already contain the Hermes-readable
+bundle. No copy into `.hermes/skills` is necessary. Hermes discovers project
+skills from the nearest Git root only after the user trusts that project; if
+discovery is disabled or the project is untrusted, inspect the installed files
+directly and ask the user about enabling discovery. Installation never changes
+Hermes trust or global configuration. Start the session in the target checkout;
+changing a command's directory does not change the session's skill scope.
+
+Skill consumers and review providers are distinct. Hermes can coordinate every
+bundled workflow, but `review` and `doctor` still support Claude Code, Codex, and
+OpenCode as independent review providers. There is no `review hermes` adapter
+or Hermes permission installer. Existing read-only review and exact-commit
+guards apply regardless of which harness coordinates the work.
 
 The bundle provides `cross-agent-review`, `open-pr`, `squash-merge`, `ship-pr`,
 `reset`, and `update-dependencies`. They make no package-manager or project-layout

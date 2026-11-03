@@ -96,8 +96,12 @@ export function membersOf(record: ProcessRecord, table: Map<number, ProcessRow>,
   // remembered members still count.
   if (ours) group = [...table.values()].filter(row => row.pgid === record.pid);
   else if (!leader) {
-    const candidates = [...table.values()].filter(row => row.pgid === record.pid);
-    const tagged = carrying(candidates.filter(row => !known(row)).map(row => row.pid), "AGENT_TOOL_PROCESS", record.id);
+    // A child may detach after start's snapshot, then outlive its parent.
+    // Its group/ancestry is no longer evidence, but the inherited ownership tag
+    // still is. Never adopt by cwd, command, or timestamp, and retain the
+    // replaced-leader guard above. Listing this evidence does not write records.
+    const candidates = [...table.values()].filter(row => !claimed.has(row.pid));
+    const tagged = carrying(table, "AGENT_TOOL_PROCESS", record.id);
     group = candidates.filter(row => known(row) || tagged.has(row.pid));
   }
   // Members seen before, wherever they are now: a descendant that left the group keeps its

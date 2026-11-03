@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { harnessNamed, HARNESSES } from "../harnesses";
 import { BUNDLED_SKILLS } from "./bundled";
 import { checkSkills, installSkills } from "./install";
 
@@ -20,6 +21,32 @@ test("preview makes no changes; all installs one bundle for all harnesses", () =
   }
   expect(installSkills(root, "all", true).every(change => change.status === "unchanged")).toBe(true);
 });
+test("Hermes shares Codex ownership without extra directories or skill aliases", () => {
+  const root = fixture();
+  const wrapper = path.join(root, ".agents/skills/update-everything/SKILL.md");
+  mkdirSync(path.dirname(wrapper), { recursive: true }); writeFileSync(wrapper, "repository-owned wrapper");
+  expect(installSkills(root, "hermes").every(change => change.status === "create")).toBe(true);
+  expect(existsSync(path.join(root, ".agent-tool-skills.json"))).toBe(false);
+  installSkills(root, "hermes", true);
+  const manifest = readFileSync(path.join(root, ".agent-tool-skills.json"), "utf8");
+  expect(checkSkills(root, "hermes").every(change => change.status === "unchanged")).toBe(true);
+  expect(installSkills(root, "codex", true).every(change => change.status === "unchanged")).toBe(true);
+  expect(readFileSync(path.join(root, ".agent-tool-skills.json"), "utf8")).toBe(manifest);
+  expect(existsSync(path.join(root, ".hermes"))).toBe(false);
+  expect(existsSync(path.join(root, ".claude"))).toBe(false);
+  expect(readFileSync(wrapper, "utf8")).toBe("repository-owned wrapper");
+  const skill = path.join(root, ".agents/skills/ship-pr/SKILL.md");
+  writeFileSync(skill, "local edit");
+  expect(() => installSkills(root, "hermes", true)).toThrow("Locally edited");
+  expect(() => checkSkills(root, "hermes")).toThrow("Locally edited");
+  expect(readFileSync(skill, "utf8")).toBe("local edit");
+});
+
+test("skill consumers do not register new review providers", () => {
+  expect(HARNESSES.map(harness => harness.name)).toEqual(["claude", "codex", "opencode"]);
+  expect(() => harnessNamed("hermes")).toThrow("Unknown harness");
+});
+
 test("OpenCode-only installation uses its native discovery directory", () => {
   const root = fixture(); installSkills(root, "opencode", true);
   expect(existsSync(path.join(root, ".opencode/skills/cross-agent-review/SKILL.md"))).toBe(true);

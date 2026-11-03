@@ -66,8 +66,8 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   dependencies check-terraform-plan <json-file>  Read-only destructive-plan check
   dependencies diff --base <ref>        Declared dependencies added, removed, or changed since base
   skills list
-  skills install [--harness <all|claude|codex|opencode>] [--apply]
-  skills check [--harness <all|claude|codex|opencode>]
+  skills install [--harness <all|claude|codex|opencode|hermes>] [--apply]
+  skills check [--harness <all|claude|codex|opencode|hermes>]
   bun install [--cwd <dir>]             Frozen-lockfile install with the pinned Bun
   bun add <name@version>... [--dev|--optional|--peer] [--exact] [--cwd <dir>]
   bun update <name[@version]>... [--cwd <dir>]  Change versions of declared dependencies only
