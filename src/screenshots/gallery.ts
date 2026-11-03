@@ -156,6 +156,19 @@ function status(root: HTMLElement, state: string, message: string): void {
   root.replaceChildren(element("div", { class: "shots-status", role: "status", "data-state": state }, [element("p", { text: message })]));
 }
 
+/**
+ * A page can set `manifestData` before the elements are defined; that value is
+ * an own property that shadows the accessor. Take it off, so the constructor
+ * can pass it through the setter.
+ */
+function takePendingData(element: HTMLElement): { value: unknown } | undefined {
+  if (!Object.prototype.hasOwnProperty.call(element, "manifestData")) return undefined;
+  const own = element as unknown as Record<string, unknown>;
+  const value = own["manifestData"];
+  delete own["manifestData"];
+  return { value };
+}
+
 function defineGallery(): CustomElementConstructor {
   return class ScreenshotGallery extends HTMLElement implements ScreenshotGalleryElement {
     static observedAttributes = ["manifest"];
@@ -178,6 +191,12 @@ function defineGallery(): CustomElementConstructor {
     #overflow = "";
     #rendered = false;
     #announced = "";
+
+    constructor() {
+      super();
+      const pending = takePendingData(this);
+      if (pending) this.manifestData = pending.value as ScreenshotManifest | null;
+    }
 
     get manifestData(): ScreenshotManifest | null { return this.#data; }
     set manifestData(value: ScreenshotManifest | null) { this.#data = value && parseScreenshotManifest(value); if (this.#connected) this.#load(); }
@@ -359,7 +378,7 @@ function defineGallery(): CustomElementConstructor {
         button.setAttribute("aria-label", label);
         button.title = label;
       }
-      this.#root!.dataset["theme"] = this.#theme;
+      this.#root!.dataset["shotsTheme"] = this.#theme;
       this.#loaded.clear();
       for (const slide of this.#track!.querySelectorAll<HTMLElement>(".shots-slide")) {
         const index = Number(slide.dataset["index"]), name = this.#screens[index]!, entry = this.#entry(name);
@@ -558,6 +577,12 @@ function defineCarousel(): CustomElementConstructor {
     #copies = 1;
     #slides: HTMLElement[] = [];
     #manifest: ScreenshotManifest | null = null;
+
+    constructor() {
+      super();
+      const pending = takePendingData(this);
+      if (pending) this.manifestData = pending.value as ScreenshotManifest | null;
+    }
 
     get manifestData(): ScreenshotManifest | null { return this.#data; }
     set manifestData(value: ScreenshotManifest | null) { this.#data = value && parseScreenshotManifest(value); if (this.#connected) this.#load(); }

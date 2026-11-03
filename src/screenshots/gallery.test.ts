@@ -153,6 +153,9 @@ describe("<screenshot-gallery>", () => {
     element.select({ project: "mobile" });
     $(element, '[data-action="theme"]').click();
     expect(element.theme).toBe("dark");
+    // A namespaced attribute, so a site that themes regions by [data-theme] leaves the gallery alone.
+    expect($(element, ".shots-gallery").getAttribute("data-shots-theme")).toBe("dark");
+    expect(element.querySelector("[data-theme]")).toBeNull();
     expect($(element, '[data-action="theme"]').getAttribute("aria-label")).toBe("Show light theme");
     expect($<HTMLImageElement>(element, '.shots-slide[data-index="0"] img').getAttribute("src")).toBe("/img/mobile/dark/home.png?v=1");
     expect($(element, '.shots-slide[data-index="1"]').textContent).toBe("No dark-theme capture of Notes in the phone layout.");
