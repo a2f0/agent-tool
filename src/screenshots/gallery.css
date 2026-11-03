@@ -2,36 +2,37 @@
  * Styles for <screenshot-gallery> and <screenshot-carousel>
  * (@a2f0/agent-tool/screenshots/gallery.css). Every rule sits in :where(), so
  * any site selector overrides it; restyle through the --shots-* custom
- * properties first. Defaults follow prefers-color-scheme.
+ * properties first, set on the elements or any ancestor. Defaults, which
+ * follow prefers-color-scheme, live in the internal --_shots-* properties.
  */
 
 :where(screenshot-gallery, screenshot-carousel) {
-  --shots-font: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --shots-ink: #1d1d1f;
-  --shots-ink-muted: #6e6e73;
-  --shots-surface: #ffffff;
-  --shots-surface-raised: #f5f5f7;
-  --shots-border: #d2d2d7;
-  --shots-accent: #1d1d1f;
-  --shots-accent-ink: #ffffff;
-  --shots-focus: #0071e3;
-  --shots-radius: 12px;
-  --shots-button-size: 2.25rem;
-  --shots-bezel: #1c1c1e;
-  --shots-bezel-edge: #3a3a3c;
-  --shots-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
-  --shots-stage-height: min(60vh, 44rem);
-  --shots-stage-padding: 1rem;
-  --shots-thumb-height: 5.5rem;
-  --shots-thumb-max-width: 9rem;
-  --shots-backdrop: rgb(0 0 0 / 0.82);
-  --shots-expanded-z: 1000;
-  --shots-carousel-slide-width: clamp(11rem, 58vw, 15rem);
-  --shots-carousel-gap: 1.5rem;
-  --shots-carousel-padding: 1rem;
+  --_shots-font: var(--shots-font, system-ui, -apple-system, "Segoe UI", sans-serif);
+  --_shots-ink: var(--shots-ink, #1d1d1f);
+  --_shots-ink-muted: var(--shots-ink-muted, #6e6e73);
+  --_shots-surface: var(--shots-surface, #ffffff);
+  --_shots-surface-raised: var(--shots-surface-raised, #f5f5f7);
+  --_shots-border: var(--shots-border, #d2d2d7);
+  --_shots-accent: var(--shots-accent, #1d1d1f);
+  --_shots-accent-ink: var(--shots-accent-ink, #ffffff);
+  --_shots-focus: var(--shots-focus, #0071e3);
+  --_shots-radius: var(--shots-radius, 12px);
+  --_shots-button-size: var(--shots-button-size, 2.25rem);
+  --_shots-bezel: var(--shots-bezel, #1c1c1e);
+  --_shots-bezel-edge: var(--shots-bezel-edge, #3a3a3c);
+  --_shots-shadow: var(--shots-shadow, 0 12px 32px rgb(0 0 0 / 0.18));
+  --_shots-stage-height: var(--shots-stage-height, min(60vh, 44rem));
+  --_shots-stage-padding: var(--shots-stage-padding, 1rem);
+  --_shots-thumb-height: var(--shots-thumb-height, 5.5rem);
+  --_shots-thumb-max-width: var(--shots-thumb-max-width, 9rem);
+  --_shots-backdrop: var(--shots-backdrop, rgb(0 0 0 / 0.82));
+  --_shots-expanded-z: var(--shots-expanded-z, 1000);
+  --_shots-carousel-slide-width: var(--shots-carousel-slide-width, clamp(11rem, 58vw, 15rem));
+  --_shots-carousel-gap: var(--shots-carousel-gap, 1.5rem);
+  --_shots-carousel-padding: var(--shots-carousel-padding, 1rem);
   display: block;
-  color: var(--shots-ink);
-  font-family: var(--shots-font);
+  color: var(--_shots-ink);
+  font-family: var(--_shots-font);
 }
 
 :where(screenshot-gallery[hidden], screenshot-carousel[hidden]) {
@@ -40,17 +41,17 @@
 
 @media (prefers-color-scheme: dark) {
   :where(screenshot-gallery, screenshot-carousel) {
-    --shots-ink: #f5f5f7;
-    --shots-ink-muted: #a1a1a6;
-    --shots-surface: #161617;
-    --shots-surface-raised: #232325;
-    --shots-border: #3a3a3c;
-    --shots-accent: #f5f5f7;
-    --shots-accent-ink: #161617;
-    --shots-focus: #2997ff;
-    --shots-bezel: #0b0b0c;
-    --shots-bezel-edge: #48484a;
-    --shots-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
+    --_shots-ink: var(--shots-ink, #f5f5f7);
+    --_shots-ink-muted: var(--shots-ink-muted, #a1a1a6);
+    --_shots-surface: var(--shots-surface, #161617);
+    --_shots-surface-raised: var(--shots-surface-raised, #232325);
+    --_shots-border: var(--shots-border, #3a3a3c);
+    --_shots-accent: var(--shots-accent, #f5f5f7);
+    --_shots-accent-ink: var(--shots-accent-ink, #161617);
+    --_shots-focus: var(--shots-focus, #2997ff);
+    --_shots-bezel: var(--shots-bezel, #0b0b0c);
+    --_shots-bezel-edge: var(--shots-bezel-edge, #48484a);
+    --_shots-shadow: var(--shots-shadow, 0 12px 32px rgb(0 0 0 / 0.5));
   }
 }
 
@@ -60,7 +61,7 @@
 }
 
 :where(.shots-host) :where(button:focus-visible, a:focus-visible, [tabindex]:focus-visible) {
-  outline: 2px solid var(--shots-focus);
+  outline: 2px solid var(--_shots-focus);
   outline-offset: 2px;
 }
 
@@ -81,16 +82,16 @@
   display: grid;
   place-items: center;
   padding: 2rem 1rem;
-  border: 1px solid var(--shots-border);
-  border-radius: var(--shots-radius);
-  background: var(--shots-surface);
-  color: var(--shots-ink-muted);
+  border: 1px solid var(--_shots-border);
+  border-radius: var(--_shots-radius);
+  background: var(--_shots-surface);
+  color: var(--_shots-ink-muted);
   text-align: center;
 }
 
 /* Loading reserves the gallery's height so the page does not jump when it arrives. */
 :where(screenshot-gallery) :where(.shots-status[data-state="loading"]) {
-  min-height: calc(var(--shots-stage-height) + var(--shots-thumb-height) + 7rem);
+  min-height: calc(var(--_shots-stage-height) + var(--_shots-thumb-height) + 7rem);
 }
 
 /* --- Gallery --- */
@@ -98,16 +99,16 @@
 :where(.shots-gallery) {
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--shots-border);
-  border-radius: var(--shots-radius);
-  background: var(--shots-surface);
+  border: 1px solid var(--_shots-border);
+  border-radius: var(--_shots-radius);
+  background: var(--_shots-surface);
   overflow: hidden;
 }
 
 :where(.shots-gallery[data-expanded]) {
   position: fixed;
   inset: 0;
-  z-index: var(--shots-expanded-z);
+  z-index: var(--_shots-expanded-z);
   border: 0;
   border-radius: 0;
 }
@@ -118,7 +119,7 @@
   align-items: center;
   gap: 0.5rem 0.75rem;
   padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--shots-border);
+  border-bottom: 1px solid var(--_shots-border);
 }
 
 :where(.shots-title) {
@@ -133,7 +134,7 @@
 :where(.shots-toggle) {
   display: inline-flex;
   padding: 2px;
-  border: 1px solid var(--shots-border);
+  border: 1px solid var(--_shots-border);
   border-radius: 999px;
 }
 
@@ -149,8 +150,8 @@
 }
 
 :where(.shots-toggle-button[aria-pressed="true"]) {
-  background: var(--shots-accent);
-  color: var(--shots-accent-ink);
+  background: var(--_shots-accent);
+  color: var(--_shots-accent-ink);
 }
 
 :where(.shots-actions) {
@@ -161,12 +162,12 @@
 :where(.shots-icon-button) {
   display: inline-grid;
   place-items: center;
-  width: var(--shots-button-size);
-  height: var(--shots-button-size);
+  width: var(--_shots-button-size);
+  height: var(--_shots-button-size);
   padding: 0;
-  border: 1px solid var(--shots-border);
+  border: 1px solid var(--_shots-border);
   border-radius: 999px;
-  background: var(--shots-surface);
+  background: var(--_shots-surface);
   cursor: pointer;
 }
 
@@ -186,13 +187,13 @@
 :where(.shots-track) {
   position: relative;
   display: flex;
-  height: var(--shots-stage-height);
+  height: var(--_shots-stage-height);
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
   scroll-snap-type: x mandatory;
   scrollbar-width: none;
-  background: var(--shots-surface-raised);
+  background: var(--_shots-surface-raised);
 }
 
 :where(.shots-gallery[data-expanded]) :where(.shots-track) {
@@ -211,7 +212,7 @@
   justify-content: center;
   box-sizing: border-box;
   height: 100%;
-  padding: var(--shots-stage-padding);
+  padding: var(--_shots-stage-padding);
   scroll-snap-align: start;
   scroll-snap-stop: always;
 }
@@ -221,9 +222,9 @@
   box-sizing: content-box;
   max-width: 100%;
   padding: 0;
-  border: 1px solid var(--shots-border);
-  border-radius: calc(var(--shots-radius) / 2);
-  background: var(--shots-surface);
+  border: 1px solid var(--_shots-border);
+  border-radius: calc(var(--_shots-radius) / 2);
+  background: var(--_shots-surface);
   overflow: hidden;
   cursor: zoom-in;
 }
@@ -239,8 +240,8 @@
   padding: var(--shots-frame-pad, 0.6rem);
   border: 0;
   border-radius: calc(var(--shots-frame-radius, 1.5rem) + var(--shots-frame-pad, 0.6rem));
-  background: var(--shots-bezel);
-  box-shadow: inset 0 0 0 1px var(--shots-bezel-edge), var(--shots-shadow);
+  background: var(--_shots-bezel);
+  box-shadow: inset 0 0 0 1px var(--_shots-bezel-edge), var(--_shots-shadow);
 }
 
 :where(.shots-gallery[data-frame="phone"], .shots-gallery[data-frame="tablet"]) :where(.shots-frame:not(.shots-missing) .shots-image) {
@@ -252,7 +253,7 @@
   place-items: center;
   max-width: 24rem;
   padding: 1.5rem;
-  color: var(--shots-ink-muted);
+  color: var(--_shots-ink-muted);
   text-align: center;
   cursor: default;
 }
@@ -268,7 +269,7 @@
 :where(.shots-counter) {
   min-width: 4.5rem;
   margin: 0;
-  color: var(--shots-ink-muted);
+  color: var(--_shots-ink-muted);
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
@@ -288,28 +289,28 @@
   flex: 0 0 auto;
   flex-direction: column;
   gap: 0.25rem;
-  max-width: var(--shots-thumb-max-width);
+  max-width: var(--_shots-thumb-max-width);
   padding: 0.25rem;
   border: 1px solid transparent;
-  border-radius: calc(var(--shots-radius) / 2);
+  border-radius: calc(var(--_shots-radius) / 2);
   background: none;
   cursor: pointer;
   scroll-snap-align: start;
 }
 
 :where(.shots-thumb[aria-current="true"]) {
-  border-color: var(--shots-accent);
+  border-color: var(--_shots-accent);
 }
 
 /* The image keeps its capture's aspect ratio at a fixed height, cropped from the top only when wider than the cap. */
 :where(.shots-thumb-image) {
   display: block;
-  height: var(--shots-thumb-height);
+  height: var(--_shots-thumb-height);
   min-width: 4.5rem;
-  max-width: calc(var(--shots-thumb-max-width) - 0.5rem);
+  max-width: calc(var(--_shots-thumb-max-width) - 0.5rem);
   aspect-ratio: 3 / 4;
   border-radius: 4px;
-  background: var(--shots-surface-raised);
+  background: var(--_shots-surface-raised);
   overflow: hidden;
 }
 
@@ -322,9 +323,9 @@
 }
 
 :where(.shots-thumb-label) {
-  max-width: calc(var(--shots-thumb-max-width) - 0.5rem);
+  max-width: calc(var(--_shots-thumb-max-width) - 0.5rem);
   overflow: hidden;
-  color: var(--shots-ink-muted);
+  color: var(--_shots-ink-muted);
   font-size: 0.75rem;
   text-align: left;
   text-overflow: ellipsis;
@@ -332,7 +333,7 @@
 }
 
 :where(.shots-thumb[aria-current="true"]) :where(.shots-thumb-label) {
-  color: var(--shots-ink);
+  color: var(--_shots-ink);
 }
 
 :where(.shots-lightbox) {
@@ -345,7 +346,7 @@
 }
 
 :where(.shots-lightbox)::backdrop {
-  background: var(--shots-backdrop);
+  background: var(--_shots-backdrop);
 }
 
 :where(.shots-lightbox-backdrop) {
@@ -372,8 +373,8 @@
 :where(.shots-lightbox[data-frame="phone"], .shots-lightbox[data-frame="tablet"]) :where(.shots-lightbox-frame) {
   padding: var(--shots-frame-pad, 0.75rem);
   border-radius: calc(var(--shots-frame-radius, 2rem) + var(--shots-frame-pad, 0.75rem));
-  background: var(--shots-bezel);
-  box-shadow: inset 0 0 0 1px var(--shots-bezel-edge);
+  background: var(--_shots-bezel);
+  box-shadow: inset 0 0 0 1px var(--_shots-bezel-edge);
 }
 
 :where(.shots-lightbox[data-frame="phone"], .shots-lightbox[data-frame="tablet"]) :where(.shots-lightbox-image) {
@@ -386,8 +387,8 @@
   right: 1rem;
   display: grid;
   place-items: center;
-  width: var(--shots-button-size);
-  height: var(--shots-button-size);
+  width: var(--_shots-button-size);
+  height: var(--_shots-button-size);
   padding: 0;
   border: 0;
   border-radius: 999px;
@@ -398,8 +399,8 @@
 
 :where(.shots-lightbox) :where(.shots-missing) {
   position: relative;
-  background: var(--shots-surface);
-  border-radius: var(--shots-radius);
+  background: var(--_shots-surface);
+  border-radius: var(--_shots-radius);
 }
 
 /* --- Carousel --- */
@@ -412,8 +413,8 @@
   position: relative;
   overflow-x: auto;
   overscroll-behavior-x: contain;
-  padding: 0.5rem var(--shots-carousel-padding) 2.5rem;
-  scroll-padding-inline: var(--shots-carousel-padding);
+  padding: 0.5rem var(--_shots-carousel-padding) 2.5rem;
+  scroll-padding-inline: var(--_shots-carousel-padding);
   scroll-snap-type: x mandatory;
   scrollbar-width: none;
 }
@@ -424,14 +425,14 @@
 
 :where(.shots-carousel-list) {
   display: flex;
-  gap: var(--shots-carousel-gap);
+  gap: var(--_shots-carousel-gap);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 :where(.shots-carousel-slide) {
-  flex: 0 0 var(--shots-carousel-slide-width);
+  flex: 0 0 var(--_shots-carousel-slide-width);
   scroll-snap-align: start;
 }
 
@@ -441,7 +442,7 @@
 
 :where(.shots-carousel-slide figcaption) {
   margin-top: 0.75rem;
-  color: var(--shots-ink-muted);
+  color: var(--_shots-ink-muted);
   font-size: 0.875rem;
   text-align: center;
 }
@@ -460,7 +461,7 @@
   display: block;
   width: 100%;
   height: auto;
-  border-radius: calc(var(--shots-radius) / 2);
+  border-radius: calc(var(--_shots-radius) / 2);
 }
 
 /* The bezel scales with the device's width, so it keeps its proportions at every size (FRAME_METRICS). */
@@ -469,8 +470,8 @@
   --shots-frame-radius: calc((100cqi - 2 * var(--shots-frame-pad)) * 0.1214);
   padding: var(--shots-frame-pad);
   border-radius: calc(var(--shots-frame-radius) + var(--shots-frame-pad));
-  background: var(--shots-bezel);
-  box-shadow: inset 0 0 0 1px var(--shots-bezel-edge), var(--shots-shadow);
+  background: var(--_shots-bezel);
+  box-shadow: inset 0 0 0 1px var(--_shots-bezel-edge), var(--_shots-shadow);
 }
 
 :where(.shots-carousel[data-frame="tablet"]) :where(.shots-device picture) {
@@ -487,7 +488,7 @@
 }
 
 :where(a.shots-device:focus-visible picture) {
-  outline: 2px solid var(--shots-focus);
+  outline: 2px solid var(--_shots-focus);
   outline-offset: 3px;
 }
 
@@ -495,18 +496,18 @@
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
-  padding: 0 var(--shots-carousel-padding);
+  padding: 0 var(--_shots-carousel-padding);
 }
 
 :where(.shots-carousel-step) {
   display: inline-grid;
   place-items: center;
-  width: var(--shots-button-size);
-  height: var(--shots-button-size);
+  width: var(--_shots-button-size);
+  height: var(--_shots-button-size);
   padding: 0;
-  border: 1px solid var(--shots-border);
+  border: 1px solid var(--_shots-border);
   border-radius: 999px;
-  background: var(--shots-surface);
+  background: var(--_shots-surface);
   cursor: pointer;
 }
 

@@ -224,9 +224,9 @@ export function buildScreenshots(root: string, config: ScreenshotsConfig, names:
   const outputs = plans.flatMap(plan => [plan.absolute, resolved(plan.absolute)]);
   const linked = linkedInto(source, outputs);
   if (linked) throw new Error(`${path.relative(root, linked)} links into a screenshots output directory.`);
-  const before = readRecord(source);
   let staged: Staged[] = [];
   try {
+    const before = readRecord(source);
     const capture = checkCapture(root, source, before);
     staged = plans.map(plan => stageTarget(root, source, plan.name, plan.target, plan.dir, plan.base, capture));
     hooks.afterCopy?.();

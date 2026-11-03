@@ -255,3 +255,80 @@ describe("<screenshot-carousel>", () => {
     expect([none.hidden, none.childElementCount]).toEqual([true, 0]);
   });
 });
+
+describe("<screenshot-carousel> scrolling, on a simulated layout", () => {
+  // happy-dom has no layout: slides sit PITCH apart after the track's padding, and scrolling ends at once.
+  const PITCH = 264, PADDING = 16;
+  let width = 1408;
+  const observers: (() => void)[] = [];
+  const saved: [object, string, PropertyDescriptor | undefined][] = [];
+  const define = (target: object, name: string, descriptor: PropertyDescriptor) => {
+    saved.push([target, name, Object.getOwnPropertyDescriptor(target, name)]);
+    Object.defineProperty(target, name, { configurable: true, ...descriptor });
+  };
+  beforeAll(() => {
+    define(HTMLElement.prototype, "offsetLeft", { get(this: HTMLElement) { return this.classList.contains("shots-carousel-slide") ? PADDING + [...this.parentElement!.children].indexOf(this) * PITCH : 0; } });
+    define(HTMLElement.prototype, "clientWidth", { get(this: HTMLElement) { return this.classList.contains("shots-carousel-track") ? width : 0; } });
+    const positions = new WeakMap<Element, number>();
+    define(Element.prototype, "scrollLeft", { get(this: Element) { return positions.get(this) ?? 0; }, set(this: Element, value: number) { positions.set(this, value); } });
+    define(Element.prototype, "scrollTo", { writable: true, value(this: Element, options: ScrollToOptions) { positions.set(this, options.left ?? 0); this.dispatchEvent(new Event("scrollend")); } });
+    define(window, "onscrollend", { writable: true, value: null });
+    define(globalThis, "ResizeObserver", { writable: true, value: class { constructor(callback: () => void) { observers.push(() => callback()); } observe() {} disconnect() {} } });
+  });
+  afterAll(() => {
+    for (const [target, name, descriptor] of saved.reverse()) {
+      if (descriptor) Object.defineProperty(target, name, descriptor); else delete (target as Record<string, unknown>)[name];
+    }
+  });
+  const frame = () => new Promise(done => requestAnimationFrame(() => done(undefined)));
+  /** The slide resting at the track's start edge. */
+  const resting = (carousel: HTMLElement) => {
+    const track = $(carousel, ".shots-carousel-track");
+    const slides = $$(carousel, ".shots-carousel-slide");
+    const slide = slides[Math.round((track.scrollLeft - PADDING) / PITCH)]!;
+    return { caption: slide.querySelector("figcaption")!.textContent, copy: slide.hasAttribute("aria-hidden"), slides: slides.length };
+  };
+
+  test("starts on the first original, adds copies for a wide track, and wraps both ways", async () => {
+    width = 1408;
+    observers.length = 0;
+    const carousel = document.createElement("screenshot-carousel") as HTMLElement & { manifestData: unknown; step(delta: number): void };
+    carousel.setAttribute("project", "mobile");
+    carousel.manifestData = manifest;
+    document.body.append(carousel);
+    expect(resting(carousel)).toEqual({ caption: "Home", copy: false, slides: 9 });
+    // Three slides are 792px; a 1408px track needs two copies on each side.
+    for (const observe of observers) observe();
+    await frame();
+    expect(resting(carousel)).toEqual({ caption: "Home", copy: false, slides: 15 });
+    // Every slide fits, so a step moves one slide rather than a page of the same slides.
+    carousel.step(-1);
+    expect(resting(carousel)).toEqual({ caption: "Org Manager", copy: false, slides: 15 });
+    carousel.step(1);
+    carousel.step(1);
+    expect(resting(carousel)).toEqual({ caption: "Notes", copy: false, slides: 15 });
+    carousel.step(1);
+    carousel.step(1);
+    expect(resting(carousel)).toEqual({ caption: "Home", copy: false, slides: 15 });
+  });
+
+  test("a user scroll into the copies settles back among the originals", async () => {
+    width = 390;
+    observers.length = 0;
+    const carousel = document.createElement("screenshot-carousel") as HTMLElement & { manifestData: unknown };
+    carousel.setAttribute("project", "mobile");
+    carousel.manifestData = manifest;
+    document.body.append(carousel);
+    for (const observe of observers) observe();
+    await frame();
+    const track = $(carousel, ".shots-carousel-track");
+    // Swipe two slides left of the first original, into the copy before it.
+    track.scrollLeft = PADDING + 1 * PITCH;
+    track.dispatchEvent(new Event("scrollend"));
+    expect(resting(carousel)).toEqual({ caption: "Notes", copy: false, slides: 9 });
+    // A position between slides waits for the snap to finish.
+    track.scrollLeft += PITCH * 3 + 40;
+    track.dispatchEvent(new Event("scrollend"));
+    expect(track.scrollLeft).toBe(PADDING + PITCH * 7 + 40);
+  });
+});

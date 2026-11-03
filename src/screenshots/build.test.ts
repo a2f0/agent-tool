@@ -131,6 +131,16 @@ describe("staging screenshots", () => {
     });
   }
 
+  test("an unreadable capture record also removes the outputs", () => {
+    const root = repository(captures, { linked: true, record: complete });
+    buildScreenshots(root, config, []);
+    const record = path.join(root, ".screenshots/capture.json");
+    rmSync(record);
+    mkdirSync(record);
+    expect(() => buildScreenshots(root, config, [])).toThrow();
+    expect(existsSync(path.join(gallery(root), "manifest.json"))).toBe(false);
+  });
+
   test("refuses a linked, non-empty store without a record", () => {
     const root = repository(captures, { linked: true });
     expect(() => buildScreenshots(root, config, [])).toThrow("The shared screenshots have no capture record; capture once through the take-screenshots skill.");
