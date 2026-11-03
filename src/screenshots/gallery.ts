@@ -707,7 +707,7 @@ function defineCarousel(): CustomElementConstructor {
       return limit > 0 ? slides.slice(0, limit) : slides;
     }
 
-    #render(manifest: ScreenshotManifest, keep?: number): void {
+    #render(manifest: ScreenshotManifest): void {
       this.#manifest = manifest;
       const slides = this.#slidesFor(manifest);
       const signal = this.#abort!.signal;
@@ -717,9 +717,35 @@ function defineCarousel(): CustomElementConstructor {
       this.dataset["state"] = "ready";
       const project = slides[0]!.light.project;
       const frame = projectFrame(manifest, project);
-      const linkBase = this.getAttribute("link-base");
       const loop = slides.length > 1;
-      const copies = loop ? this.#copies : 0;
+      const track = element("div", { class: "shots-carousel-track", tabindex: "0" }, [this.#list(manifest, slides, loop ? this.#copies : 0)]);
+      this.#track = track;
+      const root = element("div", { class: "shots-carousel", role: "region", "aria-roledescription": "carousel", "aria-label": this.getAttribute("label") ?? "Screenshots", "data-frame": frame }, [track]);
+      const controls = element("div", { class: "shots-carousel-controls" });
+      const viewAll = this.getAttribute("view-all-href");
+      if (viewAll) controls.append(element("a", { class: "shots-carousel-view-all", href: viewAll, text: this.getAttribute("view-all-label") || "View all screenshots" }));
+      if (loop) {
+        const previous = element("button", { type: "button", class: "shots-carousel-step", "data-step": "-1", "aria-label": "Previous screens" }, [icon("prev")]);
+        const next = element("button", { type: "button", class: "shots-carousel-step", "data-step": "1", "aria-label": "Next screens" }, [icon("next")]);
+        previous.addEventListener("click", () => this.step(-1), { signal });
+        next.addEventListener("click", () => this.step(1), { signal });
+        controls.append(previous, next);
+        onScrollSettle(track, () => this.#normalize(), signal);
+        if (typeof ResizeObserver === "function") {
+          const observer = new ResizeObserver(() => this.#resize());
+          observer.observe(track);
+          signal.addEventListener("abort", () => observer.disconnect());
+        }
+      }
+      if (controls.childElementCount) root.append(controls);
+      this.replaceChildren(root);
+      if (loop) this.#jump(this.#copies * slides.length);
+    }
+
+    /** The slide list: the originals between `copies` loop copies on each side. */
+    #list(manifest: ScreenshotManifest, slides: { name: string; light: ScreenshotEntry; dark: ScreenshotEntry | undefined }[], copies: number): HTMLUListElement {
+      const project = slides[0]!.light.project;
+      const linkBase = this.getAttribute("link-base");
       const list = element("ul", { class: "shots-carousel-list", role: "list" });
       this.#slides = [];
       for (let copy = -copies; copy <= copies; copy += 1) {
@@ -744,28 +770,7 @@ function defineCarousel(): CustomElementConstructor {
           list.append(item);
         });
       }
-      const track = element("div", { class: "shots-carousel-track", tabindex: "0" }, [list]);
-      this.#track = track;
-      const root = element("div", { class: "shots-carousel", role: "region", "aria-roledescription": "carousel", "aria-label": this.getAttribute("label") ?? "Screenshots", "data-frame": frame }, [track]);
-      const controls = element("div", { class: "shots-carousel-controls" });
-      const viewAll = this.getAttribute("view-all-href");
-      if (viewAll) controls.append(element("a", { class: "shots-carousel-view-all", href: viewAll, text: this.getAttribute("view-all-label") || "View all screenshots" }));
-      if (loop) {
-        const previous = element("button", { type: "button", class: "shots-carousel-step", "data-step": "-1", "aria-label": "Previous screens" }, [icon("prev")]);
-        const next = element("button", { type: "button", class: "shots-carousel-step", "data-step": "1", "aria-label": "Next screens" }, [icon("next")]);
-        previous.addEventListener("click", () => this.step(-1), { signal });
-        next.addEventListener("click", () => this.step(1), { signal });
-        controls.append(previous, next);
-        onScrollSettle(track, () => this.#normalize(), signal);
-        if (typeof ResizeObserver === "function") {
-          const observer = new ResizeObserver(() => this.#resize());
-          observer.observe(track);
-          signal.addEventListener("abort", () => observer.disconnect());
-        }
-      }
-      if (controls.childElementCount) root.append(controls);
-      this.replaceChildren(root);
-      if (loop) this.#jump(copies * slides.length + (keep ?? 0));
+      return list;
     }
 
     #pitch(): number {
@@ -802,7 +807,13 @@ function defineCarousel(): CustomElementConstructor {
         const logical = wrapIndex(this.#current(), this.#count), manifest = this.#manifest, signal = this.#abort?.signal;
         this.#copies = copies;
         // Outside the observer callback, so the new slides do not resize the track within it.
-        requestAnimationFrame(() => { if (!signal?.aborted) this.#render(manifest, logical); });
+        // Only the slides change: the controls and the view-all link stay the same nodes, so a
+        // click or focus on them survives a resize.
+        requestAnimationFrame(() => {
+          if (signal?.aborted || this.#track !== track) return;
+          track.replaceChildren(this.#list(manifest, this.#slidesFor(manifest), copies));
+          this.#jump(copies * this.#count + logical);
+        });
       } else this.#normalize();
     }
 

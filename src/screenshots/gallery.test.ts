@@ -403,6 +403,32 @@ describe("<screenshot-carousel> scrolling, on a simulated layout", () => {
     expect(resting(carousel)).toEqual({ caption: "Home", copy: false, slides: 15 });
   });
 
+  test("adding copies on a resize keeps the controls and view-all link in place", async () => {
+    width = 390;
+    observers.length = 0;
+    const carousel = document.createElement("screenshot-carousel") as HTMLElement & { manifestData: unknown };
+    carousel.setAttribute("project", "mobile");
+    carousel.setAttribute("view-all-href", "/screenshots/");
+    carousel.manifestData = manifest;
+    document.body.append(carousel);
+    const root = $(carousel, ".shots-carousel");
+    const track = $(carousel, ".shots-carousel-track");
+    const viewAll = $(carousel, ".shots-carousel-view-all");
+    const step = $(carousel, ".shots-carousel-step");
+    const before = $$(carousel, ".shots-carousel-slide").length;
+    // The page settles wider (fonts load, a header grows), so the loop needs more copies.
+    width = 1408;
+    for (const observe of observers) observe();
+    await frame();
+    expect($$(carousel, ".shots-carousel-slide").length).toBeGreaterThan(before);
+    // A click on the link or a step button that lands mid-resize must not hit a detached node.
+    expect([$(carousel, ".shots-carousel"), $(carousel, ".shots-carousel-track"), $(carousel, ".shots-carousel-view-all"), $(carousel, ".shots-carousel-step")])
+      .toEqual([root, track, viewAll, step]);
+    expect(viewAll.isConnected && step.isConnected).toBe(true);
+    expect(resting(carousel)).toMatchObject({ caption: "Home", copy: false });
+    carousel.remove();
+  });
+
   test("a user scroll into the copies settles back among the originals", async () => {
     width = 390;
     observers.length = 0;
