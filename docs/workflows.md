@@ -226,7 +226,10 @@ agent-tool repo cleanup <PR-number> <shipped-head> --apply --keep-branch
 ```
 
 Cleanup previews by default and requires a confirmed MERGED same-repository PR
-at the exact shipped HEAD. It preserves dirty or unrelated branches, rejects
+at the exact shipped HEAD. It refuses a PR whose head is the default branch or
+a `branch.exempt` branch, since those are shared rather than feature branches;
+that guard is why the `--apply` form runs without approval (class `share` in
+[permissions](permissions.md)). It preserves dirty or unrelated branches, rejects
 local/remote feature branches that moved, fetches the default branch, verifies
 it contains the merge commit, and only fast-forwards an existing local default.
 `--keep-branch` updates the checkout while preserving both feature refs.

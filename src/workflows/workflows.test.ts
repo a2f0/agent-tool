@@ -287,6 +287,16 @@ test("cleanup preserves a shipped branch checked out in another worktree", () =>
   expect(existsSync(f.stateFile + ".deleted")).toBe(false);
   expect(execFileSync("git", ["branch", "--show-current"], { cwd: linked, env: f.env, encoding: "utf8" }).trim()).toBe("chore/workflow");
 });
+test("cleanup refuses a merged PR whose head is an exempt shared branch", () => {
+  const f = githubFixture(); f.save({ status: "MERGED" });
+  writeFileSync(path.join(f.root, ".git/info/exclude"), "agent-tool.json\n");
+  writeFileSync(path.join(f.root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, branch: { exempt: ["main", "chore/workflow"] } }));
+  for (const args of [[], ["--apply"]]) {
+    const result = f.run(["repo", "cleanup", "1", f.commit, ...args]);
+    expect(result.status).toBe(1); expect(result.stderr).toContain("Refusing to delete exempt branch chore/workflow");
+  }
+  expect(f.git(["rev-parse", "refs/heads/chore/workflow"])).toBe(f.commit); expect(existsSync(f.stateFile + ".deleted")).toBe(false);
+});
 test("cleanup keeps branches on request and rejects unmerged or moved HEAD", () => {
   const f = githubFixture(); expect(f.run(["repo", "cleanup", "1", f.commit, "--apply"]).status).toBe(1); f.save({ status: "MERGED" });
   expect(f.run(["repo", "cleanup", "1", f.commit, "--apply", "--keep-branch"]).status).toBe(0); expect(f.git(["rev-parse", "refs/heads/chore/workflow"])).toBe(f.commit); expect(existsSync(f.stateFile + ".deleted")).toBe(false);

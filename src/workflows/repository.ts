@@ -31,6 +31,9 @@ export function repoCommand(args: string[]): number {
   assert(!pr.isCrossRepository, "Cleanup of fork branches requires explicit manual checkout/remote handling.");
   const defaultBranch = repo.defaultBranchRef.name;
   assert(pr.headRefName !== defaultBranch, "Refusing to delete the default branch.");
+  // Cleanup runs without approval, so it prunes only feature branches: a merged
+  // PR from a shared branch (an exempt `staging` into `main`) keeps its refs.
+  assert(!loadConfig().branch.exempt.includes(pr.headRefName), `Refusing to delete exempt branch ${pr.headRefName}.`);
   clean();
   const branch = currentBranch();
   assert(branch === pr.headRefName || branch === defaultBranch, "Checkout is on an unrelated branch.");

@@ -6,7 +6,7 @@
 export const CLASSES = {
   read: { decision: "allow", description: "Reads local or GitHub state without changing it." },
   local: { decision: "allow", description: "Changes only this checkout: files, local branches, lockfile installs, and versions of declared dependencies." },
-  share: { decision: "allow", description: "Publishes work for review without changing a shared branch: pushes a feature branch, opens a PR, or answers review threads." },
+  share: { decision: "allow", description: "Publishes work for review without changing a shared branch: pushes a feature branch, opens a PR, answers review threads, or prunes a merged PR's feature branch." },
   release: { decision: "ask", description: "Merges into a shared branch, publishes a package, or deletes remote state." },
   intake: { decision: "ask", description: "Brings new third-party code into the repository." },
   policy: { decision: "ask", description: "Changes the permissions agents run with." },
@@ -29,7 +29,9 @@ export const CATALOG: CatalogEntry[] = [
   { command: "permissions install", class: "read", applyClass: "policy" },
   ...["branch push", "pr open", "pr cancel-runs", "pr threads reply", "pr threads resolve"].map(command => ({ command, class: "share" as const })),
   { command: "pr merge", class: "release" },
-  { command: "repo cleanup", class: "read", applyClass: "release" },
+  // Cleanup acts only after GitHub confirms the PR MERGED and the local and remote
+  // feature refs match the shipped head, so pruning them is routine follow-through.
+  { command: "repo cleanup", class: "read", applyClass: "share" },
   { command: "bun add", class: "intake" },
   // Legacy action names stay classified so a broad user rule cannot reach them unclassified.
   ...["checkVersions"].map(command => ({ command, class: "read" as const })),
