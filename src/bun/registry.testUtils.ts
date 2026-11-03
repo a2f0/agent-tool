@@ -14,7 +14,7 @@ export function registryFixture(manifest: Record<string, unknown>, workspaces: R
   const version = spawnSync(manager, ["--version"], { encoding: "utf8" });
   if (version.status !== 0) throw new Error(`Could not identify fixture manager ${manager}.`);
   const cli = process.env.AGENT_TOOL_TEST_CLI ?? path.resolve(import.meta.dir, "../index.ts");
-  const packages = new Map<string, Map<string, { manifest: Record<string, unknown>; archive: Buffer; time: string }>>();
+  const packages = new Map<string, Map<string, { manifest: Record<string, unknown>; archive: Buffer; time: string; integrity: boolean }>>();
   const requests: string[] = [];
   const server = Bun.serve({
     hostname: "127.0.0.1", port: 0,
@@ -31,7 +31,7 @@ export function registryFixture(manifest: Record<string, unknown>, workspaces: R
         time: Object.fromEntries([...versions].map(([version, entry]) => [version, entry.time])),
         versions: Object.fromEntries([...versions].map(([version, entry]) => [version, {
           ...entry.manifest,
-          dist: { tarball: `${server.url}${name}/-/${version}.tgz`, integrity: `sha512-${createHash("sha512").update(entry.archive).digest("base64")}` },
+          dist: { tarball: `${server.url}${name}/-/${version}.tgz`, ...(entry.integrity ? { integrity: `sha512-${createHash("sha512").update(entry.archive).digest("base64")}` } : {}) },
         }])),
       });
     },
@@ -59,10 +59,10 @@ export function registryFixture(manifest: Record<string, unknown>, workspaces: R
   return {
     root, project, requests, env, write, manager, cli,
     read: (relative = "package.json") => readFileSync(path.join(project, relative), "utf8"),
-    lock: () => Bun.JSONC.parse(readFileSync(path.join(project, "bun.lock"), "utf8")) as { packages: Record<string, unknown[]>; catalog?: Record<string, string>; catalogs?: Record<string, Record<string, string>> },
+    lock: () => Bun.JSONC.parse(readFileSync(path.join(project, "bun.lock"), "utf8")) as { lockfileVersion: number; overrides?: Record<string, unknown>; packages: Record<string, unknown[]>; catalog?: Record<string, string>; catalogs?: Record<string, Record<string, string>> },
     run: (args: string[], options?: { cwd?: string; env?: Record<string, string> }) => execute(manager, args, options),
     command: (args: string[], options?: { cwd?: string; env?: Record<string, string> }) => execute(process.execPath, [cli, "bun", ...args], options),
-    publish(name: string, version: string, fields: Record<string, unknown> = {}, time = "2020-01-01T00:00:00.000Z") {
+    publish(name: string, version: string, fields: Record<string, unknown> = {}, time = "2020-01-01T00:00:00.000Z", integrity = true) {
       const pkg = { name, version, ...fields };
       const directory = path.join(root, "tar");
       mkdirSync(path.join(directory, "package"), { recursive: true });
@@ -70,7 +70,7 @@ export function registryFixture(manifest: Record<string, unknown>, workspaces: R
       const tar = spawnSync("tar", ["-czf", "-", "package"], { cwd: directory });
       if (tar.status !== 0) throw new Error(tar.stderr.toString());
       const versions = packages.get(name) ?? new Map();
-      versions.set(version, { manifest: pkg, archive: tar.stdout, time });
+      versions.set(version, { manifest: pkg, archive: tar.stdout, time, integrity });
       packages.set(name, versions);
     },
     close() {

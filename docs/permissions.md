@@ -84,7 +84,12 @@ per-package changes, and each Bun invocation.
   it does not select a newer global manager. Older owners fail before mutation
   because they can turn the same command into a direct addition. The CLI's
   minimum runtime remains 1.3.11. Names must already resolve unambiguously in the
-  text lockfile and cannot be declared directly in any workspace. Versions,
+  text lockfile and cannot be declared directly in any workspace. Text lockfile
+  versions 1, 2, and 3 are supported, including v3 scoped override objects. Unknown
+  versions and malformed workspace/package/override structures fail before the
+  manager runs; Bun's frozen preflight still validates resolution and integrity
+  semantics. The same structural checks run after updates, with rollback on
+  failure. Versions,
   globs, aliases, source switches, `--latest`, and arbitrary manager flags are
   refused. Every manifest must remain byte-identical; every non-target lock
   resolution and lock metadata field must remain unchanged. If Bun needs to

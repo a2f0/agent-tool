@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { registryFixture } from "./registry.testUtils";
@@ -10,6 +11,67 @@ function fixture(manifest: Record<string, unknown>, workspaces: Record<string, R
   fixtures.push(result);
   return result;
 }
+
+test("resolved lock format validation fails closed before any manager call", async () => {
+  const f = fixture({ dependencies: { "fixture-owner": "1.0.0" }, overrides: { "fixture-owner": { "fixture-child": "^1.0.0" } } });
+  f.publish("fixture-owner", "1.0.0", { dependencies: { "fixture-child": "^1.0.0" } }); f.publish("fixture-child", "1.0.0");
+  expect((await f.run(["install"])).status).toBe(0);
+  const original = f.lock(), manifest = f.read();
+  const child = original.packages["fixture-child"]!;
+  const cases: unknown[] = [
+    null, [], ...[0, 4, "3", 3.5].map(lockfileVersion => ({ ...original, lockfileVersion })),
+    ...[null, []].map(packages => ({ ...original, packages })),
+    ...[[child[0]], null, [], {}, child.slice(0, 3), [...child, "extra"], [child[0], 3, {}, ""], [child[0], "", null, ""], [child[0], "", [], ""], [child[0], "", {}, {}], [child[0], "", { dependencies: [] }, ""], [child[0], "", { dependencies: { unexpected: 3 } }, ""]].map(tuple => ({ ...original, packages: { ...original.packages, "fixture-child": tuple } })),
+    { ...original, packages: { ...original.packages, "fixture-owner": null } },
+    ...[null, [], { "": null }, { "": { dependencies: [] } }].map(workspaces => ({ ...original, workspaces })),
+    ...[null, [], { "fixture-owner": { "fixture-child": [] } }, { "fixture-owner": 3 }].map(overrides => ({ ...original, overrides })),
+  ];
+  for (const [index, value] of cases.entries()) {
+    f.write("bun.lock", value);
+    const before = f.read("bun.lock"), requests = f.requests.length;
+    const result = await f.command(["update", "--resolved", "fixture-child"]);
+    expect({ index, status: result.status, receipt: result.receipt }).toEqual({ index, status: 1, receipt: null });
+    expect(result.stderr).toMatch(/supported text bun.lock/);
+    expect(f.requests).toHaveLength(requests);
+    expect(f.read()).toBe(manifest);
+    expect(f.read("bun.lock")).toBe(before);
+  }
+}, 30_000);
+
+test("v3 post-update format and metadata violations restore staged and unstaged bytes", async () => {
+  const f = fixture({ dependencies: { "fixture-owner": "1.0.0" }, overrides: { "fixture-owner": { "fixture-child": "^1.0.0" } }, scripts: { postinstall: `${JSON.stringify(process.execPath)} mutate.ts` } });
+  writeFileSync(path.join(f.project, "mutate.ts"), `
+import { readFileSync, writeFileSync } from "node:fs";
+if (process.env.MUTATE && JSON.parse(readFileSync("node_modules/fixture-child/package.json", "utf8")).version === "1.0.1") {
+  const lock = Bun.JSONC.parse(readFileSync("bun.lock", "utf8"));
+  if (process.env.MUTATE === "version") lock.lockfileVersion = 4;
+  if (process.env.MUTATE === "tuple") lock.packages["fixture-child"][2] = null;
+  if (process.env.MUTATE === "metadata") lock.configVersion = 0;
+  writeFileSync("bun.lock", JSON.stringify(lock));
+  writeFileSync("mutated", process.env.MUTATE);
+}`);
+  f.publish("fixture-owner", "1.0.0", { dependencies: { "fixture-child": "^1.0.0" } }); f.publish("fixture-child", "1.0.0");
+  expect((await f.run(["install"])).status).toBe(0);
+  expect(f.lock().lockfileVersion).toBe(3);
+  expect(spawnSync("git", ["add", "package.json", "bun.lock"], { cwd: f.project }).status).toBe(0);
+  writeFileSync(path.join(f.project, "package.json"), f.read() + "\n");
+  writeFileSync(path.join(f.project, "bun.lock"), f.read("bun.lock") + "\n");
+  const before = [f.read(), f.read("bun.lock")];
+  const index = spawnSync("git", ["diff", "--cached", "--binary"], { cwd: f.project, encoding: "utf8" }).stdout;
+  f.publish("fixture-child", "1.0.1");
+  for (const mode of ["version", "tuple", "metadata"]) {
+    const result = await f.command(["update", "--resolved", "fixture-child"], { env: { MUTATE: mode } });
+    expect(result.status).toBe(1);
+    expect(f.read("mutated")).toBe(mode);
+    if (mode === "metadata") {
+      expect(result.receipt.violations).toContain("bun.lock metadata changed outside resolved packages.");
+      expect(result.receipt.runs).toHaveLength(2);
+    } else expect(result.stderr).toMatch(/supported text bun.lock/);
+    expect([f.read(), f.read("bun.lock")]).toEqual(before);
+    expect(spawnSync("git", ["diff", "--cached", "--binary"], { cwd: f.project, encoding: "utf8" }).stdout).toBe(index);
+    expect((await f.command(["install"])).status).toBe(0);
+  }
+}, 20_000);
 
 test("resolved update rolls back lifecycle declaration changes before frozen verification", async () => {
   const f = fixture({ dependencies: { "fixture-owner": "1.0.0" }, scripts: { postinstall: `${JSON.stringify(process.execPath)} mutate.ts` } });

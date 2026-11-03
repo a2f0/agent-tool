@@ -12,6 +12,32 @@ function fixture(manifest: Record<string, unknown>, workspaces: Record<string, R
   return result;
 }
 
+for (const lockfileVersion of [1, 2, 3]) test(`resolved refresh supports Bun-generated v${lockfileVersion} without adding declarations`, async () => {
+  const scoped = lockfileVersion === 3 ? { "fixture-owner": { "fixture-child": "^1.0.0" } } : undefined;
+  const f = fixture({ dependencies: { "fixture-owner": "1.0.0" }, ...(scoped ? { overrides: scoped } : {}) });
+  // A fresh off-registry package without integrity makes real Bun emit v1;
+  // hashed packages emit v2, and scoped overrides select v3. No lock writer stub.
+  f.publish("fixture-owner", "1.0.0", { dependencies: { "fixture-child": "^1.0.0" } }, undefined, lockfileVersion !== 1);
+  f.publish("fixture-child", "1.0.0");
+  expect((await f.run(["install"])).status).toBe(0);
+  const before = f.lock(), manifest = f.read();
+  expect(before.lockfileVersion).toBe(lockfileVersion);
+  expect(before.overrides).toEqual(scoped);
+  f.publish("fixture-child", "1.0.1"); f.publish("fixture-child", "2.0.0");
+  const result = await f.command(["update", "--resolved", "fixture-child"]);
+  expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
+  expect(f.read()).toBe(manifest);
+  expect(f.lock().packages["fixture-child"]?.[0]).toBe("fixture-child@1.0.1");
+  const { packages: oldPackages, ...oldMetadata } = before;
+  const { packages: newPackages, ...newMetadata } = f.lock();
+  expect(newMetadata).toEqual(oldMetadata);
+  expect(newPackages["fixture-owner"]).toEqual(oldPackages["fixture-owner"]);
+  expect(result.receipt.resolvedChanges).toEqual([{ key: "fixture-child", from: "fixture-child@1.0.0", to: "fixture-child@1.0.1" }]);
+  expect(result.receipt.runs.map((run: { command: string[] }) => run.command)).toEqual([
+    ["bun", "install", "--frozen-lockfile", "--lockfile-only"], ["bun", "update", "fixture-child"], ["bun", "install", "--frozen-lockfile"],
+  ]);
+}, 20_000);
+
 test("catalog selections reject ambiguous layouts rather than guessing a definition", async () => {
   const f = fixture({ workspaces: { packages: [] }, catalog: { "fixture-a": "1.0.0" }, dependencies: { "fixture-a": "catalog:" } });
   f.publish("fixture-a", "1.0.0"); f.publish("fixture-a", "1.0.1");
@@ -70,8 +96,8 @@ test("resolved refresh rejects versions, direct declarations, unknown names and 
   expect([f.read(), f.read("bun.lock")]).toEqual(before);
 }, 30_000);
 
-test("resolved refresh refuses a manager result that changes any non-target resolution", async () => {
-  const f = fixture({ dependencies: { "fixture-owner": "1.0.0" } });
+for (const scoped of [false, true]) test(`resolved refresh refuses a manager result that changes any non-target resolution (scoped=${scoped})`, async () => {
+  const f = fixture({ dependencies: { "fixture-owner": "1.0.0" }, ...(scoped ? { overrides: { "fixture-owner": { "fixture-child": "^1.0.0" } } } : {}) });
   f.publish("fixture-owner", "1.0.0", { dependencies: { "fixture-child": "^1.0.0" } });
   f.publish("fixture-child", "1.0.0");
   expect((await f.run(["install"])).status).toBe(0);
@@ -86,8 +112,8 @@ test("resolved refresh refuses a manager result that changes any non-target reso
   expect((await f.command(["install"])).status).toBe(0);
 }, 20_000);
 
-test("resolved refresh moves every locked copy within owner ranges without touching declarations or unrelated resolutions", async () => {
-  const f = fixture({ workspaces: ["packages/*"], dependencies: { "fixture-owner": "1.0.0", "fixture-other": "^1.0.0" } }, {
+for (const scoped of [false, true]) test(`resolved refresh moves every locked copy within owner ranges without touching declarations or unrelated resolutions (scoped=${scoped})`, async () => {
+  const f = fixture({ workspaces: ["packages/*"], dependencies: { "fixture-owner": "1.0.0", "fixture-other": "^1.0.0" }, ...(scoped ? { overrides: { "fixture-owner": { "fixture-child": "^1.0.0" }, "fixture-owner-two": { "fixture-child": "^2.0.0" } } } : {}) }, {
     "packages/app": { name: "app", version: "1.0.0", devDependencies: { "fixture-owner-two": "1.0.0" } },
   });
   f.publish("fixture-owner", "1.0.0", { dependencies: { "fixture-child": "^1.0.0" } });
@@ -95,6 +121,7 @@ test("resolved refresh moves every locked copy within owner ranges without touch
   f.publish("fixture-child", "1.0.0"); f.publish("fixture-child", "2.0.0"); f.publish("fixture-other", "1.0.0");
   expect((await f.run(["install"])).status).toBe(0);
   const root = f.read(), app = f.read("packages/app/package.json"), before = f.lock();
+  expect(before.lockfileVersion).toBe(scoped ? 3 : 2);
   f.publish("fixture-child", "1.0.1"); f.publish("fixture-child", "2.0.1"); f.publish("fixture-child", "3.0.0"); f.publish("fixture-other", "1.0.1");
   const result = await f.command(["update", "--resolved", "fixture-child", "--cwd", "packages/app"]);
   expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
