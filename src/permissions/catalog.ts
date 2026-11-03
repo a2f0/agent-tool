@@ -27,7 +27,7 @@ export const CATALOG: CatalogEntry[] = [
   { command: "hooks install", class: "read", applyClass: "local" },
   { command: "teardown", class: "read", applyClass: "local" },
   { command: "permissions install", class: "read", applyClass: "policy" },
-  ...["branch push", "pr open", "pr threads reply", "pr threads resolve"].map(command => ({ command, class: "share" as const })),
+  ...["branch push", "pr open", "pr cancel-runs", "pr threads reply", "pr threads resolve"].map(command => ({ command, class: "share" as const })),
   { command: "pr merge", class: "release" },
   { command: "repo cleanup", class: "read", applyClass: "release" },
   { command: "bun add", class: "intake" },

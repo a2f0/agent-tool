@@ -165,6 +165,7 @@ hooks to refuse stale sources; the installer does not rewrite hook bodies.
 agent-tool repo context
 agent-tool pr context
 agent-tool pr checks --wait --head <reviewed-head> --timeout 900 --interval 10
+agent-tool pr cancel-runs --head <superseded-head>
 agent-tool pr preflight <reviewed-head> <base-branch> <reviewed-base>
 agent-tool pr threads list
 agent-tool pr threads reply <comment-database-id> --body-file /tmp/reply.txt
@@ -186,6 +187,23 @@ finish. A changed PR HEAD or state fails immediately. Timeout and interval are
 seconds (interval 1–60, default 10); `--timeout 0` performs one observation.
 Without `--timeout`, the wait is `merge.checksTimeoutSeconds` from
 `agent-tool.json`, or 900 seconds when that is unset.
+
+Every observation also compares the head with the live tip of the PR's base
+branch through GitHub's compare API, asking again only after the base moves,
+and reports it as `base` (`branch`, `liveOid`, `behindBy`, `behind`). The base
+branch is reread each time, so a retargeted PR is compared with its new base. A head
+that lacks the live base cannot ship as reviewed, so waiting stops at once with
+`behind: true`, `ok: false`, and exit status 1, whatever the checks show:
+integrate the base, validate, review, and push the new head instead of spending
+runner time on the old one. `--allow-behind` keeps waiting and passes on green
+checks, still reporting `behind`.
+
+`pr cancel-runs --head <oid>` cancels the queued and in-progress GitHub Actions
+runs of that commit on the PR's branch, reporting each as `cancelled`,
+`finished` (it completed first), or `failed` (exit status 1). It cancels the
+PR's current head only while that head is behind its live base, so an
+up-to-date head never loses its CI. Same-repository PRs only; a commit with
+1,000 or more runs is refused rather than partly cancelled.
 The read-only preflight additionally checks clean local state, exact local/PR
 HEAD and branch, OPEN/non-draft/MERGEABLE/CLEAN state, no queued/automatic merge,
 unchanged live base, base ancestry, configured strict rulesets, and explicit

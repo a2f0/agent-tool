@@ -7,6 +7,7 @@ import { loadConfig } from "../config";
 import { remoteBranchHead, resolvePr, resolveRepositoryGitUrl } from "../git/prContext";
 import { assertMergeChecks } from "../pr/mergeChecks";
 import { assertStrictBaseFreshness } from "../pr/baseFreshness";
+import { baseFreshness, behindReason, cancelRuns } from "./prFreshness";
 import { resolvePullRequestMergeTarget } from "../pr/squashMerge";
 import { planVersions } from "../version/bumpVersions";
 import { assert, clean, currentBranch, git, head, json, oid, option, flag, output, poll, timeoutOptions } from "./core";
@@ -158,13 +159,37 @@ export async function prWorkflowCommand(args: string[]): Promise<number> {
     const identity = resolvePr();
     output({ ...identity, headOid: expected, failed: failedJobLogs(identity, expected, limits) }); return 0;
   }
+  if (action === "cancel-runs") {
+    const expected = option(args, "--head");
+    assert(expected && !args.length, "Usage: pr cancel-runs --head <oid>"); oid(expected);
+    const identity = resolvePr(); const pr = pullRequest(identity.prNumber, identity.repo);
+    assert(!pr.isCrossRepository, "Cancelling runs supports same-repository PRs only.");
+    // The current head's runs are its only CI; cancel them only once it can no longer merge as is.
+    const base = pr.headRefOid === expected ? baseFreshness(identity.repo, expected, pr.baseRefName) : null;
+    assert(!base || base.behind, "This is the PR's current head and it contains its live base; cancelling would leave it without CI.");
+    const result = cancelRuns(identity.repo, pr.headRefName, expected);
+    output({ ...identity, headOid: expected, currentHead: pr.headRefOid, ...(base ? { base } : {}), ...result }); return result.ok ? 0 : 1;
+  }
   assert(action === "checks", "Unknown PR workflow command.");
   const wait = flag(args, "--wait");
+  const allowBehind = flag(args, "--allow-behind");
   const expected = option(args, "--head") ?? head();
   const options = timeoutOptions(args, loadConfig().merge.checksTimeoutSeconds);
-  assert(!args.length, "Usage: pr checks [--wait] [--head <oid>] [--timeout seconds] [--interval seconds]"); oid(expected);
+  assert(!args.length, "Usage: pr checks [--wait] [--head <oid>] [--allow-behind] [--timeout seconds] [--interval seconds]"); oid(expected);
   const identity = resolvePr();
-  const inspect = () => { const value = checkSnapshot(identity, expected); return { done: !value.waiting, value }; };
+  const compared = new Map<string, Map<string, number>>();
+  const inspect = () => {
+    const value = checkSnapshot(identity, expected);
+    // Read the base every time: a retargeted PR must be compared with its new base.
+    const pr = pullRequest(identity.prNumber, identity.repo);
+    assert(pr.headRefOid === expected && pr.state === "OPEN", "PR HEAD or state changed while waiting.");
+    const branch = pr.baseRefName;
+    if (!compared.has(branch)) compared.set(branch, new Map());
+    const base = baseFreshness(identity.repo, expected, branch, compared.get(branch));
+    // A head behind its base cannot ship as reviewed, so waiting on its CI only spends runner time.
+    if (base.behind && !allowBehind) return { done: true, value: { ...value, ok: false, waiting: false, behind: true, base, reason: behindReason(base, expected) } };
+    return { done: !value.waiting, value: { ...value, behind: base.behind, base } };
+  };
   const result = wait ? await poll(inspect, options) : inspect().value;
   output({ ...identity, ...result }); return result.ok ? 0 : 1;
 }
