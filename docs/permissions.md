@@ -24,8 +24,8 @@ out of agent sessions where that matters.
 | --- | --- | --- |
 | `read` | allow | Context, checks, listings, previews, diagnostics, and logs |
 | `local` | allow | `bun install\|update\|remove\|test`, `bun x` for executables classified `local`, `branch create`, `versions`, `images build`, `screenshots build`, `review`, and applied skill or hook installs |
-| `share` | allow | `branch push`, `pr open`, `pr cancel-runs`, `pr threads reply\|resolve` |
-| `release` | ask | `pr merge`, `repo cleanup --apply`, and direct `gh pr merge`, `npm publish`, `bun publish` |
+| `share` | allow | `branch push`, `pr open`, `pr cancel-runs`, `pr threads reply\|resolve`, `repo cleanup --apply` |
+| `release` | ask | `pr merge`, and direct `gh pr merge`, `npm publish`, `bun publish` |
 | `intake` | ask | `bun add`, and direct `bun add`, `npm install`, `pnpm add`, `yarn add`, and `bunx`, `bun x`, `npx`, which can download a package |
 | `policy` | ask | `permissions install --apply` |
 | `exec` | ask | Executables classified `exec`: ones that run whatever file or command they are given |
@@ -160,7 +160,7 @@ agent-tool permissions check              # CI
   `bypassPermissions`, so a committed one would override each user's chosen
   mode. In Manual mode an unlisted command prompts; for auto mode, see
   [Auto mode](#auto-mode). A command whose `--apply` form asks, such as
-  `repo cleanup`, gets no rule either, since an allow rule would also match
+  `permissions install`, gets no rule either, since an allow rule would also match
   `--apply`. Other settings and rules in the file are kept; reinstalling
   replaces only entries a previous install recorded, including the `ask`
   entries that versions before 0.1.28 wrote.
@@ -199,7 +199,7 @@ repository, so add the classes to `~/.claude/settings.json` yourself:
   "autoMode": {
     "soft_deny": [
       "$defaults",
-      "Release: merging a pull request, publishing a package, or deleting remote state, including `agent-tool pr merge`, `agent-tool repo cleanup --apply`, `gh pr merge`, `npm publish`, and `bun publish`",
+      "Release: merging a pull request, publishing a package, or deleting remote state, including `agent-tool pr merge`, `gh pr merge`, `npm publish`, and `bun publish`",
       "Dependency intake: adding a third-party package with `agent-tool bun add`, `bun add`, `npm install <name>`, `pnpm add`, or `yarn add`, or running `bunx`, `bun x`, or `npx`, which can download one",
       "Permission changes: `agent-tool permissions install --apply`, or edits to `.claude/settings.json`, `.codex/rules/`, or `permissions` in `agent-tool.json`",
       "Arbitrary execution: `agent-tool bun x` with an executable that runs whatever file or command it is given, such as `tsx`"

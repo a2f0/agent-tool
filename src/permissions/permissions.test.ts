@@ -24,11 +24,13 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
   // Claude Code prompts for explicit ask rules even in bypassPermissions mode, so none are written.
   expect(rules.ask).toEqual([]);
   for (const invocation of ["bun run agent-tool", "node_modules/.bin/agent-tool", "agent-tool"]) {
-    for (const command of ["bun add left-pad@1.3.0", "pr merge 'feat: x' abc main", "squashMerge 'feat: x' abc main", "repo cleanup 12 abc --apply", "repo cleanup --apply 12 abc", "permissions install --apply", "run --label x -- rm -rf tmp"]) {
+    for (const command of ["bun add left-pad@1.3.0", "pr merge 'feat: x' abc main", "squashMerge 'feat: x' abc main", "permissions install --apply", "run --label x -- rm -rf tmp"]) {
       expect({ command: `${invocation} ${command}`, allowed: allowed(rules.allow, `${invocation} ${command}`) }).toEqual({ command: `${invocation} ${command}`, allowed: false });
     }
     expect(allowed(rules.allow, `${invocation} bun update left-pad`)).toBe(true);
     expect(allowed(rules.allow, `${invocation} skills install --apply`)).toBe(true);
+    // Post-merge cleanup is gated on a confirmed MERGED PR, so it runs without a prompt.
+    expect(allowed(rules.allow, `${invocation} repo cleanup 12 abc --apply`)).toBe(true);
   }
   for (const command of ["bun add left-pad", "bunx cowsay", "npx cowsay", "gh pr merge 1", "npm publish"]) expect(allowed(rules.allow, command)).toBe(false);
   expect(rules.allow.some(rule => /agent-tool run(?:-group)? /.test(rule))).toBe(false);
@@ -36,7 +38,8 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
   expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", ["install", "update", "remove", "test"]], decision="allow"');
   expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", "add"], decision="prompt"');
   // Prefix rules cannot see a trailing --apply, so Codex prompts for the whole command.
-  expect(codex).toContain('prefix_rule(pattern=["agent-tool", "repo", "cleanup"], decision="prompt"');
+  expect(codex).toContain('prefix_rule(pattern=["agent-tool", "permissions", "install"], decision="prompt"');
+  expect(codex).not.toMatch(/"repo", "cleanup"\], decision="prompt"/);
 });
 
 test("every classified command is a real CLI command", () => {
