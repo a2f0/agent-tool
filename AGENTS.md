@@ -22,7 +22,7 @@ records: keep current constraints in dedicated docs and run evidence in the PR;
 keep README and this file concise.
 
 Validate changes with `bun run typecheck`, `bun src/index.ts graph check`,
-`bun test --parallel`, `bun scripts/testing/smoke-package.ts`, `bun run build`,
+`bun test --parallel=2`, `bun scripts/testing/smoke-package.ts`, `bun run build`,
 and `bun scripts/testing/smoke.ts dist/agent-tool`. The build regenerates
 embedded skills from `skills/*/SKILL.md`; commit `src/skills/bundled.ts` with skill changes.
 CI also verifies Linux Debian packaging. Preserve the review snapshot,

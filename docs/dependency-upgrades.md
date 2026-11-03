@@ -5,7 +5,7 @@ Keep the development Bun version in `.mise.toml` aligned with `package.json`'s
 job continues to check the version in `engines.bun`. Node/npm setup remains
 explicit in the trusted-publishing workflow.
 
-Invoke `update-dependencies` in Claude Code, Codex, or OpenCode to inventory and
+Invoke `update-dependencies` in Claude Code, Codex, OpenCode, or Hermes to inventory and
 upgrade package dependencies, runtimes, mise tools, Actions, native toolchains,
 Ansible, Terraform providers/modules, and other repository-owned pins. It reads
 official migration guides, upgrades coupled dependencies together, resolves
@@ -14,6 +14,10 @@ the repository's existing upgrade skills and support policy. Dependency-update
 execution continues through `ship-pr`: independent review, PR, required CI, merge,
 and verification of normal merge-triggered publishing or deployment. Explicit
 inventory-only, local-change, or open-PR-only requests keep that narrower scope.
+Natural-language requests to update everything use this same shared skill; a
+repository-owned `update-everything` wrapper remains authoritative for its extra
+steps. See [portable skills](reference.md#portable-skills) for Hermes discovery,
+trust, and the distinction between a coordinating harness and a review provider.
 
 Read-only advisory checks cover baseline and candidate lockfiles, including
 resolved transitive and native dependencies. The skill traces findings to their
@@ -55,6 +59,22 @@ the input. The command never applies or contacts a backend and prints no attribu
 values. It cannot establish plan freshness, environment/identity, provider or
 provisioner side effects, or authorization; inspect those before deploying and
 apply the exact approved saved plan. Keep state and plans out of Git.
+
+## Current compatibility constraints
+
+- Keep Bun's minimum runtime at 1.3.11 while version preparation requires 1.4+.
+  CI exercises the minimum separately; development-only parallel test flags must
+  not reach that job. Revisit the minimum only with a supported-runtime migration
+  and package/shared-workflow smoke evidence.
+- `@types/node` owns the `undici-types ~8.9.0` range. Bun's wildcard also accepts
+  that shared resolution; retain it rather than forcing the newest incompatible
+  minor through an override. Refresh through Bun and recheck the owner's range
+  when updating `@types/bun` or `@types/node` ([upstream metadata](https://registry.npmjs.org/@types/node/latest)).
+- happy-dom owns `entities ^7.0.1`, `whatwg-mimetype ^3.0.0`, and
+  `@types/whatwg-mimetype ^3.0.2`. Newer majors are not compatible targets merely
+  because they exist. Revisit after an owning happy-dom upgrade permits them,
+  with the DOM/gallery tests and final advisory audit
+  ([upstream metadata](https://registry.npmjs.org/happy-dom/latest)).
 
 ## Maintenance records
 

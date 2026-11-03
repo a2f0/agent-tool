@@ -1,7 +1,7 @@
 # agent-tool
 
 agent-tool is a command-line tool and a set of portable skills for repositories
-where Claude Code, Codex, or OpenCode make the changes. It provides shared Git,
+where Claude Code, Codex, OpenCode, or Hermes make the changes. It provides shared Git,
 GitHub, review, validation, and release workflows: independent agent reviews of
 a committed branch, guarded pushes and squash merges of the exact reviewed
 commit, package versioning, brand image rendering, screenshot staging with a
@@ -69,7 +69,7 @@ from a clone:
 mise install
 bun install --frozen-lockfile
 bun src/index.ts --help
-bun test --parallel
+bun test --parallel=2
 ```
 
 [Development](docs/development.md) covers the source layout, the full

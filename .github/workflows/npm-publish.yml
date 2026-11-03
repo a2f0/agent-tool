@@ -35,13 +35,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
         with:
-          version: 2026.10.17
+          version: 2026.11.0
           install_args: bun
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.22.1
+          node-version: 26.13.0
           package-manager-cache: false
       # Publish only a version newer than npm's latest, so merges that keep the
       # version, re-runs, and out-of-order runs succeed without publishing.
@@ -50,7 +50,7 @@ jobs:
       - if: steps.decide.outputs.publish == 'true'
         run: bun install --frozen-lockfile
       - if: steps.decide.outputs.publish == 'true'
-        run: bun run typecheck && bun test --parallel && bun scripts/testing/smoke-package.ts
+        run: bun run typecheck && bun test --parallel=2 && bun scripts/testing/smoke-package.ts
       # The package ships src/skills/bundled.ts, so it must match skills/.
       - if: steps.decide.outputs.publish == 'true'
         run: bun run generate && git diff --exit-code -- src/skills/bundled.ts
@@ -70,11 +70,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Trusted publishing needs npm 11.5.1 or later; Node 24.22.1 ships 11.19.1.
+      # Trusted publishing needs npm 11.5.1 or later; Node 26.13.0 ships 11.20.0.
       # No registry-url: its .npmrc would point npm at an empty NODE_AUTH_TOKEN.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.22.1
+          node-version: 26.13.0
           package-manager-cache: false
       # The source package needs no install or build, and scripts never run.
       - run: npm publish --ignore-scripts

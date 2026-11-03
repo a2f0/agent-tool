@@ -279,8 +279,9 @@ exited. `proc start`, `proc stop` and `teardown --apply` remember the members
 they see, by pid and start time, so a descendant that left the group is still
 stopped after its parent exits. Once the leader has gone, its pid and group id
 can be reused, so a member counts only when it was remembered or carries the
-record's `AGENT_TOOL_PROCESS`; macOS hides that variable for protected system
-binaries. `proc list` and `teardown` without `--apply` write nothing. `proc stop` sends
+record's `AGENT_TOOL_PROCESS`, even if it detached after the initial snapshot;
+macOS hides that variable for protected system binaries. `proc list` and
+`teardown` without `--apply` write nothing. `proc stop` sends
 SIGTERM to the group and to members outside it, SIGKILL after the grace period
 (five seconds by default), and removes the record once nothing remains.
 
@@ -301,9 +302,10 @@ inspection is unavailable or a record unreadable, since a running process could
 then go unseen. `proc start` refuses to start anything when `ps` cannot run.
 `--apply` stops leftovers and removes finished records; it never signals
 untracked processes or kept ones, and never removes worktrees, since they may be
-someone else's. Stop those deliberately, then run `teardown` again. Processes
-that change directory out of the repository and leave the recorded group's
-process tree after their parent exits are invisible to it. From a matrix-style
+someone else's. Stop those deliberately, then run `teardown` again. An unrecorded
+descendant that outlives its parent, leaves the group, and clears or hides its
+ownership tag cannot be recovered by ownership inspection. If it also changes
+out of the repository, cwd inspection cannot report it either. From a matrix-style
 workspace, run it per checkout with `--repo <checkout>`.
 
 ## CI aggregate gates

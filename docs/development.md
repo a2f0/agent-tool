@@ -60,16 +60,19 @@ published package omits.
 ```sh
 bun run agent:run --label typecheck -- bun run typecheck
 bun run agent:run --label graph -- bun src/index.ts graph check
-bun run agent:run --label tests -- bun test --parallel
+bun run agent:run --label tests -- bun test --parallel=2
 bun run agent:run --label package-smoke -- bun scripts/testing/smoke-package.ts
 bun run agent:run --label build -- bun run build
 bun run agent:run --label compiled-smoke -- bun scripts/testing/smoke.ts dist/agent-tool
 ```
 
-Tests run as isolated files across worker processes with `--parallel`, since
-most of their time goes to spawning the CLI against disposable repositories.
-Keep each test file independent of the others, with its own temporary
-directories and stubs; plain `bun test` still runs the same suite serially.
+Tests run as isolated files across two worker processes with `--parallel=2`,
+since most of their time goes to spawning the CLI against disposable
+repositories. CPU-count concurrency can oversubscribe subprocesses on shared
+hosts and turn the unchanged five-second test limits into scheduling failures.
+The bounded command retains the complete test scope and every assertion; plain
+`bun test` still runs the same suite serially. Keep each test file independent
+of the others, with its own temporary directories and stubs.
 
 Build regenerates `src/skills/bundled.ts`; commit it with canonical skill changes.
 After running `bun run generate`, the same six checks can run together with

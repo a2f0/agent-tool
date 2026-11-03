@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { adoptable } from "./commands";
@@ -136,6 +136,38 @@ test("a recorded descendant that left the group is stopped after its parent and 
   const result = agentTool(root, "teardown", "--apply");
   expect(result.json.stopped).toEqual([{ id: started.id, stopped: true, remaining: [] }]);
   expect(alive(descendant)).toBe(false);
+}, 30_000);
+
+test("late detached descendants remain owned after their leader exits", async () => {
+  const root = repository();
+  const launch = path.join(root, "launch"), ready = path.join(root, "ready"), exit = path.join(root, "exit");
+  const child = `require("node:fs").writeFileSync(${JSON.stringify(ready)}, String(process.pid)); setInterval(() => {}, 1000)`;
+  // Start has finished recording before the child may exist. File barriers make
+  // this ordering independent of process startup speed and host scheduling.
+  const parent = `const fs = require("node:fs"); const timer = setInterval(() => { if (!fs.existsSync(${JSON.stringify(launch)})) return; clearInterval(timer); require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(child)}], { detached: true, stdio: "ignore" }); setInterval(() => { if (fs.existsSync(${JSON.stringify(exit)})) process.exit(0); }, 10); }, 10)`;
+  const started = agentTool(root, "proc", "start", "--", process.execPath, "-e", parent).json;
+  const until = async (condition: () => boolean) => {
+    const deadline = performance.now() + 5000;
+    while (!condition() && performance.now() < deadline) await sleep(20);
+    expect(condition()).toBe(true);
+  };
+  writeFileSync(launch, "");
+  await until(() => existsSync(ready));
+  const descendant = Number(readFileSync(ready, "utf8"));
+  groups.push(descendant);
+  const record = path.join(root, ".git/agent-tool/processes", `${started.id}.json`);
+  const before = readFileSync(record, "utf8");
+  expect(JSON.parse(before).members.map((item: { pid: number }) => item.pid)).not.toContain(descendant);
+  expect(agentTool(root, "proc", "list").json.processes[0].members).toContainEqual(expect.objectContaining({ pid: descendant }));
+  expect(readFileSync(record, "utf8")).toBe(before); // Listing stays read-only.
+  const foreign = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { cwd: root, detached: true, stdio: "ignore" });
+  children.push(foreign);
+  writeFileSync(exit, "");
+  await until(() => !alive(started.pid));
+  expect(agentTool(root, "proc", "list").json.processes[0]).toMatchObject({ state: "orphaned", members: [expect.objectContaining({ pid: descendant })] });
+  expect(agentTool(root, "proc", "stop", started.id).json.stopped).toEqual([{ id: started.id, stopped: true, remaining: [] }]);
+  expect(alive(descendant)).toBe(false);
+  expect(alive(foreign.pid!)).toBe(true); // Same cwd is not ownership.
 }, 30_000);
 
 test("a launcher that exits at once still leaves its survivors recorded and stoppable", async () => {

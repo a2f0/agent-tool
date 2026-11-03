@@ -45,8 +45,10 @@ function readManifest(root: string): Record<string, string> {
 
 export function installSkills(rootDir: string, target: string, apply = false): SkillChange[] {
   const root = realpathSync(rootDir);
-  // OpenCode discovers both of these directories; avoid a third duplicate.
-  const directories = target === "all" ? [".agents/skills", ".claude/skills"] : [harnessNamed(target).skillDirectory];
+  // Hermes consumes shared skills, not the review adapter registry. OpenCode
+  // discovers both default directories too; avoid additional duplicate bundles.
+  const directories = target === "all" ? [".agents/skills", ".claude/skills"]
+    : [target === "hermes" ? ".agents/skills" : harnessNamed(target).skillDirectory];
   const manifestFile = safeDestination(root, MANIFEST);
   const previous = readManifest(root);
   const pending: { file: string; relative: string; source: string; change: SkillChange }[] = [];
