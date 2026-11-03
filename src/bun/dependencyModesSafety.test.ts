@@ -22,6 +22,7 @@ test("resolved lock format validation fails closed before any manager call", asy
     null, [], ...[0, 4, "3", 3.5].map(lockfileVersion => ({ ...original, lockfileVersion })),
     ...[null, []].map(packages => ({ ...original, packages })),
     ...[[child[0]], null, [], {}, child.slice(0, 3), [...child, "extra"], [child[0], 3, {}, ""], [child[0], "", null, ""], [child[0], "", [], ""], [child[0], "", {}, {}], [child[0], "", { dependencies: [] }, ""], [child[0], "", { dependencies: { unexpected: 3 } }, ""]].map(tuple => ({ ...original, packages: { ...original.packages, "fixture-child": tuple } })),
+    ...[["x@file:../x"], ["x@link:y", {}, 3], ["pkg@workspace:a", {}], ["@root:"]].map(tuple => ({ ...original, packages: { ...original.packages, "fixture-other": tuple } })),
     { ...original, packages: { ...original.packages, "fixture-owner": null } },
     ...[null, [], { "": null }, { "": { dependencies: [] } }].map(workspaces => ({ ...original, workspaces })),
     ...[null, [], { "fixture-owner": { "fixture-child": [] } }, { "fixture-owner": 3 }].map(overrides => ({ ...original, overrides })),

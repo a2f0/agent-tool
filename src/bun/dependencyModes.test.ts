@@ -38,6 +38,37 @@ for (const lockfileVersion of [1, 2, 3]) test(`resolved refresh supports Bun-gen
   ]);
 }, 20_000);
 
+test("v3 refresh preserves real file, link, tarball and anonymous-root resolutions", async () => {
+  const f = fixture({ name: undefined, dependencies: { "fixture-owner": "1.0.0", "fixture-file": "file:./vendor/file", "fixture-link": "link:./vendor/link", "fixture-self": "file:." }, overrides: { "fixture-owner": { "@fixture/child": "^1.0.0" } } });
+  f.write("vendor/file/package.json", { name: "fixture-file", version: "1.0.0" });
+  f.write("vendor/link/package.json", { name: "fixture-link", version: "1.0.0" });
+  f.publish("fixture-tar", "1.0.0");
+  const manifest = JSON.parse(f.read());
+  manifest.dependencies["fixture-tar"] = `${f.env.BUN_CONFIG_REGISTRY}fixture-tar/-/1.0.0.tgz`;
+  f.write("package.json", manifest);
+  f.publish("fixture-owner", "1.0.0", { dependencies: { "@fixture/child": "^1.0.0" } }); f.publish("@fixture/child", "1.0.0");
+  const install = await f.run(["install"]);
+  expect({ status: install.status, stderr: install.stderr }).toMatchObject({ status: 0 });
+  const before = f.lock(), bytes = f.read();
+  expect(before.lockfileVersion).toBe(3);
+  expect(before.packages["fixture-file"]?.[0]).toMatch(/@file:/);
+  expect(before.packages["fixture-link"]?.[0]).toMatch(/@link:/);
+  expect(before.packages["fixture-tar"]?.[0]).toMatch(/@http:/);
+  expect(before.packages["fixture-self"]?.[0]).toBe("@root:");
+  f.publish("@fixture/child", "1.0.1");
+  const result = await f.command(["update", "--resolved", "@fixture/child"]);
+  expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
+  expect(f.read()).toBe(bytes);
+  const after = f.lock();
+  expect(after.packages["@fixture/child"]?.[0]).toBe("@fixture/child@1.0.1");
+  for (const [key, value] of Object.entries(before.packages)) if (key !== "@fixture/child") expect(JSON.stringify(after.packages[key])).toBe(JSON.stringify(value));
+  for (const name of ["fixture-file", "fixture-link", "fixture-tar", "fixture-self"]) {
+    expect((await f.command(["update", "--resolved", name])).stderr).toMatch(/non-registry/);
+    expect(f.lock()).toEqual(after);
+    expect(f.read()).toBe(bytes);
+  }
+}, 20_000);
+
 test("catalog selections reject ambiguous layouts rather than guessing a definition", async () => {
   const f = fixture({ workspaces: { packages: [] }, catalog: { "fixture-a": "1.0.0" }, dependencies: { "fixture-a": "catalog:" } });
   f.publish("fixture-a", "1.0.0"); f.publish("fixture-a", "1.0.1");

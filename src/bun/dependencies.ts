@@ -150,6 +150,7 @@ function resolvedPlan(root: string, version: string, requested: Requested[], wor
   const tuple = (value: unknown): boolean => {
     if (!Array.isArray(value) || typeof value[0] !== "string") return false;
     const at = value[0].indexOf("@", value[0].startsWith("@") ? 1 : 0);
+    // Bun explicitly accepts @root: for an anonymous root referenced by file:.
     if (at < 1 && !value[0].startsWith("@root:")) return false;
     const resolution = value[0].slice(at + 1);
     // v1/v2/v3 share package tuples. v2 tightens Bun's semantic checks; v3

@@ -95,7 +95,7 @@ The resolved-mode fixtures let Bun generate all supported text formats: an
 off-default-registry package without integrity produces v1, hashed packages
 produce v2, and scoped overrides produce v3. They preserve the owning-manager
 checks and never substitute a lockfile writer. Bun's
-[pinned text-lockfile implementation](https://github.com/oven-sh/bun/blob/38afee6c84fcf48c0edb2466aa4b27d287a59c30/src/install/lockfile/bun.lock.rs)
+[Bun 1.4.4 Rust text-lockfile implementation](https://github.com/oven-sh/bun/blob/38afee6c84fcf48c0edb2466aa4b27d287a59c30/src/install/lockfile/bun.lock.rs)
 defines the shared package tuple layout, v2 integrity strictness, and v3 scoped
 overrides; the helper checks structure and delegates semantic validation to the
 frozen preflight.

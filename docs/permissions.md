@@ -89,11 +89,11 @@ per-package changes, and each Bun invocation.
   versions and malformed workspace/package/override structures fail before the
   manager runs; Bun's frozen preflight still validates resolution and integrity
   semantics. The same structural checks run after updates, with rollback on
-  failure. Versions,
-  globs, aliases, source switches, `--latest`, and arbitrary manager flags are
-  refused. Every manifest must remain byte-identical; every non-target lock
-  resolution and lock metadata field must remain unchanged. If Bun needs to
-  add/remove/change a non-target child, the helper restores the original files:
+  failure. Versions, globs, aliases, source switches, `--latest`, and arbitrary
+  manager flags are refused. Every manifest must remain byte-identical; every
+  non-target lock resolution and lock metadata field must remain unchanged. If
+  Bun needs to add/remove/change a non-target child, the helper restores the
+  original files:
   this is an explicitly unsupported target-only case, not a broad refresh.
   Prefer a supported owning-dependency upgrade rather than hand-editing the lock
   or bypassing approvals. Receipts add `scope: "resolved-targets"` and
