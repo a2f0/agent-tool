@@ -29,6 +29,7 @@ export function behindReason(base: BaseFreshness, head: string): string {
 }
 
 const ACTIVE = ["queued", "in_progress", "waiting", "requested", "pending"];
+const RUN_LIMIT = 1000;
 interface Run { databaseId: number; status: string; headSha: string; headBranch: string; workflowName: string; event: string; url: string }
 
 /**
@@ -36,8 +37,10 @@ interface Run { databaseId: number; status: string; headSha: string; headBranch:
  * run that finishes before its cancel lands is reported as finished, not failed.
  */
 export function cancelRuns(repo: string, branch: string, head: string) {
-  const runs = json<Run[]>(["run", "list", "-R", repo, "--commit", head, "--limit", "100", "--json", "databaseId,status,headSha,headBranch,workflowName,event,url"]);
+  const runs = json<Run[]>(["run", "list", "-R", repo, "--commit", head, "--limit", String(RUN_LIMIT), "--json", "databaseId,status,headSha,headBranch,workflowName,event,url"]);
   assert(Array.isArray(runs), "Could not list workflow runs.");
+  // A full page may hide more runs, and reporting success then would leave some running.
+  assert(runs.length < RUN_LIMIT, `${head} has ${RUN_LIMIT} or more workflow runs; cancel them in GitHub instead.`);
   const active = runs.filter(run => run.headSha === head && run.headBranch === branch && ACTIVE.includes(run.status));
   const results = active.map(run => {
     const summary = { id: run.databaseId, workflow: run.workflowName, event: run.event, url: run.url };

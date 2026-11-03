@@ -118,7 +118,7 @@ import {execFileSync} from 'node:child_process';
 const a=process.argv.slice(2), s=JSON.parse(readFileSync(process.env.API_STATE,'utf8'));
 appendFileSync(process.env.API_STATE+'.calls',JSON.stringify(a)+'\\n');
 const fields=a[a.indexOf('--json')+1], say=(value)=>console.log(JSON.stringify(value));
-const pr={number:1,state:s.status,title:'chore: workflow',url:'https://github.com/o/r/pull/1',headRefName:'chore/workflow',headRefOid:s.apiHead,baseRefName:'main',baseRefOid:s.liveBase,isDraft:false,mergeable:'MERGEABLE',mergeStateStatus:'CLEAN',isCrossRepository:false,mergeCommit:{oid:s.commit}};
+const pr={number:1,state:s.status,title:'chore: workflow',url:'https://github.com/o/r/pull/1',headRefName:'chore/workflow',headRefOid:s.apiHead,baseRefName:s.baseRefName??'main',baseRefOid:s.liveBase,isDraft:false,mergeable:'MERGEABLE',mergeStateStatus:'CLEAN',isCrossRepository:false,mergeCommit:{oid:s.commit}};
 if(a[0]==='repo')say({nameWithOwner:'o/r',defaultBranchRef:{name:s.defaultBranch??'main'},url:'file://'+s.remote,sshUrl:'file://'+s.remote});
 else if(a[0]==='config')console.log('https');
 else if(a[0]==='api' && a.some(value=>value.includes('/compare/')))say({behind_by:s.behindBy??0});
@@ -174,6 +174,20 @@ test("green checks on a head behind its base pass only with --allow-behind", () 
   expect(f.run(["pr", "checks", "--allow-behind"]).status).toBe(0);
   f.save({ behindBy: 0 }); const result = f.run(["pr", "checks", "--wait"]); expect(result.status).toBe(0);
   expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, behind: false, base: { behindBy: 0 } });
+});
+test("CI waiter compares a retargeted PR with its new base", () => {
+  const f = githubFixture(); f.git(["push", "origin", "main:refs/heads/release"]);
+  f.save({ baseRefName: "release", behindBy: 4 });
+  const result = f.run(["pr", "checks", "--wait"]); expect(result.status).toBe(1);
+  expect(JSON.parse(result.stdout)).toMatchObject({ behind: true, base: { branch: "release", behindBy: 4 } });
+  expect(readFileSync(f.stateFile + ".calls", "utf8")).toContain(`/compare/${f.commit}...${f.commit}`);
+});
+test("pr cancel-runs refuses a full page of runs rather than report a partial cancel", () => {
+  const f = githubFixture(); const old = "b".repeat(40);
+  f.save({ runs: Array.from({ length: 1000 }, (_, id) => ({ databaseId: id, status: "completed", headSha: old, headBranch: "chore/workflow", workflowName: "CI", event: "push", url: "u" })) });
+  const result = f.run(["pr", "cancel-runs", "--head", old]); expect(result.status).toBe(1);
+  expect(result.stderr).toContain("1000 or more workflow runs");
+  expect(existsSync(f.stateFile + ".cancelled")).toBe(false);
 });
 test("a CI wait compares once per live base OID rather than once per poll", () => {
   const f = githubFixture(); f.save({ checks: [{ name: "test", workflow: "CI", state: "PENDING" }] });

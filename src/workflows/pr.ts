@@ -177,11 +177,13 @@ export async function prWorkflowCommand(args: string[]): Promise<number> {
   const options = timeoutOptions(args, loadConfig().merge.checksTimeoutSeconds);
   assert(!args.length, "Usage: pr checks [--wait] [--head <oid>] [--allow-behind] [--timeout seconds] [--interval seconds]"); oid(expected);
   const identity = resolvePr();
-  const branch = pullRequest(identity.prNumber, identity.repo).baseRefName;
-  const compared = new Map<string, number>();
+  const compared = new Map<string, Map<string, number>>();
   const inspect = () => {
     const value = checkSnapshot(identity, expected);
-    const base = baseFreshness(identity.repo, expected, branch, compared);
+    // Read the base every time: a retargeted PR must be compared with its new base.
+    const branch = pullRequest(identity.prNumber, identity.repo).baseRefName;
+    if (!compared.has(branch)) compared.set(branch, new Map());
+    const base = baseFreshness(identity.repo, expected, branch, compared.get(branch));
     // A head behind its base cannot ship as reviewed, so waiting on its CI only spends runner time.
     if (base.behind && !allowBehind) return { done: true, value: { ...value, ok: false, waiting: false, behind: true, base, reason: behindReason(base, expected) } };
     return { done: !value.waiting, value: { ...value, behind: base.behind, base } };
