@@ -119,12 +119,32 @@ record. `width` and `height` are the PNG's pixels, and `?v=` is a short content
 hash, so a recaptured screen gets a new URL and long-lived caches never serve a
 stale image. Serve `manifest.json` revalidating.
 
-`@a2f0/agent-tool/screenshots/manifest` exports the types and pure helpers, with
-no DOM or Node dependency, for server-side pages: `parseScreenshotManifest`,
-`screenshotRoutes` (Astro `getStaticPaths`), `screenshotPath`,
-`parseScreenshotPath`, `screenshotHeading`, `findScreenshot`, `projectScreens`,
-`projectFrame`, `startingProject`, `startingScreen`, `startingTheme`, and
-`EMPTY_MANIFEST`.
+`@a2f0/agent-tool/screenshots/manifest` exports the types
+(`ScreenshotManifest`, `ScreenshotEntry`, `ScreenshotManifestProject`,
+`ScreenshotManifestTheme`, `ScreenshotManifestScreen`, `ScreenshotCapture`,
+`ScreenshotFrame`, `ScreenshotRoute`) and pure helpers, with no DOM or Node
+dependency, for server-side pages. Every helper takes positional arguments; the
+names are the manifest's `name` values, not labels.
+
+| Helper | Returns |
+| --- | --- |
+| `parseScreenshotManifest(value: unknown)` | The value as a `ScreenshotManifest`; throws if its shape is invalid |
+| `findScreenshot(manifest, project, theme, name)` | The `ScreenshotEntry` for that capture, or `undefined` |
+| `projectScreens(manifest, project)` | Screen names, in manifest order, captured in any theme |
+| `projectFrame(manifest, project)` | The configured frame, else `"phone"` for captures at least `PHONE_RATIO` (1.6) times as tall as wide, else `"none"` |
+| `projectInfo(manifest, project)`, `screenInfo(manifest, name)`, `themeInfo(manifest, theme)` | The manifest item, or `{ name, label: name }` when it is not listed |
+| `screenshotRoutes(manifest)` | Astro `getStaticPaths` routes: `{ params: { slug }, props: { project?, screen? } }` for the index and each captured pair |
+| `screenshotPath(basePath, project, screen)` | The deep link `<basePath>/<project>/<screen>/` |
+| `parseScreenshotPath(basePath, pathname)` | `{ project, screen }` for a deep link under `basePath`, else `undefined` |
+| `screenshotHeading(manifest, project, screen, template?)` | The heading the gallery shows, from `template` (default `DEFAULT_HEADING_TEMPLATE`) |
+| `formatScreenshotTemplate(template, manifest, project, screen, heading?)` | `template` with `{screen}`, `{project}`, `{projectLower}`, and `{heading}` filled |
+| `startingProject(manifest, requested, narrow)` | `requested` when listed, else `mobile` when `narrow` and listed, else the first project |
+| `startingScreen(manifest, project, requested)` | `requested` when the project captured it, else its first screen |
+| `startingTheme(manifest, project, screen, prefersDark)` | The preferred scheme's theme when `screen` was captured in it, else the first theme that captured it |
+| `wrapIndex(index, length)` | `index` wrapped into `[0, length)` |
+
+It also exports `EMPTY_MANIFEST`, `PHONE_RATIO`, and
+`DEFAULT_HEADING_TEMPLATE` (`{screen}, {projectLower} screenshot`).
 
 ## Elements
 
@@ -141,7 +161,23 @@ import it. It is checked with `@tsconfig/strictest` settings. The elements
 render into light DOM, so site CSS reaches every part; children present before
 the element upgrades are a no-JavaScript fallback that rendering replaces. Each
 element also accepts a parsed manifest through its `manifestData` property
-instead of fetching `manifest`.
+instead of fetching `manifest`, set before or after `defineScreenshotElements()`.
+
+The module re-exports everything from `screenshots/manifest`, and adds:
+
+- `defineScreenshotElements(registry = customElements)`: defines both
+  elements, skipping any already defined; `SCREENSHOT_ELEMENTS` holds their tag
+  names.
+- `ScreenshotGalleryElement`, `ScreenshotCarouselElement`, and
+  `ScreenshotChangeDetail`: types for the elements and the change event.
+- The layout math the elements use, for pages that render a matching static
+  frame: `fitFrame(frame, width, height, availableWidth, availableHeight)`
+  returns the `{ width, height, pad, radius }` in CSS pixels that fit a capture
+  and its bezel in a box without enlarging it, from `FRAME_METRICS` (bezel
+  padding and screen radius as fractions of the capture's width).
+  `nearestSlide(scrollLeft, offset, pitch, count)`,
+  `loopSlide(index, count, copies)`, and
+  `loopCopies(viewportWidth, copyWidth)` are the carousel's scroll math.
 
 ### `<screenshot-gallery>`
 
@@ -221,9 +257,19 @@ auto-play.
 
 ### Styling
 
-Every rule in `gallery.css` is wrapped in `:where()`, so any site selector
-overrides it. Restyle through these custom properties, set on the elements or
-an ancestor; the defaults follow `prefers-color-scheme`.
+Restyle through these custom properties, set on the elements or an ancestor;
+the defaults follow `prefers-color-scheme`.
+
+Rules on the `screenshot-gallery` and `screenshot-carousel` elements
+themselves have zero specificity, so any site selector overrides them. Every
+rule on a part the elements render has exactly one class of specificity, with
+its context in `:where()`: element resets such as
+`button { color: inherit; background: none; border-radius: 0 }` never reach the
+gallery's buttons, bezels, or dialog, while a site rule with more than one
+class, or a class and an element, such as `screenshot-gallery .shots-frame`,
+still overrides them, as does a single-class site rule that loads later. The
+stylesheet uses no cascade layers, so element resets lose whichever order the
+site's CSS loads in.
 
 | Property | Use |
 | --- | --- |
@@ -247,8 +293,10 @@ an ancestor; the defaults follow `prefers-color-scheme`.
 Class names (`shots-gallery`, `shots-toolbar`, `shots-track`, `shots-slide`,
 `shots-frame`, `shots-filmstrip`, `shots-thumb`, `shots-lightbox`,
 `shots-carousel`, `shots-carousel-slide`, `shots-device`, ...) and the
-`data-frame`, `data-project`, `data-theme`, `data-expanded`, and `data-active`
-attributes are available for further styling.
+`data-frame`, `data-project`, `data-shots-theme`, `data-expanded`, and
+`data-active` attributes are available for further styling. The theme shown is
+`data-shots-theme`, not `data-theme`, so a site that themes regions by
+`[data-theme]` does not restyle the gallery for the capture it shows.
 
 ## Astro example
 
