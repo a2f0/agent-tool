@@ -88,6 +88,16 @@ export function encodePng({ width, height, channels, data }: Pixels): Uint8Array
   ]);
 }
 
+const SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10];
+
+/** Pixel size from a PNG's header: the signature, then IHDR's big-endian width and height. */
+export function pngSize(bytes: Uint8Array): { width: number; height: number } | null {
+  if (bytes.length < 24 || SIGNATURE.some((byte, index) => bytes[index] !== byte) || new TextDecoder().decode(bytes.subarray(12, 16)) !== "IHDR") return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const width = view.getUint32(16), height = view.getUint32(20);
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
 /** A Windows icon that stores one PNG per size, which every current browser reads. */
 export function encodeIco(images: readonly Pixels[]): Uint8Array {
   const pngs = images.map(encodePng);

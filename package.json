@@ -1,6 +1,6 @@
 {
   "name": "@a2f0/agent-tool",
-  "version": "0.1.31",
+  "version": "0.1.32",
   "packageManager": "bun@1.4.3",
   "type": "module",
   "description": "Portable cross-agent review, PR workflows, and shared skills",
@@ -14,6 +14,12 @@
   },
   "bin": {
     "agent-tool": "src/index.ts"
+  },
+  "exports": {
+    "./package.json": "./package.json",
+    "./screenshots/gallery": "./src/screenshots/gallery.ts",
+    "./screenshots/gallery.css": "./src/screenshots/gallery.css",
+    "./screenshots/manifest": "./src/screenshots/manifest.ts"
   },
   "files": [
     "src",
@@ -29,12 +35,14 @@
     "agent:run": "bun src/index.ts run",
     "agent:logs": "bun src/index.ts logs",
     "test": "bun test --parallel src scripts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.browser.json",
     "generate": "bun scripts/build/bundle-skills.ts",
     "build": "bun run generate && bun build --compile --minify src/index.ts --outfile dist/agent-tool"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "21.0.4",
     "@types/bun": "1.4.3",
+    "happy-dom": "21.0.4",
     "typescript": "7.0.2"
   },
   "dependencies": {

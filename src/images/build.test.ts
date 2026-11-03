@@ -3,7 +3,8 @@ import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { main } from "../cli";
-import { buildImages, listImages, replaceFile } from "./build";
+import { buildImages, listImages } from "./build";
+import { replaceFile } from "../system/files";
 import { parseImages } from "./config";
 import { decodePng, pixel } from "./png.testUtils";
 

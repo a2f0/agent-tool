@@ -6,6 +6,7 @@ import { doctor } from "./doctor";
 import { checkTerraformPlan } from "./dependencies/terraformPlan";
 import { dependencyDiff } from "./dependencies/diff";
 import { checkGraph } from "./graph/check";
+import { buildScreenshots, describeScreenshots } from "./screenshots/build";
 import { review } from "./harnesses";
 import { runAgentToolAction } from "./runAgentToolAction";
 import { BUNDLED_SKILLS } from "./skills/bundled";
@@ -77,6 +78,7 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   permissions check [--harness <all|claude|codex>]
   images list [target...]               JSON files each image target writes
   images build [target...] [--out <dir>]  Render assets/brand/*.svg per agent-tool.json
+  screenshots build [target...] [--out <dir>] [--json]  Stage guarded captures and a gallery manifest
   graph check                           Import cycles and layer violations per agent-tool.json
   init                                  Create agent-tool.json without overwriting
   config show
@@ -156,6 +158,21 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
     return import("./images/build").then(async ({ buildImages, listImages }) => {
       output(action === "list" ? listImages(images, names) : await buildImages(process.cwd(), images, names, out)); return 0;
     });
+  }
+  if (command === "screenshots") {
+    const action = args.shift();
+    usage(action === "build", "Usage: agent-tool screenshots build [target...] [--out <dir>] [--json]");
+    const names: string[] = [];
+    let out: string | undefined, json = false;
+    while (args.length) {
+      const value = args.shift()!;
+      if (value === "--out") { usage(out === undefined && !!args[0] && !args[0].startsWith("--"), "--out requires one directory."); out = args.shift(); }
+      else if (value === "--json") { usage(!json, "Duplicate --json."); json = true; }
+      else { usage(!value.startsWith("-"), `Unknown screenshots argument '${value}'.`); names.push(value); }
+    }
+    const receipt = buildScreenshots(process.cwd(), loadConfig().screenshots, names, out);
+    if (json) output(receipt); else writeSync(1, describeScreenshots(receipt));
+    return 0;
   }
   if (command === "graph") {
     usage(args.length === 1 && args[0] === "check", "Usage: agent-tool graph check");

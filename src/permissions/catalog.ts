@@ -21,7 +21,7 @@ export interface CatalogEntry { command: string; class: PermissionClass; applyCl
 export const CATALOG: CatalogEntry[] = [
   ...["--help", "--version", "logs", "runs list", "doctor", "config show", "branch check", "branch status", "commits check", "checks binaries", "repo context", "policy check", "toolchain check", "ci gate", "release plan", "release verify", "pr context", "pr checks", "pr logs", "pr preflight", "pr threads list", "versions plan", "versions check", "dependencies check-terraform-plan", "dependencies diff", "skills list", "skills check", "hooks check", "images list", "graph check", "permissions show", "permissions check", "proc list"]
     .map(command => ({ command, class: "read" as const })),
-  ...["bun install", "bun update", "bun remove", "bun test", "branch create", "versions bump", "versions prepare", "versions resolve-conflicts", "images build", "review", "init", "proc stop"]
+  ...["bun install", "bun update", "bun remove", "bun test", "branch create", "versions bump", "versions prepare", "versions resolve-conflicts", "images build", "screenshots build", "review", "init", "proc stop"]
     .map(command => ({ command, class: "local" as const })),
   { command: "skills install", class: "read", applyClass: "local" },
   { command: "hooks install", class: "read", applyClass: "local" },

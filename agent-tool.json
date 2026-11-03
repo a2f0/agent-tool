@@ -26,6 +26,7 @@
           "src/workflows/config.ts",
           "src/graph/config.ts",
           "src/images/config.ts",
+          "src/screenshots/config.ts",
           "src/permissions/catalog.ts"
         ]
       },
@@ -33,7 +34,7 @@
       {
         "name": "domains",
         "include": [
-          "src/{bun,commands,dependencies,graph,images,permissions,pr,processes,release,review,skills,version}/**",
+          "src/{bun,commands,dependencies,graph,images,permissions,pr,processes,release,review,screenshots,skills,version}/**",
           "src/harnesses.ts"
         ]
       },

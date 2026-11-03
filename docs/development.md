@@ -9,7 +9,11 @@ shell, prepend `~/.local/share/mise/installs/bun/<version>/bin` to PATH; do not 
 Shared implementation lives under `src/` by domain: `workflows/` for repository
 mechanics, `pr/` and `git/` for existing GitHub guards, `release/` for registry
 logic, `commands/` for execution receipts, and `review/`, `version/`, `skills/`,
-and `images/` for their respective APIs. Tests live beside implementation.
+`images/`, and `screenshots/` for their respective APIs. Tests live beside
+implementation. `screenshots/gallery.ts`, `gallery.css`, and `manifest.ts` are
+browser entry points that the package exports; they import nothing from Node
+or Bun, and `tsconfig.browser.json`, part of `typecheck`, checks them with the
+strictest settings consumers use, since consumers compile the shipped source.
 
 Repository scripts are grouped by purpose: `scripts/build/` generates the skill
 bundle, `scripts/testing/` contains installed/compiled package smoke checks,
@@ -30,16 +34,17 @@ names the layer each module belongs to, and `bun src/index.ts graph check`
 (in the verify run group and CI) enforces both; add a new top-level module to
 its layers. A test asserts the real configuration passes.
 
-1. Primitives: `git/`, `system/` (PATH lookup outside the repository and Bun
-   workspace discovery, shared by several domains), `workflows/core.ts`
+1. Primitives: `git/`, `system/` (PATH lookup outside the repository, Bun workspace
+   discovery, and link-refusing atomic file writes, shared by several domains), `workflows/core.ts`
    (process, Git, and `gh` helpers and argument parsing), `workflows/config.ts`,
-   `permissions/catalog.ts`, `images/config.ts`, and `graph/config.ts`. They
+   `permissions/catalog.ts`, `images/config.ts`, `screenshots/config.ts`, and
+   `graph/config.ts`. They
    import nothing above themselves.
 2. Configuration: `config.ts`, which parses `agent-tool.json` from the primitive
    schemas.
 3. Domains: `bun/`, `commands/`, `dependencies/`, `graph/`, `images/`,
-   `permissions/`, `pr/`, `release/`, `review/`, `skills/`, `version/`, and
-   `harnesses.ts`.
+   `permissions/`, `pr/`, `processes/`, `release/`, `review/`, `screenshots/`,
+   `skills/`, `version/`, and `harnesses.ts`.
    Domains may use each other without cycles.
 4. Workflows: the rest of `workflows/`, which compose domains into repository
    commands such as `branch`, `pr`, `hooks`, and `repo`.

@@ -14,6 +14,9 @@ version management, and portable skills for Claude Code, Codex, and OpenCode.
 - **Render brand images**: build app icons, splash screens, favicons, and store
   graphics from the SVGs in `assets/brand/`, with every size and destination
   declared in `agent-tool.json`.
+- **Stage screenshots**: copy captured screenshots into a website with a
+  manifest, guarded against unfinished or uncommitted captures, and show them
+  with framework-free gallery and carousel elements.
 - **Compact output**: run noisy commands with full private logs and bounded
   diagnostics, keeping routine output out of an agent's context.
 
@@ -129,6 +132,7 @@ For repository workflow commands added alongside these interfaces, see
 | `permissions install [--harness all\|claude\|codex] [--apply]` | Preview by default; write the managed rules into `.claude/settings.json` and `.codex/rules/` |
 | `images list [target...]` | List the files each image target writes, without rendering |
 | `images build [target...] [--out dir]` | Render image targets from `assets/brand/*.svg`; `--out` redirects one target |
+| `screenshots build [target...] [--out dir] [--json]` | Stage guarded captures and a gallery manifest per the `screenshots` section; `--out` redirects one target |
 | `graph check` | Fail on import cycles and layer violations among the TypeScript sources the `graph` section names; print a JSON report |
 | `init` / `config show` | Create or inspect data-only project policy |
 | `doctor` | Inspect local versions and required CLI flags without running a model |
@@ -316,6 +320,36 @@ outputs with a bundled WebAssembly renderer, so builds need no ImageMagick or
 librsvg and render identically on every machine. See the
 [image reference](images.md) for every setting.
 
+### Screenshots
+
+`screenshots` declares where captured screenshots are staged for a website and
+which projects, themes, and screens it lists:
+
+```json
+{
+  "schemaVersion": 1,
+  "screenshots": {
+    "targets": {
+      "website": {
+        "dir": "packages/website/public/screenshot-gallery",
+        "urlPrefix": "/screenshot-gallery/",
+        "projects": { "web": "Desktop", "mobile": { "label": "Phone", "frame": "phone" } },
+        "screens": ["home", { "name": "notes", "label": "Notes" }]
+      }
+    }
+  }
+}
+```
+
+`agent-tool screenshots build website` copies `.screenshots/<project>/<theme>/<screen>.png`
+into `<dir>/img/` and writes `<dir>/manifest.json`, refusing captures that are
+unfinished, uncommitted, or overlap the copy. The package also exports
+`@a2f0/agent-tool/screenshots/gallery` (the `<screenshot-gallery>` and
+`<screenshot-carousel>` elements), `@a2f0/agent-tool/screenshots/gallery.css`,
+and `@a2f0/agent-tool/screenshots/manifest`. See the
+[screenshot reference](screenshots.md) for every setting, attribute, and
+custom property.
+
 ### Graph
 
 `graph` describes a repository's TypeScript module graph, and `agent-tool graph
@@ -484,6 +518,8 @@ and Debian packaging. Artifact workflows do not create a hosted tap or APT repo.
 - [Design](design.md): component boundaries and implementation choices.
 - [Shared workflows](workflows.md): branch, hook, CI, and shipping contracts.
 - [Images](images.md): brand image sources, targets, and output settings.
+- [Screenshots](screenshots.md): screenshot staging, its capture guard, and the
+  gallery and carousel elements.
 - [Permissions](permissions.md): command classes and the harness rules
   generated from them.
 - [Development](development.md): reproducible validation and release procedures.
