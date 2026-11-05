@@ -343,6 +343,16 @@ describe("<screenshot-gallery>", () => {
     element.step(1); element.select({ screen: "home" });
     expect([changes.length, location.pathname]).toEqual([1, url]);
   });
+
+  test("a listener to the initial change can already step", async () => {
+    const element = document.createElement("screenshot-gallery") as ScreenshotGalleryElement;
+    element.setAttribute("initial-project", "mobile");
+    const screens: string[] = [];
+    element.addEventListener("screenshot-change", event => { screens.push((event as CustomEvent<ScreenshotChangeDetail>).detail.screen); if (screens.length === 1) element.step(1); });
+    element.manifestData = manifest;
+    document.body.append(element);
+    expect([screens, element.screen]).toEqual([["home", "notes"], "notes"]);
+  });
 });
 
 describe("<screenshot-carousel>", () => {

@@ -130,7 +130,8 @@ export function typicalRatio(entries: readonly { width: number; height: number }
  * number, and only the current request may finish: a manifest or failure that
  * arrives for a replaced request, or after disconnecting, is ignored. A
  * rendered gallery is `ready`; while it first renders (`rendering`) its initial
- * selection leaves the URL alone. Only a `ready` gallery takes selections.
+ * selection leaves the URL alone. Loading, failed, and empty galleries ignore
+ * selections.
  */
 export type GalleryPhase =
   | { status: "idle" }
@@ -684,9 +685,8 @@ function defineGallery(): CustomElementConstructor {
     }
 
     select(selection: { project?: string; theme?: string; screen?: string }): void {
-      // Loading, failed, and empty galleries keep the last render's fields, which no longer show.
       const manifest = this.#manifest;
-      if (this.#phase.status !== "ready" || !manifest) return;
+      if (!this.#shows() || !manifest) return;
       const screen = selection.screen ?? this.screen;
       if (selection.project && selection.project !== this.#project && manifest.projects.some(project => project.name === selection.project)) {
         this.#project = selection.project;
@@ -705,7 +705,14 @@ function defineGallery(): CustomElementConstructor {
       if (selection.screen && this.#screens.includes(selection.screen)) this.#select(this.#screens.indexOf(selection.screen), scrollBehavior());
     }
 
-    step(delta: number): void { if (this.#phase.status === "ready") this.#select(this.#index + delta, scrollBehavior()); }
+    step(delta: number): void { if (this.#shows()) this.#select(this.#index + delta, scrollBehavior()); }
+
+    /**
+     * Whether the fields describe what the gallery shows: loading, failed, and empty galleries keep the
+     * last render's fields. A first render shows once its DOM is built, so a listener to its initial
+     * `screenshot-change` can already select.
+     */
+    #shows(): boolean { return this.#phase.status === "ready" || this.#phase.status === "rendering"; }
   };
 }
 
