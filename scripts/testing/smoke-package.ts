@@ -39,7 +39,7 @@ try {
     assert.match(run("logs", compact.log), /installed harness output/);
   } finally { rmSync(path.dirname(compact.log), { recursive: true, force: true }); }
   const skills = JSON.parse(run("skills", "list"));
-  assert.ok(skills.includes("ship-pr") && skills.includes("update-dependencies"));
+  assert.ok(skills.includes("ship-pr") && skills.includes("update-dependencies") && skills.includes("open-issue"));
   assert.equal(JSON.parse(run("config", "show")).schemaVersion, 1);
   assert.equal(JSON.parse(run("skills", "install")).applied, false);
   assert.equal(existsSync(path.join(consumer, ".agents")), false);

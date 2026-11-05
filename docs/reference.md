@@ -468,9 +468,10 @@ OpenCode as independent review providers. There is no `review hermes` adapter
 or Hermes permission installer. Existing read-only review and exact-commit
 guards apply regardless of which harness coordinates the work.
 
-The bundle provides `cross-agent-review`, `open-pr`, `squash-merge`, `ship-pr`,
-`reset`, and `update-dependencies`. They make no package-manager or project-layout
-assumptions:
+The bundle provides `cross-agent-review`, `open-issue`, `open-pr`,
+`squash-merge`, `ship-pr`, `reset`, and `update-dependencies`. `open-issue`
+assigns each issue it opens to the authenticated GitHub user (`--assignee @me`).
+They make no package-manager or project-layout assumptions:
 
 - Keep validation commands, review-bot rules, and deployment checks in the
   project's `AGENTS.md`.
