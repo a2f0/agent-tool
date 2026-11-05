@@ -43,3 +43,30 @@ test("release polling waits for exact workflow and npm propagation, but fails te
   await expect(inspectRelease([run], expected, async () => Response.json({ ...metadata, gitHead: "b".repeat(40) }))).rejects.toThrow("gitHead differs");
   await expect(inspectRelease([run], expected, async () => new Response(null, { status: 503 }))).rejects.toThrow("HTTP 503");
 });
+
+test("a listed version whose tarball is still missing keeps polling, but a mismatched tarball fails at once", async () => {
+  const { archive, metadata } = artifact();
+  const expected = { name: metadata.name, version: metadata.version, commit: "a".repeat(40) };
+  const run: ReleaseRun = { databaseId: 2, headSha: expected.commit, status: "completed", conclusion: "success", url: "https://example.com/run/2" };
+  const read = async () => Response.json(metadata);
+  let tarballs = 0; let serve = (call: number) => call === 1 ? new Response("Not Found", { status: 404 }) : new Response(archive);
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async () => serve(++tarballs), { preconnect() {} }));
+  try {
+    expect(await poll(() => inspectRelease([run], expected, read), { timeoutMs: 1000, intervalMs: 1 })).toMatchObject({ ok: true, ...metadata.dist });
+    expect(tarballs).toBe(2);
+
+    tarballs = 0; serve = call => new Response(null, { status: call % 2 ? 404 : 410 });
+    expect(await verifyTarball(metadata)).toBeNull();
+    await expect(poll(() => inspectRelease([run], expected, read), { timeoutMs: 50, intervalMs: 5 })).rejects.toThrow("Timed out waiting: " + JSON.stringify({ ok: false, reason: "Tarball has not propagated to npm.", run }));
+    expect(tarballs).toBeGreaterThan(2);
+
+    tarballs = 0; serve = () => new Response(archive);
+    const mismatched = { ...metadata, dist: { ...metadata.dist, integrity: "sha512-AAAA" } };
+    await expect(poll(() => inspectRelease([run], expected, async () => Response.json(mismatched)), { timeoutMs: 1000, intervalMs: 1 })).rejects.toThrow("integrity does not match");
+    expect(tarballs).toBe(1);
+
+    tarballs = 0; serve = () => new Response(null, { status: 503 });
+    await expect(poll(() => inspectRelease([run], expected, read), { timeoutMs: 1000, intervalMs: 1 })).rejects.toThrow("Could not download the published tarball.");
+    expect(tarballs).toBe(1);
+  } finally { fetch.mockRestore(); }
+});

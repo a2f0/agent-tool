@@ -354,7 +354,8 @@ agent-tool itself can invoke the source CLI before dependency installation.
 
 Verify waits for the latest workflow run matching the exact merge SHA, then
 polls npm for the requested version. A failed publishing workflow fails
-immediately; propagation delays keep polling. It verifies package identity,
+immediately; propagation delays keep polling, including a listed version whose
+tarball still returns 404 or 410, and time out with the last reason. It verifies package identity,
 registry gitHead when present, SHA-512 tarball integrity, and the package.json
 inside the tarball. Tarballs must come from HTTPS registry.npmjs.org, are capped
 at 100 MiB, and are read with `tar -xzOf` without extraction to disk. `tar` must
