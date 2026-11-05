@@ -125,6 +125,48 @@ export function typicalRatio(entries: readonly { width: number; height: number }
   return ratios.length % 2 ? ratios[middle]! : (ratios[middle - 1]! + ratios[middle]!) / 2;
 }
 
+/**
+ * Where a gallery is in loading its manifest. Each load gets a new request
+ * number, and only the current request may finish: a manifest or failure that
+ * arrives for a replaced request, or after disconnecting, is ignored. A
+ * rendered gallery is `ready`; while it first renders (`rendering`) its initial
+ * selection leaves the URL alone. Only a `ready` gallery takes selections.
+ */
+export type GalleryPhase =
+  | { status: "idle" }
+  | { status: "loading"; request: number }
+  | { status: "failed" }
+  | { status: "empty" }
+  | { status: "rendering" }
+  | { status: "ready" };
+
+export type GalleryEvent =
+  | { type: "load"; request: number }
+  | { type: "loaded"; request: number; empty: boolean }
+  | { type: "fail"; request: number }
+  | { type: "rendered" }
+  | { type: "disconnect" };
+
+/** The only writer of a gallery's phase; an event that does not apply returns the same phase. */
+export function galleryTransition(phase: GalleryPhase, event: GalleryEvent): GalleryPhase {
+  switch (event.type) {
+    case "load":
+      return phase.status === "loading" && phase.request === event.request ? phase : { status: "loading", request: event.request };
+    case "loaded":
+      return phase.status === "loading" && phase.request === event.request ? { status: event.empty ? "empty" : "rendering" } : phase;
+    case "fail":
+      return phase.status === "loading" && phase.request === event.request ? { status: "failed" } : phase;
+    case "rendered":
+      return phase.status === "rendering" ? { status: "ready" } : phase;
+    case "disconnect":
+      return phase.status === "idle" ? phase : { status: "idle" };
+    default:
+      return assertNever(event);
+  }
+}
+
+function assertNever(value: never): never { throw new Error(`Unhandled gallery event: ${JSON.stringify(value)}`); }
+
 export interface ScreenshotChangeDetail { project: string; theme: string; screen: string; index: number; total: number }
 
 export interface ScreenshotGalleryElement extends HTMLElement {
@@ -241,7 +283,8 @@ function defineGallery(): CustomElementConstructor {
     #target: number | null = null;
     #expanded = false;
     #overflow = "";
-    #rendered = false;
+    #phase: GalleryPhase = { status: "idle" };
+    #requests = 0;
     #announced = "";
     #wheel = createWheelStepper();
 
@@ -259,7 +302,7 @@ function defineGallery(): CustomElementConstructor {
 
     #connected = false;
     connectedCallback(): void { this.#connected = true; this.#load(); }
-    disconnectedCallback(): void { this.#connected = false; this.#teardown(); }
+    disconnectedCallback(): void { this.#connected = false; this.#send({ type: "disconnect" }); this.#teardown(); }
     // An upgrade reports initial attributes before connecting; only later changes reload.
     attributeChangedCallback(_name: string, previous: string | null, next: string | null): void {
       if (previous !== next && this.#connected && !this.#data) this.#load();
@@ -272,22 +315,37 @@ function defineGallery(): CustomElementConstructor {
       this.#expanded = false;
     }
 
-    #load(): void {
-      this.#teardown();
-      const abort = new AbortController();
-      this.#abort = abort;
-      this.#rendered = false;
-      this.classList.add("shots-host");
-      if (this.#data) { this.#render(this.#data); return; }
-      const url = this.getAttribute("manifest");
-      status(this, "loading", "Loading screenshots…");
-      if (!url) { this.#fail(new Error("screenshot-gallery needs a manifest attribute.")); return; }
-      loadManifest(url, abort.signal).then(manifest => { if (!abort.signal.aborted) this.#render(manifest); }, (error: unknown) => {
-        if (!abort.signal.aborted) this.#fail(error);
-      });
+    /** Applies `event`; false when it did not apply, so its work must not run. */
+    #send(event: GalleryEvent): boolean {
+      const next = galleryTransition(this.#phase, event);
+      if (next === this.#phase) return false;
+      this.#phase = next;
+      return true;
     }
 
-    #fail(error: unknown): void {
+    #load(): void {
+      this.#teardown();
+      this.#abort = new AbortController();
+      this.#send({ type: "load", request: ++this.#requests });
+      this.classList.add("shots-host");
+      // The work belongs to the request just entered, never to whichever load is merely in progress.
+      if (this.#phase.status === "loading") this.#fetch(this.#phase.request, this.#abort.signal);
+    }
+
+    #fetch(request: number, signal: AbortSignal): void {
+      if (this.#data) { this.#receive(request, this.#data); return; }
+      const url = this.getAttribute("manifest");
+      status(this, "loading", "Loading screenshots…");
+      if (!url) { this.#fail(request, new Error("screenshot-gallery needs a manifest attribute.")); return; }
+      loadManifest(url, signal).then(manifest => this.#receive(request, manifest), (error: unknown) => this.#fail(request, error));
+    }
+
+    #receive(request: number, manifest: ScreenshotManifest): void {
+      if (this.#send({ type: "loaded", request, empty: !manifest.entries.length })) this.#render(manifest);
+    }
+
+    #fail(request: number, error: unknown): void {
+      if (!this.#send({ type: "fail", request })) return;
       status(this, "error", this.getAttribute("error-message") ?? "Screenshots didn't load. Refresh to try again.");
       this.dispatchEvent(new CustomEvent("screenshot-error", { bubbles: true, detail: { error } }));
     }
@@ -296,7 +354,7 @@ function defineGallery(): CustomElementConstructor {
 
     #render(manifest: ScreenshotManifest): void {
       this.#manifest = manifest;
-      if (!manifest.entries.length) { status(this, "empty", this.getAttribute("empty-message") ?? "Screenshots aren't available yet."); return; }
+      if (this.#phase.status === "empty") { status(this, "empty", this.getAttribute("empty-message") ?? "Screenshots aren't available yet."); return; }
       const deepLink = typeof location === "undefined" ? undefined : parseScreenshotPath(this.#basePath(), location.pathname);
       const requestedProject = this.getAttribute("initial-project") ?? deepLink?.project;
       const requestedScreen = this.getAttribute("initial-screen") ?? deepLink?.screen;
@@ -357,7 +415,7 @@ function defineGallery(): CustomElementConstructor {
       }
       window.addEventListener("keydown", (event: KeyboardEvent) => this.#key(event), { signal });
       this.#renderProject(screen);
-      this.#rendered = true;
+      this.#send({ type: "rendered" });
     }
 
     #key(event: KeyboardEvent): void {
@@ -564,7 +622,7 @@ function defineGallery(): CustomElementConstructor {
       const key = `${this.#project} ${this.#theme} ${name}`;
       if (key === this.#announced) return;
       this.#announced = key;
-      if (this.#rendered || !initial) this.#syncUrl(name);
+      if (this.#phase.status === "ready" || !initial) this.#syncUrl(name);
       this.dispatchEvent(new CustomEvent<ScreenshotChangeDetail>("screenshot-change", { bubbles: true, detail: { project: this.#project, theme: this.#theme, screen: name, index: this.#index, total: count } }));
     }
 
@@ -626,8 +684,9 @@ function defineGallery(): CustomElementConstructor {
     }
 
     select(selection: { project?: string; theme?: string; screen?: string }): void {
+      // Loading, failed, and empty galleries keep the last render's fields, which no longer show.
       const manifest = this.#manifest;
-      if (!manifest || !this.#root) return;
+      if (this.#phase.status !== "ready" || !manifest) return;
       const screen = selection.screen ?? this.screen;
       if (selection.project && selection.project !== this.#project && manifest.projects.some(project => project.name === selection.project)) {
         this.#project = selection.project;
@@ -646,7 +705,7 @@ function defineGallery(): CustomElementConstructor {
       if (selection.screen && this.#screens.includes(selection.screen)) this.#select(this.#screens.indexOf(selection.screen), scrollBehavior());
     }
 
-    step(delta: number): void { this.#select(this.#index + delta, scrollBehavior()); }
+    step(delta: number): void { if (this.#phase.status === "ready") this.#select(this.#index + delta, scrollBehavior()); }
   };
 }
 

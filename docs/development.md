@@ -26,6 +26,15 @@ requirements. Reference documents hold reusable command contracts and maintenanc
 procedures. Run-specific inventories, review findings, timings, and publish
 receipts belong in the PR; private logs and generated artifacts remain local.
 
+### State machines
+
+Code that moves through named phases keeps them in one `status`-tagged union
+with a single pure transition function beside it, exported for tests:
+`groupTransition` for run-group reports and `galleryTransition` for the
+gallery's manifest load. Events that do not apply return the same state, and
+asynchronous work carries a request number so only the current request can
+finish. Persisted and printed shapes keep their field order.
+
 ### Module layering
 
 Modules import only from their own layer or a lower one, and never in a cycle,

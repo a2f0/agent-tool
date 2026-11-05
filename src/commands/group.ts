@@ -41,6 +41,63 @@ export function parseGroup(source: string): { label: string; steps: Step[] } {
   }
   return plan;
 }
+/** One step of a run-group report: only a finished step has a receipt, and a failed one lacks it only when its runner could not start. */
+export type GroupStep =
+  | { label: string; status: "pending" | "running"; receipt: null }
+  | { label: string; status: "passed" | "failed"; receipt: RunReceipt | null };
+
+/**
+ * A run-group report as saved and printed. Field order is the report's JSON
+ * order. `endedAt` is set exactly when the group is no longer running; `after`
+ * stays null when the final source state could not be read.
+ */
+export type GroupRecord = {
+  schemaVersion: 1; id: string; label: string; startedAt: string; endedAt: string | null; durationMs: number;
+  status: "running" | "passed" | "failed"; before: SourceState; after: SourceState | null; steps: GroupStep[]; error: string | null;
+};
+
+export type GroupEvent =
+  | { type: "stepStarted"; index: number }
+  | { type: "stepFinished"; index: number; receipt: RunReceipt }
+  | { type: "failed"; error: string }
+  | { type: "finished"; passed: boolean; endedAt: string; durationMs: number }
+  | { type: "settled"; after: SourceState }
+  | { type: "settleFailed"; error: string };
+
+/**
+ * The only writer of a run-group report. Events outside their state are
+ * ignored: a step starts only from pending, finishes only while running, and
+ * nothing but the final source read changes a finished group. A failure while
+ * a step runs (its runner could not start) finishes that step as failed with
+ * no receipt, so a finished report never shows a step still running.
+ */
+export function groupTransition(record: GroupRecord, event: GroupEvent): GroupRecord {
+  const step = (index: number, next: GroupStep) => ({ ...record, steps: record.steps.map((item, at) => at === index ? next : item) });
+  switch (event.type) {
+    case "stepStarted": {
+      const current = record.steps[event.index];
+      return record.status === "running" && current?.status === "pending" ? step(event.index, { label: current.label, status: "running", receipt: null }) : record;
+    }
+    case "stepFinished": {
+      const current = record.steps[event.index];
+      return record.status === "running" && current?.status === "running" ? step(event.index, { label: current.label, status: event.receipt.status === "passed" ? "passed" : "failed", receipt: event.receipt }) : record;
+    }
+    case "failed":
+      if (record.status !== "running") return record;
+      return { ...record, steps: record.steps.map(item => item.status === "running" ? { label: item.label, status: "failed", receipt: null } : item), error: event.error };
+    case "finished":
+      return record.status === "running" ? { ...record, status: event.passed ? "passed" : "failed", endedAt: event.endedAt, durationMs: event.durationMs } : record;
+    case "settled":
+      return record.status !== "running" && record.after === null ? { ...record, after: event.after } : record;
+    case "settleFailed":
+      return record.status !== "running" && record.after === null ? { ...record, status: "failed", error: record.error ?? event.error } : record;
+    default:
+      return assertNever(event);
+  }
+}
+
+function assertNever(value: never): never { throw new Error(`Unhandled run-group event: ${JSON.stringify(value)}`); }
+
 export async function runGroup(args: string[]): Promise<number> {
   assert(args.length === 1, "Usage: run-group <plan.json>");
   const plan = parseGroup(readFileSync(args[0]!, "utf8"));
@@ -49,21 +106,21 @@ export async function runGroup(args: string[]): Promise<number> {
   const id = `${new Date().toISOString().replaceAll(":", "-")}-${randomUUID()}`;
   const report = path.join(directory, `${id}.json`);
   const started = performance.now();
-  const record = { schemaVersion: 1, id, label: plan.label, startedAt: new Date().toISOString(), endedAt: null as string | null, durationMs: 0, status: "running", before, after: null as SourceState | null, steps: plan.steps.map(step => ({ label: step.label, status: "pending", receipt: null as RunReceipt | null })), error: null as string | null };
+  let record: GroupRecord = { schemaVersion: 1, id, label: plan.label, startedAt: new Date().toISOString(), endedAt: null, durationMs: 0, status: "running", before, after: null, steps: plan.steps.map(step => ({ label: step.label, status: "pending", receipt: null })), error: null };
+  const send = (event: GroupEvent) => { record = groupTransition(record, event); };
   save(report, record);
   let code = 0;
   try {
     for (const [index, step] of plan.steps.entries()) {
-      record.steps[index]!.status = "running"; save(report, record);
-      code = await runCommand(["--label", step.label, "--", ...step.command], receipt => { record.steps[index]!.receipt = receipt; record.steps[index]!.status = receipt.status; save(report, record); }, { quiet: true, reraiseChildSignal: false });
+      send({ type: "stepStarted", index }); save(report, record);
+      code = await runCommand(["--label", step.label, "--", ...step.command], receipt => { send({ type: "stepFinished", index, receipt }); save(report, record); }, { quiet: true, reraiseChildSignal: false });
       const after = sourceState();
       assert(JSON.stringify(after) === JSON.stringify(before), "Source state changed during validation; results do not establish the current checkout.");
       if (code !== 0) break;
     }
-  } catch (error) { code = 1; record.error = (error as Error).message; }
-  record.status = code === 0 ? "passed" : "failed";
-  record.endedAt = new Date().toISOString(); record.durationMs = Math.round(performance.now() - started);
-  try { record.after = sourceState(); } catch (error) { code = 1; record.status = "failed"; record.error ??= (error as Error).message; }
+  } catch (error) { code = 1; send({ type: "failed", error: (error as Error).message }); }
+  send({ type: "finished", passed: code === 0, endedAt: new Date().toISOString(), durationMs: Math.round(performance.now() - started) });
+  try { send({ type: "settled", after: sourceState() }); } catch (error) { code = 1; send({ type: "settleFailed", error: (error as Error).message }); }
   save(report, record);
   output({ ...record, report }); return code;
 }

@@ -286,6 +286,63 @@ describe("<screenshot-gallery>", () => {
       expect(String(errors[0])).toContain("(404)");
     } finally { globalThis.fetch = original; }
   });
+
+  test("the load phase changes only through its transition, and only the current request finishes", async () => {
+    const { galleryTransition } = await gallery();
+    const loadingA = { status: "loading", request: 1 } as const, loadingB = { status: "loading", request: 2 } as const;
+    expect(galleryTransition({ status: "idle" }, { type: "load", request: 1 })).toEqual(loadingA);
+    expect(galleryTransition(loadingA, { type: "loaded", request: 1, empty: false })).toEqual({ status: "rendering" });
+    expect(galleryTransition(loadingA, { type: "loaded", request: 1, empty: true })).toEqual({ status: "empty" });
+    expect(galleryTransition(loadingA, { type: "fail", request: 1 })).toEqual({ status: "failed" });
+    expect(galleryTransition({ status: "rendering" }, { type: "rendered" })).toEqual({ status: "ready" });
+    // A reload replaces the request from any phase, including another load in progress.
+    for (const phase of [loadingA, { status: "ready" }, { status: "failed" }, { status: "empty" }] as const) expect(galleryTransition(phase, { type: "load", request: 2 })).toEqual(loadingB);
+    // start(A) -> reset -> start(B) -> succeed(A) leaves B loading; A's failure after a disconnect is ignored too.
+    const replaced = [{ type: "load", request: 1 }, { type: "disconnect" }, { type: "load", request: 2 }, { type: "loaded", request: 1, empty: false }, { type: "fail", request: 1 }] as const;
+    expect(replaced.reduce(galleryTransition, { status: "idle" } as Parameters<typeof galleryTransition>[0])).toEqual(loadingB);
+    expect(galleryTransition({ status: "idle" }, { type: "loaded", request: 1, empty: false })).toEqual({ status: "idle" });
+    // Each phase ignores events that do not apply to it.
+    for (const phase of [{ status: "ready" }, { status: "failed" }, { status: "empty" }] as const) for (const event of [{ type: "loaded", request: 1, empty: false }, { type: "fail", request: 1 }, { type: "rendered" }] as const) expect(galleryTransition(phase, event)).toBe(phase);
+    expect(galleryTransition(loadingA, { type: "rendered" })).toBe(loadingA);
+  });
+
+  test("a replaced manifest request starts its own fetch, and the old one's late response is ignored", async () => {
+    const original = globalThis.fetch;
+    try {
+      const pending = new Map<string, (response: Response) => void>();
+      globalThis.fetch = ((url: string) => new Promise<Response>(done => { pending.set(url, done); })) as unknown as typeof fetch;
+      const element = document.createElement("screenshot-gallery") as ScreenshotGalleryElement;
+      element.setAttribute("manifest", "/a.json");
+      document.body.append(element);
+      element.setAttribute("manifest", "/b.json");
+      // Replacing a load in progress starts the new request's fetch.
+      expect([...pending.keys()]).toEqual(["/a.json", "/b.json"]);
+      pending.get("/a.json")!(new Response(JSON.stringify(manifest)));
+      await new Promise(done => setTimeout(done, 0));
+      expect($(element, ".shots-status").dataset.state).toBe("loading");
+      pending.get("/b.json")!(new Response(JSON.stringify(manifest)));
+      await new Promise(done => setTimeout(done, 0));
+      expect($(element, ".shots-gallery").dataset.state).toBe("ready");
+    } finally { globalThis.fetch = original; }
+  });
+
+  test("a gallery that no longer shows a render ignores step and select", async () => {
+    const element = await mount({ "initial-project": "mobile" });
+    const changes: ScreenshotChangeDetail[] = [];
+    element.addEventListener("screenshot-change", event => changes.push((event as CustomEvent<ScreenshotChangeDetail>).detail));
+    element.step(1);
+    expect(changes.length).toBe(1);
+    const url = location.pathname;
+    // Failed: no manifest data and no manifest attribute.
+    element.manifestData = null;
+    expect($(element, ".shots-status").dataset.state).toBe("error");
+    element.step(1); element.select({ screen: "home" }); element.select({ project: "web", theme: "dark" });
+    // Empty: a manifest without captures.
+    element.manifestData = { schemaVersion: 1, projects: [], themes: [], screens: [], entries: [], capture: null };
+    expect($(element, ".shots-status").dataset.state).toBe("empty");
+    element.step(1); element.select({ screen: "home" });
+    expect([changes.length, location.pathname]).toEqual([1, url]);
+  });
 });
 
 describe("<screenshot-carousel>", () => {
