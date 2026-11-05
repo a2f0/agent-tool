@@ -6,12 +6,19 @@ import { assert, flag, json, oid, option, output, poll, repository, timeoutOptio
 
 function packageName(name: unknown): asserts name is string { assert(typeof name === "string" && /^(?:@[a-z0-9._-]+\/)?[a-z0-9][a-z0-9._-]*$/.test(name), "Invalid npm package name."); }
 export interface ReleaseRun { databaseId: number; status: string; conclusion: string; headSha: string; url: string }
-export async function verifyTarball(metadata: { name: string; version: string; dist: { tarball: string; integrity: string } }): Promise<{ tarball: string; integrity: string }> {
+/**
+ * Downloads and checks the published tarball. Resolves null only when the
+ * registry answers 404 or 410: npm can list a version minutes before its
+ * tarball is served, so absence is a propagation delay. Any other failure,
+ * including a tarball that downloads but does not match, throws.
+ */
+export async function verifyTarball(metadata: { name: string; version: string; dist: { tarball: string; integrity: string } }): Promise<{ tarball: string; integrity: string } | null> {
   const url = new URL(metadata.dist.tarball);
   assert(url.protocol === "https:" && url.hostname === "registry.npmjs.org", "Expected an HTTPS npm registry tarball.");
   const integrity = /^sha512-([A-Za-z0-9+/]+={0,2})$/.exec(metadata.dist.integrity);
   assert(integrity, "Package must have SHA-512 tarball integrity.");
   const response = await fetch(url, { signal: AbortSignal.timeout(60_000), redirect: "error" });
+  if (response.status === 404 || response.status === 410) { await response.body?.cancel(); return null; }
   assert(response.ok && response.body, "Could not download the published tarball.");
   const chunks: Uint8Array[] = []; let size = 0;
   for await (const chunk of response.body) { size += chunk.length; assert(size <= 100 * 1024 * 1024, "Tarball exceeds the 100 MiB verification limit."); chunks.push(chunk); }
@@ -39,6 +46,7 @@ export async function inspectRelease(
   assert(metadata.name === expected.name && metadata.version === expected.version, "Registry returned a different package version.");
   assert(!metadata.gitHead || metadata.gitHead === expected.commit, "Registry gitHead differs from the publishing merge commit.");
   const artifact = await checkArtifact(metadata);
+  if (!artifact) return { done: false, value: { ok: false, reason: "Tarball has not propagated to npm.", run } };
   return { done: true, value: { ok: true, reason: "Workflow and published tarball verified.", run, ...artifact, gitHead: metadata.gitHead ?? null } };
 }
 
