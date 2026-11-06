@@ -107,6 +107,24 @@ describe("buildReviewPrompt", () => {
     expect(prompt).not.toContain("You cannot run commands");
   });
 
+  test("asks every reviewer to flag implicit state machines", () => {
+    for (const accessNote of [CLAUDE_ACCESS_NOTE, CODEX_ACCESS_NOTE]) {
+      const prompt = buildReviewPrompt({ ...params, accessNote });
+      const instructions = prompt.slice(prompt.indexOf("## Instructions"));
+
+      expect(instructions).toContain(
+        "Flag implicit state machines the diff adds or extends",
+      );
+      expect(instructions).toContain("without a request tag or cleanup guard");
+      expect(instructions).toContain(
+        "Rate it Major when an impossible combination or stale result is reachable",
+      );
+      expect(instructions).toContain(
+        "Do not flag independent toggles, single booleans, or closed unions with one writer",
+      );
+    }
+  });
+
   test("tolerates missing review instructions", () => {
     const prompt = buildReviewPrompt({ ...params, reviewInstructions: "" });
 

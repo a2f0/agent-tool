@@ -497,7 +497,10 @@ checks, preview limits, the Terraform plan guard, and maintaining upgrade record
 ## Review guarantees and limits
 
 Reviews run against exact base and head snapshots. Review policy comes from the
-base commit. Files are materialized from raw Git blobs with collision and path
+base commit's `REVIEW.md` or `AGENTS.md`; the prompt adds shared instructions for
+every reviewer: severity levels, security, type safety, and missing tests, and
+implicit state machines the diff adds or extends (Major when an impossible
+combination or stale async result is reachable). Files are materialized from raw Git blobs with collision and path
 validation, and diffs are text-only without external drivers. Snapshots are
 cleaned up, output must end in a verdict, and an incomplete but successful run
 is retried once. Helper Git operations disable hooks and replace objects.
