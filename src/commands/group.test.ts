@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { groupTransition, type GroupEvent, type GroupRecord } from "./group";
@@ -131,3 +131,24 @@ for (const [phase, gitCalls, steps] of [["after a step", 2, ["passed", "pending"
     expect([saved.status, saved.error, saved.steps.map((step: { status: string }) => step.status)]).toEqual(["failed", "Interrupted by SIGTERM.", steps]);
   }, 30_000);
 }
+
+test("a report that cannot be saved removes the group's signal listeners", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "group-tests-"));
+  try {
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", AGENT_TOOL_CONFIG: "" };
+    for (const args of [["init", "-q", "-b", "main"], ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "chore: initialize"]]) execFileSync("git", args, { cwd: root, env });
+    const runs = path.join(root, ".git", "agent-tool", "runs");
+    mkdirSync(runs, { recursive: true }); chmodSync(runs, 0o500);
+    const plan = path.join(root, ".git", "plan.json");
+    writeFileSync(plan, JSON.stringify({ label: "verify", steps: [{ label: "first", command: ["true"] }] }));
+    const source = `import { runGroup } from ${JSON.stringify(path.join(import.meta.dir, "group.ts"))};
+const count = () => ["SIGINT", "SIGTERM", "SIGHUP"].map(name => process.listenerCount(name)).join(",");
+const before = count();
+try { await runGroup([${JSON.stringify(plan)}]); console.log("saved"); } catch (error) { console.log(JSON.stringify({ before, after: count(), error: error.code })); }`;
+    const result = spawnSync(process.execPath, ["-e", source], { cwd: root, env, encoding: "utf8", timeout: 15000 });
+    expect(JSON.parse(result.stdout)).toEqual({ before: "0,0,0", after: "0,0,0", error: "EACCES" });
+  } finally {
+    chmodSync(path.join(root, ".git", "agent-tool", "runs"), 0o700);
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 20_000);

@@ -129,9 +129,9 @@ export async function runGroup(args: string[]): Promise<number> {
   // Handlers run only between tasks, and a signal still queued when they are removed is lost.
   // Fingerprinting and saving are synchronous, so yield to let a pending signal apply first.
   const handleSignals = () => new Promise(resolve => setImmediate(resolve));
-  save(report, record);
   let code = 0;
   try {
+    save(report, record);
     try {
       for (const [index, step] of plan.steps.entries()) {
         await handleSignals();
