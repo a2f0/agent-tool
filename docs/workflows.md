@@ -219,12 +219,11 @@ The read-only preflight additionally checks clean local state, exact local/PR
 HEAD and branch, OPEN/non-draft/MERGEABLE/CLEAN state, no queued/automatic merge,
 unchanged live base, base ancestry, configured strict rulesets, and explicit
 package version policy. It returns the checked head/base/PR identifiers.
-`pr merge` (and legacy `squashMerge` given a reviewed HEAD) runs the same
-preflight itself before sending the merge, against the base branch it fetches
-at that moment, so a skipped, failed, or stale preflight never leads to a merge.
-Merge still uses the existing atomic expected-HEAD mutation; no read-only check
-can make GitHub's base comparison atomic. Neither command gates on unresolved
-review threads: declined findings stay unresolved by policy, so read them with
+`pr merge` runs the same preflight itself before sending the merge, against
+the base branch it fetches at that moment, so a skipped, failed, or stale
+preflight never leads to a merge. Merge still uses the existing atomic
+expected-HEAD mutation; no read-only check can make GitHub's base comparison
+atomic. Neither preflight nor merge gates on unresolved review threads: declined findings stay unresolved by policy, so read them with
 `pr threads list`.
 
 Thread listing paginates both threads and comments. Replies use the original

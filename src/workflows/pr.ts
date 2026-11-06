@@ -89,18 +89,17 @@ export function preflight(expectedHead: string, baseBranch: string, baseOid: str
 /**
  * Merge a reviewed HEAD only after every preflight gate passes against the
  * freshly fetched live base: a skipped, failed, or stale preflight run never
- * leads to a merge. Without a reviewed HEAD (legacy manual form) only the
- * merge helper's own checks apply.
+ * leads to a merge. The reviewed HEAD and base branch are required, so no
+ * merge path skips preflight.
  */
-export function mergeReviewedHead(rootDir: string, subject?: string, expectedHead?: string, baseBranch?: string): number {
-  if (!expectedHead) return squashMerge(rootDir, subject, expectedHead, baseBranch);
+export function mergeReviewedHead(rootDir: string, subject: string | undefined, expectedHead: string, baseBranch: string): number {
+  assert(!!expectedHead && !!baseBranch, "Merge requires a reviewed HEAD and a base branch.");
   const identity = resolvePr();
-  const branch = baseBranch ?? resolvePullRequestMergeTarget(identity).baseRefName;
-  const baseOid = resolveFreshBaseRef(identity.repo, branch);
-  try { preflight(expectedHead, branch, baseOid); }
-  catch (error) { throw new Error(`Refusing to merge: preflight failed against live ${branch} ${baseOid}: ${(error as Error).message}`); }
-  // Bind the merge to the branch that passed preflight, inferred or given, so a retarget in between is refused.
-  return squashMerge(rootDir, subject, expectedHead, branch);
+  const baseOid = resolveFreshBaseRef(identity.repo, baseBranch);
+  try { preflight(expectedHead, baseBranch, baseOid); }
+  catch (error) { throw new Error(`Refusing to merge: preflight failed against live ${baseBranch} ${baseOid}: ${(error as Error).message}`); }
+  // Bind the merge to the branch that passed preflight, so a retarget in between is refused.
+  return squashMerge(rootDir, subject, expectedHead, baseBranch);
 }
 
 interface Comment { id: string; databaseId: number; body: string; url: string; author: { login: string } | null }

@@ -88,7 +88,7 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   --help | --version
 
 Legacy actions remain available: solicitClaudeCodeReview, solicitCodexReview,
-solicitOpencodeReview, openPr, squashMerge, bumpVersions, checkVersions,
+solicitOpencodeReview, openPr, bumpVersions, checkVersions,
 resolveVersionConflicts. A successful review exit means a usable review was
 returned; inspect VERDICT before shipping. Skill install previews unless --apply.
 `;

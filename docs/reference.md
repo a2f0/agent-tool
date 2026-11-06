@@ -144,8 +144,9 @@ For repository workflow commands added alongside these interfaces, see
 Global options are `--repo <directory>` and `--config <file>`. Effort accepts
 `low`, `medium`, `high`, `xhigh`, and `max`; the default is `xhigh` for Claude
 and `high` for Codex and OpenCode. Legacy camelCase action names, listed in
-`--help`, remain available. Legacy `squashMerge` also accepts a manual form
-without a reviewed HEAD, which skips the preflight gates; prefer `pr merge`.
+`--help`, remain available. The legacy `squashMerge` action was removed, since
+its manual form skipped the preflight gates; it exits non-zero and names
+`pr merge <subject-or-empty> <reviewed-head-oid> <base-branch>`.
 
 A successful review exit means a complete review was returned, ending in a
 `VERDICT:` line. BLOCKER or MAJOR findings still require action. The review

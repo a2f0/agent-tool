@@ -14,7 +14,6 @@ function actionsWith(overrides: Partial<AgentToolActions>): AgentToolActions {
     solicitClaudeCodeReview: () => 0,
     solicitCodexReview: () => 0,
     solicitOpencodeReview: () => 0,
-    squashMerge: () => 0,
     ...overrides,
   };
 }
@@ -57,33 +56,23 @@ describe("runAgentToolAction", () => {
       ),
     ).toThrow("at most 0");
   });
-  test("exposes squashMerge with every reviewed-merge positional", () => {
-    let received: readonly (string | undefined)[] = [];
-    const actions = actionsWith({
-      squashMerge: (rootDir, subject, expectedHeadSha, expectedBaseRef) => {
-        received = [rootDir, subject, expectedHeadSha, expectedBaseRef];
-        return 17;
-      },
-    });
-
-    expect(
-      runAgentToolAction(
-        "/repo",
-        ["squashMerge", "", "abc123", "main"],
-        actions,
-      ),
-    ).toBe(17);
-    expect(received).toEqual(["/repo", "", "abc123", "main"]);
-  });
-
-  test("rejects flags or extra positionals that squashMerge cannot consume", () => {
-    expect(() =>
-      runAgentToolAction(
-        "/repo",
-        ["squashMerge", "", "abc123", "main", "--keep-branch"],
-        actionsWith({}),
-      ),
-    ).toThrow("squashMerge accepts at most 3 positional arguments");
+  test("refuses the removed squashMerge action and names pr merge", () => {
+    const writes: string[] = [];
+    const original = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      expect(
+        runAgentToolAction("/repo", ["squashMerge", "", "abc123", "main"], actionsWith({})),
+      ).toBe(1);
+    } finally {
+      process.stderr.write = original;
+    }
+    expect(writes.join("")).toBe(
+      "squashMerge was removed; use agent-tool pr merge <subject-or-empty> <reviewed-head-oid> <base-branch>.\n",
+    );
   });
 
   test("exposes the other public agent-tool functions", () => {

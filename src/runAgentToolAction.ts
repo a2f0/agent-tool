@@ -4,10 +4,9 @@ import { solicitCodexReview } from "./review/solicitCodexReview";
 import { solicitOpencodeReview } from "./review/solicitOpencodeReview";
 import { bumpVersions, checkVersions } from "./version/bumpVersions";
 import { resolveVersionConflicts } from "./version/resolveVersionConflicts";
-import { mergeReviewedHead } from "./workflows/pr";
 
 const AGENT_TOOL_USAGE =
-  "Usage: agent-tool <solicitClaudeCodeReview|solicitCodexReview|solicitOpencodeReview|openPr|squashMerge|bumpVersions|checkVersions|resolveVersionConflicts> [args]\n";
+  "Usage: agent-tool <solicitClaudeCodeReview|solicitCodexReview|solicitOpencodeReview|openPr|bumpVersions|checkVersions|resolveVersionConflicts> [args]\n";
 
 export interface AgentToolActions {
   readonly bumpVersions: (rootDir: string, baseOid?: string) => number;
@@ -20,12 +19,6 @@ export interface AgentToolActions {
   ) => number | Promise<number>;
   readonly solicitCodexReview: (rootDir: string, effort?: string) => number | Promise<number>;
   readonly solicitOpencodeReview: (rootDir: string, effort?: string) => number | Promise<number>;
-  readonly squashMerge: (
-    rootDir: string,
-    subject?: string,
-    expectedHeadSha?: string,
-    expectedBaseRef?: string,
-  ) => number;
 }
 
 const defaultActions: AgentToolActions = {
@@ -36,8 +29,6 @@ const defaultActions: AgentToolActions = {
   solicitClaudeCodeReview,
   solicitCodexReview,
   solicitOpencodeReview,
-  // A reviewed HEAD merges only after every preflight gate passes.
-  squashMerge: mergeReviewedHead,
 };
 
 function assertMaximumPositionals(
@@ -59,7 +50,7 @@ export function runAgentToolAction(
   actions: AgentToolActions = defaultActions,
 ): number | Promise<number> {
   const [action, ...positionals] = args;
-  const [first, second, third] = positionals;
+  const [first] = positionals;
   switch (action) {
     case "bumpVersions": {
       assertMaximumPositionals(action, positionals, 1);
@@ -89,10 +80,12 @@ export function runAgentToolAction(
       assertMaximumPositionals(action, positionals, 1);
       return actions.openPr(rootDir, first);
     }
-    case "squashMerge": {
-      assertMaximumPositionals(action, positionals, 3);
-      return actions.squashMerge(rootDir, first, second, third);
-    }
+    case "squashMerge":
+      // Removed: its optional reviewed head let a merge skip preflight.
+      process.stderr.write(
+        "squashMerge was removed; use agent-tool pr merge <subject-or-empty> <reviewed-head-oid> <base-branch>.\n",
+      );
+      return 1;
     default:
       process.stderr.write(`Unknown action: ${action ?? "(none)"}\n`);
       process.stderr.write(AGENT_TOOL_USAGE);

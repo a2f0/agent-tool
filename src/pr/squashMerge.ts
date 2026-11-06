@@ -97,7 +97,7 @@ export function parsePullRequestMergeTarget(
     recordField(pullRequest, "autoMergeRequest") !== null
   ) {
     throw new Error(
-      "Pull request already has a queued or automatic merge; cancel it before running squashMerge.",
+      "Pull request already has a queued or automatic merge; cancel it before running pr merge.",
     );
   }
   if (expectedBaseRef !== undefined && baseRefName !== expectedBaseRef) {
