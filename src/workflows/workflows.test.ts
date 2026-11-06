@@ -7,7 +7,7 @@ import { DEFAULT_CONFIG, parseConfig } from "../config";
 import { branchErrors } from "./branch";
 import { binaryPaths, evaluateGate, signatureAccepted } from "./checks";
 import { parseGroup } from "../commands/group";
-import { timeoutOptions } from "./core";
+import { checkoutRoot, timeoutOptions } from "./core";
 
 const cli = path.resolve(import.meta.dir, "../index.ts");
 const directories: string[] = [];
@@ -423,6 +423,22 @@ test("release verify CLI polls the selected workflow and commit before verifying
   writeFileSync(preload, `import {readFileSync} from 'node:fs';import {createHash} from 'node:crypto';const archive=readFileSync(${JSON.stringify(archive)});let metadataCalls=0;globalThis.fetch=async(url)=>{if(String(url).endsWith('.tgz'))return new Response(archive);if(metadataCalls++===0)return new Response(null,{status:404});return Response.json({...${JSON.stringify(manifest)},gitHead:${JSON.stringify(f.commit)},dist:{tarball:'https://registry.npmjs.org/package.tgz',integrity:'sha512-'+createHash('sha512').update(archive).digest('base64')}});};`);
   const result = spawnSync(process.execPath, ["--preload", preload, cli, "release", "verify", manifest.name, manifest.version, f.commit, "--workflow", "Publish fixture", "--timeout", "10", "--interval", "1"], { cwd: f.root, env: { ...f.env, PATH: f.bin + path.delimiter + process.env.PATH, API_STATE: f.stateFile }, encoding: "utf8", timeout: 15000 }); if (result.status !== 0) throw new Error(result.stderr); expect(JSON.parse(result.stdout).ok).toBe(true); expect(Number(readFileSync(f.stateFile + ".polls", "utf8"))).toBe(3);
   const calls = readFileSync(f.stateFile + ".calls", "utf8").trim().split("\n").map(line => JSON.parse(line)); expect(calls.filter(call => call[0] === "run")).toEqual(Array(3).fill(["run", "list", "-R", "o/r", "--workflow", "Publish fixture", "--commit", f.commit, "--limit", "100", "--json", "databaseId,status,conclusion,headSha,url"]));
+});
+
+test("a nested checkout whose .git Git cannot open never resolves to the enclosing repository", () => {
+  // A workspace keeps checkouts inside its own repository; Git skips a .git without HEAD and finds the outer one.
+  const f = githubFixture(); const nested = path.join(f.root, "checkouts/inner"); mkdirSync(path.join(nested, ".git"), { recursive: true });
+  expect(execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: nested, env: f.env, encoding: "utf8" }).trim()).toBe(realpathSync(f.root));
+  const run = (args: string[]) => spawnSync(process.execPath, [cli, ...args], { cwd: nested, env: { ...f.env, PATH: f.bin + path.delimiter + process.env.PATH, API_STATE: f.stateFile }, encoding: "utf8", timeout: 15000 });
+  for (const args of [["release", "verify", "@owner/package", "1.2.3", f.commit, "--workflow", "Publish fixture", "--timeout", "0"], ["repo", "context"]]) {
+    const result = run(args); expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`${realpathSync(nested)} has its own .git, but Git resolved the enclosing repository ${realpathSync(f.root)}`);
+  }
+  expect(existsSync(f.stateFile + ".calls")).toBe(false);
+  // A readable nested checkout is its own repository.
+  rmSync(path.join(nested, ".git"), { recursive: true }); execFileSync("git", ["init", "-q"], { cwd: nested, env: f.env });
+  expect(checkoutRoot(nested)).toBe(realpathSync(nested));
+  expect(checkoutRoot(f.root)).toBe(realpathSync(f.root));
 });
 
 test("signed commit checks ignore signature display without weakening trust or message policy", () => {

@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, writeSync } from "node:fs";
 import path from "node:path";
 import { DEFAULT_CONFIG, loadConfig } from "./config";
@@ -28,6 +27,7 @@ import { hooksCommand } from "./workflows/hooks";
 import { repoCommand, policyCommand, toolchainCommand } from "./workflows/repository";
 import { prWorkflowCommand } from "./workflows/pr";
 import { releaseCommand } from "./release/commands";
+import { checkoutRoot } from "./workflows/core";
 import { procCommand, teardownCommand } from "./processes/commands";
 
 export const HELP = `agent-tool ${metadata.version}
@@ -96,9 +96,7 @@ returned; inspect VERDICT before shipping. Skill install previews unless --apply
 
 function output(value: unknown): void { writeSync(1, `${JSON.stringify(value, null, 2)}\n`); }
 function usage(condition: boolean, message: string): void { if (!condition) throw new Error(message); }
-function gitRoot(): string {
-  return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
-}
+function gitRoot(): string { return checkoutRoot(); }
 
 export function main(argv = process.argv.slice(2)): number | Promise<number> {
   const args = [...argv];
