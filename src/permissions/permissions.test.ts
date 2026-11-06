@@ -24,7 +24,7 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
   // Claude Code prompts for explicit ask rules even in bypassPermissions mode, so none are written.
   expect(rules.ask).toEqual([]);
   for (const invocation of ["bun run agent-tool", "node_modules/.bin/agent-tool", "agent-tool"]) {
-    for (const command of ["bun add left-pad@1.3.0", "pr merge 'feat: x' abc main", "squashMerge 'feat: x' abc main", "permissions install --apply", "run --label x -- rm -rf tmp"]) {
+    for (const command of ["bun add left-pad@1.3.0", "pr merge 'feat: x' abc main", "permissions install --apply", "run --label x -- rm -rf tmp"]) {
       expect({ command: `${invocation} ${command}`, allowed: allowed(rules.allow, `${invocation} ${command}`) }).toEqual({ command: `${invocation} ${command}`, allowed: false });
     }
     expect(allowed(rules.allow, `${invocation} bun update left-pad`)).toBe(true);

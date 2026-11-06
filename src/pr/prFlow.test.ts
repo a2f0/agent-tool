@@ -92,10 +92,10 @@ if (args[0] === "repo" && args[1] === "view") {
     writeFileSync("mutation.json", JSON.stringify(args));
     reply({data:{mergePullRequest:{pullRequest:{state:"MERGED"}}}});
   } else {
-    // retarget-late moves the PR to staging from the third target read on, after preflight.
+    // retarget-late moves the PR to staging from the second target read on, after preflight.
     const reads = (existsSync("target-reads") ? Number(readFileSync("target-reads", "utf8")) : 0) + 1;
     writeFileSync("target-reads", String(reads));
-    const retargeted = scenario === "retargeted" || (scenario === "retarget-late" && reads >= 3);
+    const retargeted = scenario === "retargeted" || (scenario === "retarget-late" && reads >= 2);
     reply({data:{repository:{pullRequest:{id:"PR_test", headRefOid:head, baseRefName:retargeted ? "staging" : "production", state:"OPEN", autoMergeRequest:null, isInMergeQueue:false}}}});
   }
 } else {
@@ -125,9 +125,8 @@ function invoke(scenario: string, args: string[], body = "", config?: string, cw
 }
 
 describe("PR CLI flows ported from a2f0.net", () => {
-  test.each(["squashMerge", "pr"])("%s merges the reviewed SHA with an empty body and PR suffix", (command) => {
-    const args = command === "pr" ? ["pr", "merge"] : [command];
-    const result = invoke("merged", [...args, "", head, "production"]);
+  test("pr merge merges the reviewed SHA with an empty body and PR suffix", () => {
+    const result = invoke("merged", ["pr", "merge", "", head, "production"]);
     expect(result.stderr).toBe("");
     expect(result.status).toBe(0);
     const mutation = JSON.parse(readFileSync(path.join(fixture, "mutation.json"), "utf8"));
@@ -163,21 +162,28 @@ describe("PR CLI flows ported from a2f0.net", () => {
 
   // pr merge used to send the mutation whether or not a preflight had run or passed.
   describe("runs every preflight gate itself before merging", () => {
-    test.each(["squashMerge", "pr"])("%s refuses a head that lacks the live base", (command) => {
-      const args = command === "pr" ? ["pr", "merge"] : [command];
+    test("refuses a head that lacks the live base", () => {
       const moved = git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "feat: newer base");
       git("push", "-q", path.join(temporary, "remote.git"), `${moved}:refs/heads/production`);
-      const result = invoke("merged", [...args, "", head, "production"]);
+      const result = invoke("merged", ["pr", "merge", "", head, "production"]);
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(`Refusing to merge: preflight failed against live production ${moved}: Reviewed HEAD does not include the reviewed base.`);
       expect(existsSync(path.join(fixture, "mutation.json"))).toBe(false);
     });
 
-    test("legacy squashMerge without a base merges only into the branch that passed preflight", () => {
-      const result = invoke("retarget-late", ["squashMerge", "", head]);
+    test("merges only into the branch that passed preflight", () => {
+      const result = invoke("retarget-late", ["pr", "merge", "", head, "production"]);
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("Pull request base changed from 'production' to 'staging'");
       expect(existsSync(path.join(fixture, "mutation.json"))).toBe(false);
+    });
+
+    test("the removed squashMerge action names pr merge and sends nothing", () => {
+      const result = invoke("merged", ["squashMerge", "", head, "production"]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("squashMerge was removed; use agent-tool pr merge <subject-or-empty> <reviewed-head-oid> <base-branch>.");
+      expect(existsSync(path.join(fixture, "mutation.json"))).toBe(false);
+      expect(existsSync(path.join(fixture, "gh-calls.jsonl"))).toBe(false);
     });
 
     test("refuses a reviewed HEAD other than the checked-out one", () => {

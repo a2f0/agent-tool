@@ -30,7 +30,7 @@ out of agent sessions where that matters.
 | `policy` | ask | `permissions install --apply` |
 | `exec` | ask | Executables classified `exec`: ones that run whatever file or command they are given |
 
-Legacy action names, such as `squashMerge` and `openPr`, carry the class of the
+Legacy action names, such as `openPr` and `bumpVersions`, carry the class of the
 command they alias. `run` and `run-group` execute arbitrary commands, so they
 stay unclassified and keep the harness's default decision; do not add a broad
 `agent-tool *` allow rule, which would include them. `src/permissions/catalog.ts` holds the

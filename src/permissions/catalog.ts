@@ -37,7 +37,6 @@ export const CATALOG: CatalogEntry[] = [
   ...["checkVersions"].map(command => ({ command, class: "read" as const })),
   ...["bumpVersions", "resolveVersionConflicts", "solicitClaudeCodeReview", "solicitCodexReview", "solicitOpencodeReview"].map(command => ({ command, class: "local" as const })),
   { command: "openPr", class: "share" },
-  { command: "squashMerge", class: "release" },
 ];
 // `run`, `run-group` and `proc start` execute arbitrary commands, so they stay unclassified and keep the harness default.
 // `bun x` runs only executables that `permissions.executables` classifies; project.ts adds those.
