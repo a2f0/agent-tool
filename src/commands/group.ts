@@ -131,8 +131,12 @@ export async function runGroup(args: string[]): Promise<number> {
       }
       if (await interrupted()) throw new Error(`Interrupted by ${interrupt.signal}.`);
     } catch (error) { code = 1; send({ type: "failed", error: (error as Error).message }); }
-    send({ type: "finished", passed: code === 0, endedAt: new Date().toISOString(), durationMs: Math.round(performance.now() - started) });
-    try { send({ type: "settled", after: sourceState() }); } catch (error) { code = 1; send({ type: "settleFailed", error: (error as Error).message }); }
+    const endedAt = new Date().toISOString(), durationMs = Math.round(performance.now() - started);
+    let settle: GroupEvent;
+    try { settle = { type: "settled", after: sourceState() }; } catch (error) { code = 1; settle = { type: "settleFailed", error: (error as Error).message }; }
+    // A group interrupted during its final source read has not passed.
+    if (code === 0 && await interrupted()) { code = 1; send({ type: "failed", error: `Interrupted by ${interrupt.signal}.` }); }
+    send({ type: "finished", passed: code === 0, endedAt, durationMs }); send(settle);
     save(report, record);
     output({ ...record, report });
     await interrupted();
