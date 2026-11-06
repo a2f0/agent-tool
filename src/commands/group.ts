@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, writeFileSync } from "node:fs";
+import { constants } from "node:os";
 import path from "node:path";
-import { runCommand, type RunReceipt } from "./run";
+import { FORWARDED_SIGNALS, runCommand, type RunReceipt } from "./run";
 import { assert, git, head, oid, option, output } from "../workflows/core";
 import { gitEnvironment } from "../git/environment";
 
@@ -60,6 +61,7 @@ export type GroupEvent =
   | { type: "stepStarted"; index: number }
   | { type: "stepFinished"; index: number; receipt: RunReceipt }
   | { type: "failed"; error: string }
+  | { type: "interrupted"; signal: NodeJS.Signals }
   | { type: "finished"; passed: boolean; endedAt: string; durationMs: number }
   | { type: "settled"; after: SourceState }
   | { type: "settleFailed"; error: string };
@@ -69,7 +71,11 @@ export type GroupEvent =
  * ignored: a step starts only from pending, finishes only while running, and
  * nothing but the final source read changes a finished group. A failure while
  * a step runs (its runner could not start) finishes that step as failed with
- * no receipt, so a finished report never shows a step still running.
+ * no receipt, so a finished report never shows a step still running. An
+ * interruption counts only while the group runs: it records its signal as the
+ * error (unless one is already recorded), lets the running step finish with its
+ * receipt, and keeps the group from passing. A finished group ignores it, so
+ * its report and exit status stand.
  */
 export function groupTransition(record: GroupRecord, event: GroupEvent): GroupRecord {
   const step = (index: number, next: GroupStep) => ({ ...record, steps: record.steps.map((item, at) => at === index ? next : item) });
@@ -85,8 +91,10 @@ export function groupTransition(record: GroupRecord, event: GroupEvent): GroupRe
     case "failed":
       if (record.status !== "running") return record;
       return { ...record, steps: record.steps.map(item => item.status === "running" ? { label: item.label, status: "failed", receipt: null } : item), error: event.error };
+    case "interrupted":
+      return record.status === "running" && record.error === null ? { ...record, error: `Interrupted by ${event.signal}.` } : record;
     case "finished":
-      return record.status === "running" ? { ...record, status: event.passed ? "passed" : "failed", endedAt: event.endedAt, durationMs: event.durationMs } : record;
+      return record.status === "running" ? { ...record, status: event.passed && record.error === null ? "passed" : "failed", endedAt: event.endedAt, durationMs: event.durationMs } : record;
     case "settled":
       return record.status !== "running" && record.after === null ? { ...record, after: event.after } : record;
     case "settleFailed":
@@ -108,21 +116,53 @@ export async function runGroup(args: string[]): Promise<number> {
   const started = performance.now();
   let record: GroupRecord = { schemaVersion: 1, id, label: plan.label, startedAt: new Date().toISOString(), endedAt: null, durationMs: 0, status: "running", before, after: null, steps: plan.steps.map(step => ({ label: step.label, status: "pending", receipt: null })), error: null };
   const send = (event: GroupEvent) => { record = groupTransition(record, event); };
-  save(report, record);
+  // A signal must not end the process before the report is finished: the step's runner forwards it
+  // to the step and returns, the group stops, and the signal is raised again once the report is saved.
+  // Only a running group is interrupted; a signal handled after it finished changes nothing.
+  const interrupt: { signal: NodeJS.Signals | null } = { signal: null };
+  const handlers = FORWARDED_SIGNALS.map(value => [value, () => {
+    if (record.status !== "running") return;
+    interrupt.signal ??= value;
+    send({ type: "interrupted", signal: value });
+  }] as const);
+  for (const [value, handler] of handlers) process.on(value, handler);
+  // Handlers run only between tasks, and a signal still queued when they are removed is lost.
+  // Fingerprinting and saving are synchronous, so yield to let a pending signal apply first.
+  const handleSignals = () => new Promise(resolve => setImmediate(resolve));
   let code = 0;
   try {
-    for (const [index, step] of plan.steps.entries()) {
-      send({ type: "stepStarted", index }); save(report, record);
-      code = await runCommand(["--label", step.label, "--", ...step.command], receipt => { send({ type: "stepFinished", index, receipt }); save(report, record); }, { quiet: true, reraiseChildSignal: false });
-      const after = sourceState();
-      assert(JSON.stringify(after) === JSON.stringify(before), "Source state changed during validation; results do not establish the current checkout.");
-      if (code !== 0) break;
-    }
-  } catch (error) { code = 1; send({ type: "failed", error: (error as Error).message }); }
-  send({ type: "finished", passed: code === 0, endedAt: new Date().toISOString(), durationMs: Math.round(performance.now() - started) });
-  try { send({ type: "settled", after: sourceState() }); } catch (error) { code = 1; send({ type: "settleFailed", error: (error as Error).message }); }
-  save(report, record);
-  output({ ...record, report }); return code;
+    save(report, record);
+    try {
+      for (const [index, step] of plan.steps.entries()) {
+        await handleSignals();
+        if (interrupt.signal) break;
+        send({ type: "stepStarted", index }); save(report, record);
+        code = await runCommand(["--label", step.label, "--", ...step.command], receipt => { send({ type: "stepFinished", index, receipt }); save(report, record); }, { quiet: true, reraiseChildSignal: false, reraiseInterrupt: false });
+        const after = sourceState();
+        assert(JSON.stringify(after) === JSON.stringify(before), "Source state changed during validation; results do not establish the current checkout.");
+        if (code !== 0) break;
+      }
+    } catch (error) { code = 1; send({ type: "failed", error: (error as Error).message }); }
+    const endedAt = new Date().toISOString(), durationMs = Math.round(performance.now() - started);
+    let settle: GroupEvent;
+    try { settle = { type: "settled", after: sourceState() }; } catch (error) { code = 1; settle = { type: "settleFailed", error: (error as Error).message }; }
+    await handleSignals();
+    send({ type: "finished", passed: code === 0, endedAt, durationMs }); send(settle);
+    save(report, record);
+    output({ ...record, report });
+    // Signals that arrived while publishing reach the handlers, which ignore them now.
+    await handleSignals();
+  } finally {
+    for (const [value, handler] of handlers) process.removeListener(value, handler);
+  }
+  const { signal } = interrupt;
+  if (signal) {
+    // Preserve signal termination for calling shells and supervisors, as `run` does.
+    process.kill(process.pid, signal);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    return 128 + (constants.signals[signal] ?? 0);
+  }
+  return code;
 }
 
 export function listRuns(args: string[]): number {

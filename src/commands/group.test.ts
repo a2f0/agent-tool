@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { groupTransition, type GroupEvent, type GroupRecord } from "./group";
@@ -30,7 +30,7 @@ test("run-group events outside their state are ignored", () => {
   expect(apply([{ type: "stepStarted", index: 7 }], running)).toBe(running);
   const done = apply([{ type: "stepFinished", index: 0, receipt: passed }, finish(true), { type: "settled", after: source }], running);
   // A finished group changes no more, apart from its one final source read.
-  for (const event of [{ type: "stepStarted", index: 1 }, { type: "stepFinished", index: 0, receipt: failed }, { type: "failed", error: "late" }, finish(false), { type: "settled", after: { ...source, fingerprint: "g" } }, { type: "settleFailed", error: "late" }] satisfies GroupEvent[]) expect(groupTransition(done, event)).toBe(done);
+  for (const event of [{ type: "stepStarted", index: 1 }, { type: "stepFinished", index: 0, receipt: failed }, { type: "failed", error: "late" }, { type: "interrupted", signal: "SIGTERM" }, finish(false), { type: "settled", after: { ...source, fingerprint: "g" } }, { type: "settleFailed", error: "late" }] satisfies GroupEvent[]) expect(groupTransition(done, event)).toBe(done);
   expect(groupTransition(running, { type: "settled", after: source })).toBe(running);
 });
 
@@ -41,6 +41,14 @@ test("a failure ends the running step without a receipt and keeps later steps pe
   // A failed final source read fails a passed group, keeping an earlier error.
   expect(apply([finish(true), { type: "settleFailed", error: "unreadable" }])).toMatchObject({ status: "failed", error: "unreadable", after: null });
   expect(apply([{ type: "failed", error: "first" }, finish(false), { type: "settleFailed", error: "second" }]).error).toBe("first");
+});
+
+test("an interrupted group lets its running step finish and never passes", () => {
+  const record = apply([{ type: "stepStarted", index: 0 }, { type: "interrupted", signal: "SIGTERM" }, { type: "stepFinished", index: 0, receipt: passed }, { type: "interrupted", signal: "SIGINT" }, finish(true)]);
+  expect(record.steps.map(step => step.status)).toEqual(["passed", "pending"]);
+  // The first signal is the one recorded, and an earlier error is kept.
+  expect([record.status, record.error]).toEqual(["failed", "Interrupted by SIGTERM."]);
+  expect(apply([{ type: "failed", error: "ENOENT" }, { type: "interrupted", signal: "SIGTERM" }, finish(false)]).error).toBe("ENOENT");
 });
 
 test("a step whose runner cannot start is reported failed, not still running", () => {
@@ -59,4 +67,88 @@ test("a step whose runner cannot start is reported failed, not still running", (
       expect(record.error).toContain("ENOENT");
     } finally { rmSync(plan, { force: true }); }
   } finally { rmSync(root, { recursive: true, force: true }); }
+}, 20_000);
+
+/**
+ * Starts a two-step run-group in a fresh repository and sends it SIGTERM once the first step has
+ * written `ready`; the second step only writes `second`. With `gitCalls`, every git call after
+ * `ready` sleeps and is counted, and the signal waits for that many calls, so it lands inside a
+ * chosen synchronous source read.
+ */
+async function interruptGroup(step: (ready: string) => string, options: { gitCalls?: number } = {}) {
+  const root = mkdtempSync(path.join(tmpdir(), "group-tests-"));
+  const scratch = mkdtempSync(path.join(tmpdir(), "group-interrupt-"));
+  try {
+    const env: Record<string, string | undefined> = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", AGENT_TOOL_CONFIG: "" };
+    for (const args of [["init", "-q", "-b", "main"], ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "chore: initialize"]]) execFileSync("git", args, { cwd: root, env });
+    const ready = path.join(scratch, "ready"), second = path.join(scratch, "second"), calls = path.join(scratch, "calls"), plan = path.join(scratch, "plan.json");
+    if (options.gitCalls) {
+      const bin = path.join(scratch, "bin"); mkdirSync(bin);
+      writeFileSync(path.join(bin, "git"), `#!/bin/sh\nif [ -f ${JSON.stringify(ready)} ]; then echo x >> ${JSON.stringify(calls)}; sleep 0.3; fi\nexec ${JSON.stringify(Bun.which("git")!)} "$@"\n`, { mode: 0o755 });
+      env["PATH"] = `${bin}${path.delimiter}${env["PATH"]}`;
+    }
+    writeFileSync(plan, JSON.stringify({ label: "verify", steps: [{ label: "first", command: [process.execPath, "-e", step(ready)] }, { label: "second", command: [process.execPath, "-e", `require("fs").writeFileSync(${JSON.stringify(second)}, "yes")`] }] }));
+    const child = spawn(process.execPath, [path.resolve(import.meta.dir, "../index.ts"), "run-group", plan], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    child.stdout.on("data", chunk => stdout += chunk);
+    const closed = new Promise<NodeJS.Signals | null>(resolve => child.once("close", (_code, signal) => resolve(signal)));
+    const called = () => existsSync(calls) ? readFileSync(calls, "utf8").split("\n").length - 1 : 0;
+    try {
+      const deadline = Date.now() + 15_000;
+      while (!(existsSync(ready) && called() >= (options.gitCalls ?? 0)) && Date.now() < deadline) await Bun.sleep(10);
+      expect([existsSync(ready), called() >= (options.gitCalls ?? 0)]).toEqual([true, true]);
+      child.kill("SIGTERM");
+      const signal = await closed;
+      const printed = JSON.parse(stdout);
+      const saved = JSON.parse(readFileSync(printed.report, "utf8"));
+      for (const receipt of saved.steps.map((item: { receipt: { log: string } | null }) => item.receipt)) if (receipt) rmSync(path.dirname(receipt.log), { recursive: true, force: true });
+      return { signal, printed, saved, secondRan: existsSync(second) };
+    } finally { child.kill("SIGKILL"); }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("an interrupted group saves a finished, failed report before it exits on the signal", async () => {
+  const { signal, printed, saved, secondRan } = await interruptGroup(ready => `require("fs").writeFileSync(${JSON.stringify(ready)}, "yes"); setInterval(() => {}, 1000);`);
+  // Signal termination is preserved for the caller, after the report, and no further step starts.
+  expect([signal, secondRan]).toEqual(["SIGTERM", false]);
+  for (const record of [printed, saved]) {
+    expect([record.status, record.error, typeof record.endedAt]).toEqual(["failed", "Interrupted by SIGTERM.", "string"]);
+    expect(record.steps.map((step: { status: string }) => step.status)).toEqual(["failed", "pending"]);
+    expect(record.steps[0].receipt.signal).toBe("SIGTERM");
+  }
+}, 20_000);
+
+// Each source read makes seven git calls: after the first step (calls 1-7), after the second (8-14),
+// and the final read (15-21).
+for (const [phase, gitCalls, steps] of [["after a step", 2, ["passed", "pending"]], ["in the final read", 16, ["passed", "passed"]]] as const) {
+  test(`a signal that arrives while the group fingerprints the source ${phase} fails the group`, async () => {
+    // The first step has exited; the signal lands in a synchronous source read.
+    const { signal, saved, secondRan } = await interruptGroup(ready => `require("fs").writeFileSync(${JSON.stringify(ready)}, "yes");`, { gitCalls });
+    expect([signal, secondRan]).toEqual(["SIGTERM", steps[1] === "passed"]);
+    expect([saved.status, saved.error, saved.steps.map((step: { status: string }) => step.status)]).toEqual(["failed", "Interrupted by SIGTERM.", steps]);
+  }, 30_000);
+}
+
+test("a report that cannot be saved removes the group's signal listeners", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "group-tests-"));
+  try {
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", AGENT_TOOL_CONFIG: "" };
+    for (const args of [["init", "-q", "-b", "main"], ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "chore: initialize"]]) execFileSync("git", args, { cwd: root, env });
+    const runs = path.join(root, ".git", "agent-tool", "runs");
+    mkdirSync(runs, { recursive: true }); chmodSync(runs, 0o500);
+    const plan = path.join(root, ".git", "plan.json");
+    writeFileSync(plan, JSON.stringify({ label: "verify", steps: [{ label: "first", command: ["true"] }] }));
+    const source = `import { runGroup } from ${JSON.stringify(path.join(import.meta.dir, "group.ts"))};
+const count = () => ["SIGINT", "SIGTERM", "SIGHUP"].map(name => process.listenerCount(name)).join(",");
+const before = count();
+try { await runGroup([${JSON.stringify(plan)}]); console.log("saved"); } catch (error) { console.log(JSON.stringify({ before, after: count(), error: error.code })); }`;
+    const result = spawnSync(process.execPath, ["-e", source], { cwd: root, env, encoding: "utf8", timeout: 15000 });
+    expect(JSON.parse(result.stdout)).toEqual({ before: "0,0,0", after: "0,0,0", error: "EACCES" });
+  } finally {
+    chmodSync(path.join(root, ".git", "agent-tool", "runs"), 0o700);
+    rmSync(root, { recursive: true, force: true });
+  }
 }, 20_000);
