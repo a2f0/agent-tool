@@ -58,7 +58,7 @@ afterEach(() => {
 });
 
 describe("withPinnedReviewInput", () => {
-  test("uses one base and head commit for policy, diff, and snapshot", () => {
+  test("uses one base and head commit for policy, diff, and snapshot", async () => {
     const { rootDir, baseCommit, headCommit } = createRepository();
     const context: PrContext = {
       branch: "feature",
@@ -68,7 +68,7 @@ describe("withPinnedReviewInput", () => {
       baseRef: "main",
     };
 
-    withPinnedReviewInput(rootDir, context, (input) => {
+    await withPinnedReviewInput(rootDir, context, (input) => {
       expect(input.baseCommit).toBe(baseCommit);
       expect(input.headCommit).toBe(headCommit);
       expect(input.reviewInstructions).toBe("TRUSTED POLICY\n");
@@ -87,7 +87,7 @@ describe("withPinnedReviewInput", () => {
     });
   });
 
-  test("ignores branch-selected textconv and external diff drivers", () => {
+  test("ignores branch-selected textconv and external diff drivers", async () => {
     const { rootDir } = createRepository();
     const textconvMarker = path.join(rootDir, "textconv-ran");
     const externalMarker = path.join(rootDir, "external-diff-ran");
@@ -123,7 +123,7 @@ describe("withPinnedReviewInput", () => {
       title: "",
       baseRef: "main",
     };
-    withPinnedReviewInput(rootDir, context, (input) => {
+    await withPinnedReviewInput(rootDir, context, (input) => {
       expect(input.diff).toContain("+reviewed");
     });
 
@@ -131,7 +131,7 @@ describe("withPinnedReviewInput", () => {
     expect(existsSync(externalMarker)).toBe(false);
   });
 
-  test("forces branch-selected binary paths into the review patch", () => {
+  test("forces branch-selected binary paths into the review patch", async () => {
     const { rootDir } = createRepository();
     writeFileSync(path.join(rootDir, ".gitattributes"), "tracked.txt -diff\n");
     git(rootDir, "add", ".gitattributes");
@@ -144,7 +144,7 @@ describe("withPinnedReviewInput", () => {
       title: "",
       baseRef: "main",
     };
-    withPinnedReviewInput(rootDir, context, (input) => {
+    await withPinnedReviewInput(rootDir, context, (input) => {
       expect(input.diff).toContain("+reviewed");
       expect(input.diff).not.toContain("Binary files");
     });

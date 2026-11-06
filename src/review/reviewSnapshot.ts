@@ -48,11 +48,11 @@ function removeSnapshot(tempRoot: string, repositoryRoot: string): void {
  * Run a callback against immutable raw blobs from an exact commit.
  * Working-tree edits, untracked files, and `.git` metadata never enter it.
  */
-export function withReviewSnapshot<T>(
+export async function withReviewSnapshot<T>(
   rootDir: string,
   commit: string,
-  callback: (repositoryRoot: string) => T,
-): T {
+  callback: (repositoryRoot: string) => T | Promise<T>,
+): Promise<T> {
   const tempRoot = mkdtempSync(path.join(tmpdir(), "agent-tool-review-"));
   const repositoryRoot = path.join(tempRoot, "repository");
   mkdirSync(repositoryRoot);
@@ -60,7 +60,7 @@ export function withReviewSnapshot<T>(
   try {
     materializeRawGitTree(rootDir, commit, repositoryRoot);
     makeTreeReadOnly(repositoryRoot);
-    return callback(repositoryRoot);
+    return await callback(repositoryRoot);
   } finally {
     removeSnapshot(tempRoot, repositoryRoot);
   }

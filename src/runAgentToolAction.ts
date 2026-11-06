@@ -17,9 +17,9 @@ export interface AgentToolActions {
   readonly solicitClaudeCodeReview: (
     rootDir: string,
     effort?: string,
-  ) => number;
-  readonly solicitCodexReview: (rootDir: string, effort?: string) => number;
-  readonly solicitOpencodeReview: (rootDir: string, effort?: string) => number;
+  ) => number | Promise<number>;
+  readonly solicitCodexReview: (rootDir: string, effort?: string) => number | Promise<number>;
+  readonly solicitOpencodeReview: (rootDir: string, effort?: string) => number | Promise<number>;
   readonly squashMerge: (
     rootDir: string,
     subject?: string,
@@ -56,7 +56,7 @@ export function runAgentToolAction(
   rootDir: string,
   args: readonly string[],
   actions: AgentToolActions = defaultActions,
-): number {
+): number | Promise<number> {
   const [action, ...positionals] = args;
   const [first, second, third] = positionals;
   switch (action) {

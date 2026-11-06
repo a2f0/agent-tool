@@ -505,7 +505,10 @@ validation, and diffs are text-only without external drivers. Snapshots are
 cleaned up, output must end in a verdict, and an incomplete but successful run
 is retried once. Helper Git operations disable hooks and replace objects.
 Reviewer executables must resolve outside the project, reviews time out, and a
-review is rejected if HEAD moves before it returns.
+review is rejected if HEAD moves before it returns. A reviewer past its timeout,
+or one running when the review receives SIGINT, SIGTERM, or SIGHUP, is stopped
+and killed if it outlives a five-second grace period. An interrupted review
+starts no retry, removes its snapshot, and then ends by the same signal.
 
 Each harness runs with its own read-only protections:
 
