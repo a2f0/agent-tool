@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
 
 /**
@@ -9,21 +10,26 @@ import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from "node:c
  */
 export const CALL_LIMITS = { minMs: 15_000, maxMs: 120_000 };
 
-let deadline: number | undefined;
+// Scoped per async context, so overlapping waits never see each other's deadline.
+const deadlines = new AsyncLocalStorage<number>();
 
 /** Run `inspect` with every bounded call limited by `until`, the wait's deadline. */
 export async function withCallDeadline<T>(until: number, inspect: () => T | Promise<T>): Promise<T> {
-  const previous = deadline;
-  deadline = until;
-  try { return await inspect(); } finally { deadline = previous; }
+  return await deadlines.run(until, inspect);
 }
 
 function currentLimit(): number | undefined {
+  const deadline = deadlines.getStore();
   if (deadline === undefined) return undefined;
   return Math.min(CALL_LIMITS.maxMs, Math.max(CALL_LIMITS.minMs, deadline - Date.now()));
 }
 
-/** `execFileSync` that, inside a wait, is killed and fails once its call limit passes. */
+/**
+ * `execFileSync` that, inside a wait, is killed and fails once its call limit
+ * passes. Bun returns as soon as the command itself is killed, even when a
+ * descendant such as ssh still holds its output pipes; that descendant is left
+ * to exit on its own, as it would after an interrupted command.
+ */
 export function boundedExecFileSync(command: string, args: string[], options: ExecFileSyncOptionsWithStringEncoding): string {
   const timeout = currentLimit();
   try {
