@@ -1,8 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+
+import { spawnExitCode } from "../git/prContext";
+import { spawnReviewer } from "./reviewerProcess";
 
 /**
  * `agent-tool review` end to end against a stub `codex`: the reviewer runs while
@@ -128,3 +131,21 @@ process.stdout.write(run.stdout);`;
   // No review timeout, kill escalation, or close grace timer (2s) outlives the run.
   expect(Number(stderr)).toBeLessThan(1500);
 }, 20_000);
+
+test("a reviewer that floods stdout and ignores SIGTERM is killed and fails the attempt", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "agent-tool-review-interrupt-")));
+  roots.push(root);
+  const pidFile = path.join(root, "reviewer.pid");
+  const script = `trap '' TERM\ncat > /dev/null\necho $$ > ${JSON.stringify(pidFile)}\nwhile :; do printf '%01000d\\n' 0; sleep 0.05; done`;
+  const devNull = openSync("/dev/null", "w");
+  try {
+    const result = await spawnReviewer("/bin/sh", ["-c", script], { input: "prompt", cwd: root, env: { PATH: "/bin:/usr/bin" }, timeoutMs: 60_000, maxBuffer: 4096, stderr: devNull });
+    expect([(result.error as NodeJS.ErrnoException | undefined)?.code, result.error?.message, result.signal]).toEqual(["ENOBUFS", "/bin/sh wrote more than 4096 bytes to stdout", "SIGKILL"]);
+    expect(result.stdout.length).toBeLessThanOrEqual(4096);
+    expect(alive(Number(readFileSync(pidFile, "utf8")))).toBe(false);
+    // A failed launch is a nonzero attempt, which relayReviewWithRetry never retries.
+    const write = process.stderr.write;
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    try { expect(spawnExitCode("stub", result)).toBe(1); } finally { process.stderr.write = write; }
+  } finally { closeSync(devNull); }
+}, 30_000);
