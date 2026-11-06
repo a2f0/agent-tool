@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { writeSync } from "node:fs";
+import { lstatSync, realpathSync, writeSync } from "node:fs";
+import path from "node:path";
 import { gitEnvironment } from "../git/environment";
 
 export function output(value: unknown): void { writeSync(1, `${JSON.stringify(value, null, 2)}\n`); }
@@ -23,8 +24,37 @@ export function currentBranch(): string {
   assert(branch, "Detached HEAD; supply a branch name to checks or attach a branch before mutations.");
   return branch;
 }
+/**
+ * Git skips a `.git` it cannot open (unreadable, or without HEAD while it is
+ * rewritten) and keeps searching upward, so a checkout nested inside another
+ * repository, such as a workspace's `checkouts/<name>`, would silently resolve
+ * to the outer one. Refuse that instead of acting on another repository.
+ */
+export function assertOwnCheckout(root: string, cwd = process.cwd()): void {
+  const top = realpathSync(root);
+  const relative = path.relative(top, realpathSync(cwd));
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return;
+  let current = top;
+  for (const part of relative.split(path.sep)) {
+    current = path.join(current, part);
+    assert(!hasEntry(path.join(current, ".git")), `${current} has its own .git, but Git resolved the enclosing repository ${top}; the nested checkout's Git directory is unreadable or incomplete (mid-checkout?). Retry once it is readable.`);
+  }
+}
+/** Whether anything, even a dangling link, exists at `file`; an entry that cannot be inspected counts. */
+function hasEntry(file: string): boolean {
+  try { lstatSync(file); return true; } catch (error) { return (error as NodeJS.ErrnoException).code !== "ENOENT"; }
+}
+/** The top level of the checkout Git resolves from `cwd`, never an enclosing repository. */
+export function checkoutRoot(cwd = process.cwd()): string {
+  const root = git(["rev-parse", "--show-toplevel"], cwd);
+  assertOwnCheckout(root, cwd);
+  return root;
+}
 export interface Repository { nameWithOwner: string; defaultBranchRef: { name: string }; url: string; sshUrl: string }
 export function repository(): Repository {
+  // gh resolves the repository from the same Git discovery; outside any checkout it may still use GH_REPO.
+  const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: gitEnvironment() });
+  if (top.status === 0) assertOwnCheckout(top.stdout.trim());
   const repo = json<Repository>(["repo", "view", "--json", "nameWithOwner,defaultBranchRef,url,sshUrl"]);
   assert(/^[^/\s]+\/[^/\s]+$/.test(repo.nameWithOwner) && repo.defaultBranchRef?.name, "Could not resolve repository identity and default branch.");
   return repo;
