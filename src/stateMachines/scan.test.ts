@@ -152,6 +152,13 @@ describe("explicit-state-machines scan", () => {
       "`SELECT * FROM a WHERE status = 'x'`;",
     ].join("\n");
     expect(scanText(elsewhere, "c")[0]?.values).toEqual(["x", "y", "z"]);
+    // An OR branch without the from-state, or a subquery in SET, leaves the write counted.
+    const branches = [
+      "`UPDATE a SET status = 'x' WHERE status = 'q' OR id = ?`;",
+      "`UPDATE a SET owner = (SELECT id FROM u WHERE status = 'q'), status = 'y' WHERE status = 'q'`;",
+      "`UPDATE a SET status = 'z' WHERE status = 'q'`;",
+    ].join("\n");
+    expect(scanText(branches, "c")).toEqual([{ kind: "status", names: ["status"], values: ["x", "y", "z"], lines: [1, 2, 3] }]);
     // A guard far below an update that never closes is not its WHERE.
     const unclosed = ["UPDATE a SET status = 'x', ", ...Array(45).fill("x"), "WHERE status = 'w'"].join("\n");
     expect(scanText(`${unclosed}\nmode = 'b'\nstatus = 'c'\nstatus = 'd'`, "hash")[0]?.values).toEqual(["c", "d", "x"]);

@@ -330,7 +330,6 @@ function sqlTokens(lines: string[]): Token[] {
 
 /** Uppercase SQL keywords: lowercase `and`/`or`/`in` are code in Python and Ruby. */
 const COMPARES_AFTER = new Set(["WHERE", "AND", "OR", "ON", "WHEN", "NOT"]);
-const STATEMENT_STARTS = new Set(["UPDATE", "SELECT", "INSERT", "DELETE"]);
 /** A statement ends at `;` or at the delimiter of the string holding it. */
 const STATEMENT_ENDS = new Set([";", "`", '"']);
 /** Lines an `UPDATE` may span before the scan stops treating what follows as its clauses. */
@@ -343,53 +342,90 @@ function followsComparisonKeyword(tokens: Token[], index: number): boolean {
   return at >= 0 && COMPARES_AFTER.has(tokens[at]!.text);
 }
 
+/** An `UPDATE` being read: its clause, the status writes in its `SET`, and the fields its `WHERE` names a from-state for. */
+interface UpdateMode {
+  readonly kind: "update";
+  readonly line: number;
+  readonly phase: "update" | "set" | "where";
+  readonly writes: { field: string; key: string }[];
+  readonly guards: Set<string>;
+  /** An `OR` in the `WHERE`: some branch may not name the from-state, so nothing is guarded. */
+  readonly branches: boolean;
+}
+
+/** Where the SQL pass is: in code, inside a `SELECT` or `DELETE` (every `field = 'x'` is a comparison), or in an `UPDATE`. */
+type SqlMode = { readonly kind: "code" } | { readonly kind: "reading"; readonly line: number } | UpdateMode;
+
+const CODE: SqlMode = { kind: "code" };
+
+/** The mode after one token, and the update it ended, if any. Pure: it never changes `mode`. */
+function sqlStep(mode: SqlMode, token: Token): { mode: SqlMode; ended?: UpdateMode } {
+  const ended = mode.kind === "update" ? mode : undefined;
+  if (mode.kind !== "code" && token.line - mode.line > STATEMENT_LINES) return { mode: sqlStep(CODE, token).mode, ended };
+  if (token.kind === "punct") return STATEMENT_ENDS.has(token.text) ? { mode: CODE, ended } : { mode };
+  if (token.kind !== "word") return { mode };
+  switch (token.text) {
+    case "UPDATE":
+      return { mode: { kind: "update", line: token.line, phase: "update", writes: [], guards: new Set(), branches: false }, ended };
+    case "SELECT":
+    case "DELETE":
+      // A subquery ends the UPDATE holding it, so writes after it stay counted.
+      return { mode: mode.kind === "update" ? CODE : { kind: "reading", line: token.line }, ended };
+    case "INSERT":
+      return { mode: CODE, ended };
+    case "SET":
+      return { mode: mode.kind === "update" ? { ...mode, phase: "set" } : mode };
+    case "WHERE":
+      return { mode: mode.kind === "update" ? { ...mode, phase: "where" } : mode };
+    case "OR":
+      return { mode: mode.kind === "update" && mode.phase === "where" ? { ...mode, branches: true } : mode };
+    default:
+      return { mode };
+  }
+}
+
+/** Whether `field = <value>` or `field IN (` names a from-state. */
+function namesFromState(next: Token | undefined, value: Token | undefined): boolean {
+  if (next?.text === "IN" || next?.text === "in") return value?.text === "(";
+  if (next?.text !== "=" || value === undefined) return false;
+  return value.kind === "literal" || value.text === "?" || value.text === ":" || value.text === "@" || /^\$\w+$/.test(value.text);
+}
+
 /**
  * SQL facts about status fields, found token by token with no backtracking:
  * comparisons after `WHERE`/`AND`/`OR`/`ON`/`WHEN` or inside a `SELECT` or
- * `DELETE` are reads, not writes, and
- * an `UPDATE ... SET status = 'x'` is guarded when its own `WHERE` names the
- * same field's from-state (`status = 'y'`, `= ?`, `= $1`, `= :from`, `IN (...)`). Such
+ * `DELETE` are reads, not writes, and an `UPDATE ... SET status = 'x'` is
+ * guarded when its own `WHERE`, with no `OR`, names the same field's
+ * from-state (`status = 'y'`, `= ?`, `= $1`, `= :from`, `IN (...)`). Such
  * updates make their module the transition table, which the skill leaves alone.
  */
 function sqlStatusFacts(lines: string[]): SqlFacts {
   const facts: SqlFacts = { comparisons: new Set(), guarded: new Set() };
-  const tokens = sqlTokens(lines);
-  let update: { line: number; phase: "update" | "set" | "where"; writes: { field: string; key: string }[]; guards: Set<string> } | undefined;
-  // Inside a SELECT or DELETE, where every `field = 'x'` is a comparison.
-  let reading: number | undefined;
-  const close = () => {
-    for (const write of update?.writes ?? []) if (update!.guards.has(write.field)) facts.guarded.add(write.key);
-    update = undefined;
-    reading = undefined;
+  const finish = (update: UpdateMode) => {
+    if (update.branches) return;
+    for (const write of update.writes) if (update.guards.has(write.field)) facts.guarded.add(write.key);
   };
+  const tokens = sqlTokens(lines);
+  let mode: SqlMode = CODE;
   tokens.forEach((token, index) => {
-    if ((update && token.line - update.line > STATEMENT_LINES) || (reading !== undefined && token.line - reading > STATEMENT_LINES)) close();
-    if (token.kind === "punct" && STATEMENT_ENDS.has(token.text)) return close();
+    const step = sqlStep(mode, token);
+    if (step.ended) finish(step.ended);
+    mode = step.mode;
     if (token.kind !== "word") return;
-    if (STATEMENT_STARTS.has(token.text)) {
-      close();
-      if (token.text === "UPDATE") update = { line: token.line, phase: "update", writes: [], guards: new Set() };
-      else if (token.text !== "INSERT") reading = token.line;
-      return;
-    }
-    if (update && token.text === "SET") update.phase = "set";
-    if (update && token.text === "WHERE") update.phase = "where";
     const field = token.text.slice(token.text.lastIndexOf(".") + 1);
     if (!STATUS.test(field)) return;
     const [next, value] = [tokens[index + 1], tokens[index + 2]];
     const key = `${token.line}:${token.end}`;
     const assignsLiteral = next?.text === "=" && value?.kind === "literal";
-    if (reading !== undefined || update?.phase === "where" || followsComparisonKeyword(tokens, index)) {
+    const inWhere = mode.kind === "update" && mode.phase === "where";
+    if (mode.kind === "reading" || inWhere || followsComparisonKeyword(tokens, index)) {
       if (assignsLiteral) facts.comparisons.add(key);
-      const namesFrom =
-        (next?.text === "=" && value !== undefined && (value.kind === "literal" || value.text === "?" || value.text === ":" || value.text === "@" || /^\$\w+$/.test(value.text))) ||
-        ((next?.text === "IN" || next?.text === "in") && value?.text === "(");
-      if (update?.phase === "where" && namesFrom) update.guards.add(field);
+      if (mode.kind === "update" && inWhere && namesFromState(next, value)) mode.guards.add(field);
       return;
     }
-    if (update?.phase === "set" && assignsLiteral) update.writes.push({ field, key });
+    if (mode.kind === "update" && mode.phase === "set" && assignsLiteral) mode.writes.push({ field, key });
   });
-  close();
+  if (mode.kind === "update") finish(mode);
   return facts;
 }
 

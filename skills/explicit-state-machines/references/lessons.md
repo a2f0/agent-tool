@@ -40,8 +40,10 @@ findings in that repository's guidance.
   failed` load machine with separate action errors fixed it
   (devopsrockstars#898). The scanner sees booleans only; read for it by hand.
 - The second sweep's perennial false positives are now named: guarded SQL
-  status updates (devopsrockstars checkout and webhooks, balebase finance and
-  contracts) and enum payload labels are skipped by the scanner, along with
+  status updates (devopsrockstars checkout and webhooks, balebase contracts
+  and jobs) and enum payload labels are skipped by the scanner, along with
   `*.testUtils.*` files; latest-wins request counters, set-once setup flags,
   one-time focus-return refs, and memoized teardown promises are in the
   skill's leave-alone list.
+  An update whose `WHERE` has an `OR` still counts, even when every branch
+  names the from-state (balebase finance): read it by hand.
