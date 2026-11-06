@@ -116,6 +116,81 @@ describe("explicit-state-machines scan", () => {
     expect(scanText(glob, "c").map(signal => signal.names)).toEqual([["hasError", "isLoading"]]);
   });
 
+  test("leaves out status fields written only by guarded SQL updates, and SQL comparisons", () => {
+    // Every write names its from-state, so the module is the transition table.
+    const guarded = [
+      "await db.prepare(",
+      "  `UPDATE orders",
+      "   SET status = 'canceled', canceled_at = ?",
+      "   WHERE id = ? AND status IN ('creating_payment', 'awaiting_payment')`",
+      ");",
+      "await db.prepare(`UPDATE orders SET status = 'paid' WHERE id = ? AND status = 'awaiting_payment'`);",
+      "await db.prepare(`UPDATE orders SET status = 'awaiting_payment', at = ? WHERE id = ? AND status = ?`);",
+      "await db.prepare(`UPDATE alerts SET status = 'resolved' WHERE id = ? AND (status = $1)`);",
+      "const sold = `SELECT SUM(q) FROM o WHERE o.status = 'paid' AND o.status = 'shipped' OR status = 'done'`;",
+      "const due = `SELECT id FROM o WHERE ((status = 'queued' AND at <= ?)",
+      "  OR (kind = 'x' AND status = 'held'))`;",
+      "await db.prepare(`DELETE FROM o WHERE id IN (SELECT id FROM o WHERE status = 'void')`);",
+    ].join("\n");
+    expect(scanText(guarded, "c")).toEqual([]);
+    const python = "cursor.execute(\"UPDATE jobs SET status = 'running' WHERE id = %s AND status = :from\")\n" +
+      "cursor.execute(\"UPDATE jobs SET status = 'done' WHERE id = %s AND status = 'running'\")\n" +
+      "cursor.execute(\"UPDATE jobs SET status = 'failed' WHERE id = %s AND status IN ('queued', 'running')\")";
+    expect(scanText(python, "hash")).toEqual([]);
+    // One update without a from-state, or one plain assignment, keeps every write counted.
+    const unguarded = guarded.replace("AND status = 'awaiting_payment'", "AND paid_at IS NULL");
+    expect(scanText(unguarded, "c")).toEqual([
+      { kind: "status", names: ["status"], values: ["awaiting_payment", "canceled", "paid", "resolved"], lines: [3, 6, 7, 8] },
+    ]);
+    const mixed = `${guarded}\norder.status = "refunded";`;
+    expect(scanText(mixed, "c")[0]?.values).toEqual(["awaiting_payment", "canceled", "paid", "refunded", "resolved"]);
+    // A from-state in another statement, or a guard on another field, does not guard a write.
+    const elsewhere = [
+      "`UPDATE a SET status = 'x' WHERE id = ?`;",
+      "`UPDATE a SET status = 'y' WHERE id = ?`;",
+      "`UPDATE a SET status = 'z' WHERE id = ? AND state = 'q'`;",
+      "`SELECT * FROM a WHERE status = 'x'`;",
+    ].join("\n");
+    expect(scanText(elsewhere, "c")[0]?.values).toEqual(["x", "y", "z"]);
+    // An OR branch without the from-state, or a subquery in SET, leaves the write counted.
+    const branches = [
+      "`UPDATE a SET status = 'x' WHERE status = 'q' OR id = ?`;",
+      "`UPDATE a SET owner = (SELECT id FROM u WHERE status = 'q'), status = 'y' WHERE status = 'q'`;",
+      "`UPDATE a SET status = 'z' WHERE status = 'q'`;",
+    ].join("\n");
+    expect(scanText(branches, "c")).toEqual([{ kind: "status", names: ["status"], values: ["x", "y", "z"], lines: [1, 2, 3] }]);
+    // A negated from-state, or a subquery before a later OR, guards nothing either.
+    const negated = [
+      "`UPDATE a SET status = 'x' WHERE NOT status = 'q'`;",
+      "`UPDATE a SET status = 'y' WHERE status = 'q' AND EXISTS (SELECT 1) OR id = ?`;",
+      "`UPDATE a SET status = 'z' WHERE status = 'q'`;",
+    ].join("\n");
+    expect(scanText(negated, "c")[0]?.values).toEqual(["x", "y", "z"]);
+    // A guard far below an update that never closes is not its WHERE.
+    const unclosed = ["UPDATE a SET status = 'x', ", ...Array(45).fill("x"), "WHERE status = 'w'"].join("\n");
+    expect(scanText(`${unclosed}\nmode = 'b'\nstatus = 'c'\nstatus = 'd'`, "hash")[0]?.values).toEqual(["c", "d", "x"]);
+    // Long SQL-like lines stay linear.
+    const started = performance.now();
+    scanText(`UPDATE ${"SET status = 'a' WHERE status IN ( ".repeat(20_000)}`, "c");
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+
+  test("does not count an enum case's payload label as a flag", () => {
+    const swift = [
+      "case let (.interrupted(type), .interruptionEnded(shouldResume: true)): PlayerStep(.stopped, .resume(type))",
+      "case (.interrupted, .interruptionEnded( shouldResume: false)): PlayerStep(.stopped, .releaseSession)",
+      "private var isConfigured = false",
+      "isConfigured = true",
+    ].join("\n");
+    expect(scanText(swift, "c")).toEqual([]);
+    // Labels on a call with a receiver, and object literals, still count.
+    expect(scanText(`${swift}\nplayer.update(shouldResume: true)\nplayer.update(shouldResume: false)`, "c")[0]?.names).toEqual(["isConfigured", "shouldResume"]);
+    expect(scanText("setState({ isLoading: true });\nsetState({ isLoading: false });\n.go(hasError: true)\nhasError = false\nhasError = true", "c")[0]?.names).toEqual([
+      "hasError",
+      "isLoading",
+    ]);
+  });
+
   test("reads application source only", () => {
     expect(language("src/app.tsx")).toBe("c");
     expect(language("scripts/run.sh")).toBe("hash");
@@ -137,6 +212,10 @@ describe("explicit-state-machines scan", () => {
       "conftest.py",
       "AppTests.swift",
       "SyncSpec.kt",
+      "src/stateMachines/fixtures.testUtils.ts",
+      "src/render.testUtils.tsx",
+      "src/api.specHelpers.ts",
+      "src/db.test-utils.js",
     ]) {
       expect(language(skipped)).toBeUndefined();
     }
