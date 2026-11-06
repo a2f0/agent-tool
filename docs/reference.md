@@ -138,6 +138,7 @@ For repository workflow commands added alongside these interfaces, see
 | `images build [target...] [--out dir]` | Render image targets from `assets/brand/*.svg`; `--out` redirects one target |
 | `screenshots build [target...] [--out dir] [--json]` | Stage guarded captures and a gallery manifest per the `screenshots` section; `--out` redirects one target |
 | `graph check` | Fail on import cycles and layer violations among the TypeScript sources the `graph` section names; print a JSON report |
+| `state-machines [path...] [--limit N] [--min-score N] [--json]` | Rank tracked source files by signals of implicit state machines in the repository holding the working directory, or each named path's repository; read-only, exit 1 when a repository cannot be listed |
 | `init` / `config show` | Create or inspect data-only project policy |
 | `doctor` | Inspect local versions and required CLI flags without running a model |
 
@@ -470,7 +471,11 @@ or Hermes permission installer. Existing read-only review and exact-commit
 guards apply regardless of which harness coordinates the work.
 
 The bundle provides `cross-agent-review`, `open-issue`, `open-pr`,
-`squash-merge`, `ship-pr`, `reset`, and `update-dependencies`. `open-issue`
+`squash-merge`, `ship-pr`, `reset`, `update-dependencies`, and
+`explicit-state-machines`, which pairs with the `state-machines` scanner. A
+skill may ship Markdown files under `references/` beside its `SKILL.md`; they
+install, update, and check like the skill itself, each with its own ownership
+record. `open-issue`
 assigns each issue it opens to the authenticated GitHub user (`--assignee @me`).
 They make no package-manager or project-layout assumptions:
 
@@ -501,7 +506,9 @@ Reviews run against exact base and head snapshots. Review policy comes from the
 base commit's `REVIEW.md` or `AGENTS.md`; the prompt adds shared instructions for
 every reviewer: severity levels, security, type safety, and missing tests, and
 implicit state machines the diff adds or extends (Major when an impossible
-combination or stale async result is reachable). Files are materialized from raw Git blobs with collision and path
+combination or stale async result is reachable, judged by the installed
+`explicit-state-machines` skill's convert and leave-alone criteria when the
+snapshot has it). Files are materialized from raw Git blobs with collision and path
 validation, and diffs are text-only without external drivers. Snapshots are
 cleaned up, output must end in a verdict, and an incomplete but successful run
 is retried once. Helper Git operations disable hooks and replace objects.

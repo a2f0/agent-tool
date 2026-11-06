@@ -122,6 +122,11 @@ describe("buildReviewPrompt", () => {
       expect(instructions).toContain(
         "Do not flag independent toggles, single booleans, or closed unions with one writer",
       );
+      expect(instructions).toContain(
+        "When the snapshot has `.agents/skills/explicit-state-machines/SKILL.md` or `.claude/skills/explicit-state-machines/SKILL.md`, apply its convert and leave-alone criteria",
+      );
+      // Still one bullet.
+      expect(instructions.split("\n").filter(line => line.includes("state machine"))).toHaveLength(1);
     }
   });
 
