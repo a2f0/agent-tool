@@ -159,6 +159,13 @@ describe("explicit-state-machines scan", () => {
       "`UPDATE a SET status = 'z' WHERE status = 'q'`;",
     ].join("\n");
     expect(scanText(branches, "c")).toEqual([{ kind: "status", names: ["status"], values: ["x", "y", "z"], lines: [1, 2, 3] }]);
+    // A negated from-state, or a subquery before a later OR, guards nothing either.
+    const negated = [
+      "`UPDATE a SET status = 'x' WHERE NOT status = 'q'`;",
+      "`UPDATE a SET status = 'y' WHERE status = 'q' AND EXISTS (SELECT 1) OR id = ?`;",
+      "`UPDATE a SET status = 'z' WHERE status = 'q'`;",
+    ].join("\n");
+    expect(scanText(negated, "c")[0]?.values).toEqual(["x", "y", "z"]);
     // A guard far below an update that never closes is not its WHERE.
     const unclosed = ["UPDATE a SET status = 'x', ", ...Array(45).fill("x"), "WHERE status = 'w'"].join("\n");
     expect(scanText(`${unclosed}\nmode = 'b'\nstatus = 'c'\nstatus = 'd'`, "hash")[0]?.values).toEqual(["c", "d", "x"]);

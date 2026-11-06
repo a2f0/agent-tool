@@ -45,5 +45,6 @@ findings in that repository's guidance.
   `*.testUtils.*` files; latest-wins request counters, set-once setup flags,
   one-time focus-return refs, and memoized teardown promises are in the
   skill's leave-alone list.
-  An update whose `WHERE` has an `OR` still counts, even when every branch
-  names the from-state (balebase finance): read it by hand.
+  An update whose `WHERE` has an `OR`, a `NOT` or a subquery still counts,
+  even when every branch names the from-state (balebase finance): read it by
+  hand.

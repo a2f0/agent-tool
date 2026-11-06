@@ -349,8 +349,11 @@ interface UpdateMode {
   readonly phase: "update" | "set" | "where";
   readonly writes: { field: string; key: string }[];
   readonly guards: Set<string>;
-  /** An `OR` in the `WHERE`: some branch may not name the from-state, so nothing is guarded. */
-  readonly branches: boolean;
+  /**
+   * An `OR` or `NOT` in the `WHERE`, or a subquery anywhere in the update:
+   * the from-state may not hold for every row, so nothing is guarded.
+   */
+  readonly loose: boolean;
 }
 
 /** Where the SQL pass is: in code, inside a `SELECT` or `DELETE` (every `field = 'x'` is a comparison), or in an `UPDATE`. */
@@ -366,11 +369,11 @@ function sqlStep(mode: SqlMode, token: Token): { mode: SqlMode; ended?: UpdateMo
   if (token.kind !== "word") return { mode };
   switch (token.text) {
     case "UPDATE":
-      return { mode: { kind: "update", line: token.line, phase: "update", writes: [], guards: new Set(), branches: false }, ended };
+      return { mode: { kind: "update", line: token.line, phase: "update", writes: [], guards: new Set(), loose: false }, ended };
     case "SELECT":
     case "DELETE":
-      // A subquery ends the UPDATE holding it, so writes after it stay counted.
-      return { mode: mode.kind === "update" ? CODE : { kind: "reading", line: token.line }, ended };
+      // A subquery ends the UPDATE holding it unguarded, and writes after it stay counted.
+      return mode.kind === "update" ? { mode: CODE, ended: { ...mode, loose: true } } : { mode: { kind: "reading", line: token.line }, ended };
     case "INSERT":
       return { mode: CODE, ended };
     case "SET":
@@ -378,7 +381,8 @@ function sqlStep(mode: SqlMode, token: Token): { mode: SqlMode; ended?: UpdateMo
     case "WHERE":
       return { mode: mode.kind === "update" ? { ...mode, phase: "where" } : mode };
     case "OR":
-      return { mode: mode.kind === "update" && mode.phase === "where" ? { ...mode, branches: true } : mode };
+    case "NOT":
+      return { mode: mode.kind === "update" && mode.phase === "where" ? { ...mode, loose: true } : mode };
     default:
       return { mode };
   }
@@ -395,14 +399,14 @@ function namesFromState(next: Token | undefined, value: Token | undefined): bool
  * SQL facts about status fields, found token by token with no backtracking:
  * comparisons after `WHERE`/`AND`/`OR`/`ON`/`WHEN` or inside a `SELECT` or
  * `DELETE` are reads, not writes, and an `UPDATE ... SET status = 'x'` is
- * guarded when its own `WHERE`, with no `OR`, names the same field's
+ * guarded when its own `WHERE`, with no `OR`, `NOT` or subquery, names the same field's
  * from-state (`status = 'y'`, `= ?`, `= $1`, `= :from`, `IN (...)`). Such
  * updates make their module the transition table, which the skill leaves alone.
  */
 function sqlStatusFacts(lines: string[]): SqlFacts {
   const facts: SqlFacts = { comparisons: new Set(), guarded: new Set() };
   const finish = (update: UpdateMode) => {
-    if (update.branches) return;
+    if (update.loose) return;
     for (const write of update.writes) if (update.guards.has(write.field)) facts.guarded.add(write.key);
   };
   const tokens = sqlTokens(lines);
