@@ -148,7 +148,9 @@ export async function spawnReviewer(
         await sleep(25);
       }
       // A descendant outside the group may still hold stdout; do not wait on it forever.
-      await Promise.race([closed, sleep(CLOSE_GRACE_MS)]);
+      let grace: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([closed, new Promise(resolve => { grace = setTimeout(resolve, CLOSE_GRACE_MS); })]);
+      clearTimeout(grace);
       child.stdout?.destroy();
     }
     return { status: exit.status, signal: exit.signal, stdout: Buffer.concat(chunks).toString("utf8"), ...(error ? { error } : {}) };

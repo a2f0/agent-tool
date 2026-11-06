@@ -110,3 +110,21 @@ await withReviewInterrupts(async () => {
   expect(existsSync(started)).toBe(false);
   expect(JSON.parse(readFileSync(result, "utf8"))).toEqual({ status: null, error: "review interrupted by SIGTERM" });
 }, 20_000);
+
+test("a finished reviewer does not hold the process open", async () => {
+  const module = path.join(import.meta.dir, "reviewerProcess.ts");
+  // Time from the reviewer's start to process exit, so runtime startup under load does not count.
+  const source = `import { spawnReviewer } from ${JSON.stringify(module)};
+const started = performance.now();
+process.on("exit", () => process.stderr.write(String(Math.round(performance.now() - started))));
+const run = await spawnReviewer("/bin/sh", ["-c", "cat > /dev/null; echo VERDICT: NONE"], { input: "prompt", cwd: "/", env: { PATH: "/bin:/usr/bin" }, timeoutMs: 60_000, maxBuffer: 1024, stderr: 2 });
+process.stdout.write(run.stdout);`;
+  const child = spawn(process.execPath, ["-e", source], { stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "", stderr = "";
+  child.stdout.on("data", chunk => stdout += chunk);
+  child.stderr.on("data", chunk => stderr += chunk);
+  const code = await new Promise<number | null>(resolve => child.once("close", value => resolve(value)));
+  expect([code, stdout]).toEqual([0, "VERDICT: NONE\n"]);
+  // No review timeout, kill escalation, or close grace timer (2s) outlives the run.
+  expect(Number(stderr)).toBeLessThan(1500);
+}, 20_000);
