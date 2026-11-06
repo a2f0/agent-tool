@@ -93,14 +93,14 @@ export function preflight(expectedHead: string, baseBranch: string, baseOid: str
  * merge helper's own checks apply.
  */
 export function mergeReviewedHead(rootDir: string, subject?: string, expectedHead?: string, baseBranch?: string): number {
-  if (expectedHead) {
-    const identity = resolvePr();
-    const branch = baseBranch ?? resolvePullRequestMergeTarget(identity).baseRefName;
-    const baseOid = resolveFreshBaseRef(identity.repo, branch);
-    try { preflight(expectedHead, branch, baseOid); }
-    catch (error) { throw new Error(`Refusing to merge: preflight failed against live ${branch} ${baseOid}: ${(error as Error).message}`); }
-  }
-  return squashMerge(rootDir, subject, expectedHead, baseBranch);
+  if (!expectedHead) return squashMerge(rootDir, subject, expectedHead, baseBranch);
+  const identity = resolvePr();
+  const branch = baseBranch ?? resolvePullRequestMergeTarget(identity).baseRefName;
+  const baseOid = resolveFreshBaseRef(identity.repo, branch);
+  try { preflight(expectedHead, branch, baseOid); }
+  catch (error) { throw new Error(`Refusing to merge: preflight failed against live ${branch} ${baseOid}: ${(error as Error).message}`); }
+  // Bind the merge to the branch that passed preflight, inferred or given, so a retarget in between is refused.
+  return squashMerge(rootDir, subject, expectedHead, branch);
 }
 
 interface Comment { id: string; databaseId: number; body: string; url: string; author: { login: string } | null }

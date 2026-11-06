@@ -46,11 +46,11 @@ beforeEach(() => {
   head = git("rev-parse", "HEAD");
   git("push", "-q", remote, "feature", "feature:production");
   // The stub gh writes its records here; preflight requires a clean checkout.
-  writeFileSync(path.join(fixture, ".git/info/exclude"), "gh-calls.jsonl\nmutation.json\ncreated.json\n");
+  writeFileSync(path.join(fixture, ".git/info/exclude"), "gh-calls.jsonl\nmutation.json\ncreated.json\ntarget-reads\n");
   // Git resolves the fake GitHub URL only to this local bare repository.
   git("config", `url.${remote}.insteadOf`, "https://github.com/owner/repo");
   writeFileSync(path.join(tools, "gh"), `#!${process.execPath}
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
 const scenario = process.env.PR_SCENARIO;
 const head = process.env.PR_HEAD;
@@ -92,7 +92,11 @@ if (args[0] === "repo" && args[1] === "view") {
     writeFileSync("mutation.json", JSON.stringify(args));
     reply({data:{mergePullRequest:{pullRequest:{state:"MERGED"}}}});
   } else {
-    reply({data:{repository:{pullRequest:{id:"PR_test", headRefOid:head, baseRefName:scenario === "retargeted" ? "staging" : "production", state:"OPEN", autoMergeRequest:null, isInMergeQueue:false}}}});
+    // retarget-late moves the PR to staging from the third target read on, after preflight.
+    const reads = (existsSync("target-reads") ? Number(readFileSync("target-reads", "utf8")) : 0) + 1;
+    writeFileSync("target-reads", String(reads));
+    const retargeted = scenario === "retargeted" || (scenario === "retarget-late" && reads >= 3);
+    reply({data:{repository:{pullRequest:{id:"PR_test", headRefOid:head, baseRefName:retargeted ? "staging" : "production", state:"OPEN", autoMergeRequest:null, isInMergeQueue:false}}}});
   }
 } else {
   console.error("Unexpected gh invocation", args);
@@ -166,6 +170,13 @@ describe("PR CLI flows ported from a2f0.net", () => {
       const result = invoke("merged", [...args, "", head, "production"]);
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(`Refusing to merge: preflight failed against live production ${moved}: Reviewed HEAD does not include the reviewed base.`);
+      expect(existsSync(path.join(fixture, "mutation.json"))).toBe(false);
+    });
+
+    test("legacy squashMerge without a base merges only into the branch that passed preflight", () => {
+      const result = invoke("retarget-late", ["squashMerge", "", head]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Pull request base changed from 'production' to 'staging'");
       expect(existsSync(path.join(fixture, "mutation.json"))).toBe(false);
     });
 
