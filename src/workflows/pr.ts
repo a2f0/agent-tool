@@ -4,11 +4,11 @@ import { closeSync, readFileSync } from "node:fs";
 import { createLog } from "../commands/logFile";
 import { DEFAULT_LIMITS, logTail, outputLimit } from "../commands/output";
 import { loadConfig } from "../config";
-import { remoteBranchHead, resolvePr, resolveRepositoryGitUrl } from "../git/prContext";
+import { remoteBranchHead, resolveFreshBaseRef, resolvePr, resolveRepositoryGitUrl } from "../git/prContext";
 import { assertMergeChecks } from "../pr/mergeChecks";
 import { assertStrictBaseFreshness } from "../pr/baseFreshness";
 import { baseFreshness, behindReason, cancelRuns } from "./prFreshness";
-import { resolvePullRequestMergeTarget } from "../pr/squashMerge";
+import { resolvePullRequestMergeTarget, squashMerge } from "../pr/squashMerge";
 import { planVersions } from "../version/bumpVersions";
 import { assert, clean, currentBranch, git, head, json, oid, option, flag, output, poll, timeoutOptions } from "./core";
 
@@ -84,6 +84,23 @@ export function preflight(expectedHead: string, baseBranch: string, baseOid: str
   if (config.versions.packages !== null) assert(planVersions(process.cwd(), baseOid).every(plan => plan.headVersion === plan.targetVersion), "Package versions are stale against the reviewed base.");
   assert(head() === expectedHead, "Local HEAD changed during preflight.");
   return { ok: true, repo: identity.repo, pr: pr.number, url: pr.url, headOid: expectedHead, baseBranch, baseOid, checks: checks.checks };
+}
+
+/**
+ * Merge a reviewed HEAD only after every preflight gate passes against the
+ * freshly fetched live base: a skipped, failed, or stale preflight run never
+ * leads to a merge. Without a reviewed HEAD (legacy manual form) only the
+ * merge helper's own checks apply.
+ */
+export function mergeReviewedHead(rootDir: string, subject?: string, expectedHead?: string, baseBranch?: string): number {
+  if (expectedHead) {
+    const identity = resolvePr();
+    const branch = baseBranch ?? resolvePullRequestMergeTarget(identity).baseRefName;
+    const baseOid = resolveFreshBaseRef(identity.repo, branch);
+    try { preflight(expectedHead, branch, baseOid); }
+    catch (error) { throw new Error(`Refusing to merge: preflight failed against live ${branch} ${baseOid}: ${(error as Error).message}`); }
+  }
+  return squashMerge(rootDir, subject, expectedHead, baseBranch);
 }
 
 interface Comment { id: string; databaseId: number; body: string; url: string; author: { login: string } | null }

@@ -446,6 +446,14 @@ test("a nested checkout whose .git Git cannot open never resolves to the enclosi
   expect(checkoutRoot(f.root)).toBe(realpathSync(f.root));
 });
 
+test("usage errors exit non-zero, so a hidden one never reads as success", () => {
+  // An agent piped `pr preflight` with missing arguments through `tail`; the command itself must still fail.
+  const f = fixture();
+  for (const args of [["pr", "preflight"], ["pr", "preflight", f.git(["rev-parse", "HEAD"]), "main"], ["pr", "merge"], ["pr", "merge", "", "abc", "main"], ["pr", "checks", "--bogus"], ["release", "verify"], ["repo", "cleanup"], ["versions", "check"], ["branch", "bogus"], ["bogus"]]) {
+    const result = f.run(args); expect({ args, status: result.status }).toEqual({ args, status: 1 }); expect(result.stderr).not.toBe("");
+  }
+}, 30_000);
+
 test("signed commit checks ignore signature display without weakening trust or message policy", () => {
   const f = fixture({ commits: { signatures: "verified", rejectCoauthors: true, rejectClaudeAttribution: true, subjects: true } });
   const key = path.join(f.root, ".git/signing-key");

@@ -1,10 +1,10 @@
 import { openPr } from "./pr/openPr";
-import { squashMerge } from "./pr/squashMerge";
 import { solicitClaudeCodeReview } from "./review/solicitClaudeCodeReview";
 import { solicitCodexReview } from "./review/solicitCodexReview";
 import { solicitOpencodeReview } from "./review/solicitOpencodeReview";
 import { bumpVersions, checkVersions } from "./version/bumpVersions";
 import { resolveVersionConflicts } from "./version/resolveVersionConflicts";
+import { mergeReviewedHead } from "./workflows/pr";
 
 const AGENT_TOOL_USAGE =
   "Usage: agent-tool <solicitClaudeCodeReview|solicitCodexReview|solicitOpencodeReview|openPr|squashMerge|bumpVersions|checkVersions|resolveVersionConflicts> [args]\n";
@@ -36,7 +36,8 @@ const defaultActions: AgentToolActions = {
   solicitClaudeCodeReview,
   solicitCodexReview,
   solicitOpencodeReview,
-  squashMerge,
+  // A reviewed HEAD merges only after every preflight gate passes.
+  squashMerge: mergeReviewedHead,
 };
 
 function assertMaximumPositionals(

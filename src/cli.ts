@@ -16,7 +16,6 @@ import { bumpVersions, checkVersions, planVersions } from "./version/bumpVersion
 import { prepareVersions } from "./version/prepareVersions";
 import { resolveVersionConflicts } from "./version/resolveVersionConflicts";
 import { openPr } from "./pr/openPr";
-import { squashMerge } from "./pr/squashMerge";
 import metadata from "../package.json";
 import { runCommand } from "./commands/run";
 import { inspectLog } from "./commands/output";
@@ -25,7 +24,7 @@ import { branchCommand } from "./workflows/branch";
 import { commitsCommand, binariesCommand, gateCommand } from "./workflows/checks";
 import { hooksCommand } from "./workflows/hooks";
 import { repoCommand, policyCommand, toolchainCommand } from "./workflows/repository";
-import { prWorkflowCommand } from "./workflows/pr";
+import { mergeReviewedHead, prWorkflowCommand } from "./workflows/pr";
 import { releaseCommand } from "./release/commands";
 import { checkoutRoot } from "./workflows/core";
 import { procCommand, teardownCommand } from "./processes/commands";
@@ -251,7 +250,7 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
     }
     usage(action === "merge" && args.length === 3, "Usage: agent-tool pr merge <subject-or-empty> <reviewed-head-oid> <base-branch>");
     usage(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(args[1]!), "Merge requires a full reviewed HEAD OID.");
-    return squashMerge(root, args[0], args[1], args[2]);
+    return mergeReviewedHead(root, args[0], args[1], args[2]);
   }
   if (command === "versions") {
     const action = args.shift();

@@ -44,7 +44,9 @@ beforeEach(() => {
   git("-c", "user.name=Test", "-c", "user.email=test@example.com",
     "-c", "commit.gpgsign=false", "commit", "-qm", "feat: example");
   head = git("rev-parse", "HEAD");
-  git("push", "-q", remote, "feature");
+  git("push", "-q", remote, "feature", "feature:production");
+  // The stub gh writes its records here; preflight requires a clean checkout.
+  writeFileSync(path.join(fixture, ".git/info/exclude"), "gh-calls.jsonl\nmutation.json\ncreated.json\n");
   // Git resolves the fake GitHub URL only to this local bare repository.
   git("config", `url.${remote}.insteadOf`, "https://github.com/owner/repo");
   writeFileSync(path.join(tools, "gh"), `#!${process.execPath}
@@ -66,7 +68,12 @@ if (args[0] === "repo" && args[1] === "view") {
 } else if (args[0] === "pr" && args[1] === "checks") {
   reply([{name:"build", workflow:"CI", state:scenario === "failed-ci" ? "FAILURE" : "SUCCESS"}]);
 } else if (args[0] === "pr" && args[1] === "view") {
-  if (args.includes("headRefOid")) {
+  const fields = args[args.indexOf("--json") + 1] ?? "";
+  if (fields === "headRefOid,statusCheckRollup") {
+    reply({headRefOid:head, statusCheckRollup:[{}]});
+  } else if (fields.startsWith("number,url,state")) {
+    reply({number:12, url:"https://github.com/owner/repo/pull/12", state:"OPEN", title:"feat: example", headRefName:"feature", headRefOid:head, baseRefName:"production", baseRefOid:head, isDraft:false, mergeable:"MERGEABLE", mergeStateStatus:scenario === "blocked" ? "BLOCKED" : "CLEAN", isCrossRepository:false, mergeCommit:null});
+  } else if (args.includes("headRefOid")) {
     reply({headRefOid:scenario === "head-drift" ? "b".repeat(40) : head});
   } else if (args.includes("state")) {
     reply({state:scenario === "unmerged" ? "OPEN" : "MERGED"});
@@ -148,6 +155,42 @@ describe("PR CLI flows ported from a2f0.net", () => {
     expect(result.status).toBe(status);
     expect(existsSync(path.join(fixture, "mutation.json"))).toBe(status === 0);
     if (status) expect(result.stderr).toContain("can bypass strict base freshness for owner/repo:production");
+  });
+
+  // pr merge used to send the mutation whether or not a preflight had run or passed.
+  describe("runs every preflight gate itself before merging", () => {
+    test.each(["squashMerge", "pr"])("%s refuses a head that lacks the live base", (command) => {
+      const args = command === "pr" ? ["pr", "merge"] : [command];
+      const moved = git("commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "feat: newer base");
+      git("push", "-q", path.join(temporary, "remote.git"), `${moved}:refs/heads/production`);
+      const result = invoke("merged", [...args, "", head, "production"]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`Refusing to merge: preflight failed against live production ${moved}: Reviewed HEAD does not include the reviewed base.`);
+      expect(existsSync(path.join(fixture, "mutation.json"))).toBe(false);
+    });
+
+    test("refuses a reviewed HEAD other than the checked-out one", () => {
+      const result = invoke("merged", ["pr", "merge", "", "c".repeat(40), "production"]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Local HEAD differs from reviewed HEAD.");
+      expect(existsSync(path.join(fixture, "mutation.json"))).toBe(false);
+    });
+
+    test("refuses a checkout with local changes", () => {
+      writeFileSync(path.join(fixture, "user-edit"), "keep");
+      const result = invoke("merged", ["pr", "merge", "", head, "production"]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Checkout has local changes");
+      expect(readFileSync(path.join(fixture, "user-edit"), "utf8")).toBe("keep");
+      expect(existsSync(path.join(fixture, "mutation.json"))).toBe(false);
+    });
+
+    test("refuses a PR GitHub does not report as ready to merge", () => {
+      const result = invoke("blocked", ["pr", "merge", "", head, "production"]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("PR is not ready to merge (OPEN/MERGEABLE/BLOCKED).");
+      expect(existsSync(path.join(fixture, "mutation.json"))).toBe(false);
+    });
   });
 
   test("does not report success if GitHub still reports OPEN after mutation", () => {
