@@ -70,9 +70,10 @@ test("a step whose runner cannot start is reported failed, not still running", (
 }, 20_000);
 
 /**
- * Starts a one-step run-group in a fresh repository and sends it SIGTERM once the step has
- * written `ready`. With `gitCalls`, every git call after that sleeps and is counted, and the
- * signal waits for that many calls, so it lands inside a chosen synchronous source read.
+ * Starts a two-step run-group in a fresh repository and sends it SIGTERM once the first step has
+ * written `ready`; the second step only writes `second`. With `gitCalls`, every git call after
+ * `ready` sleeps and is counted, and the signal waits for that many calls, so it lands inside a
+ * chosen synchronous source read.
  */
 async function interruptGroup(step: (ready: string) => string, options: { gitCalls?: number } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "group-tests-"));
@@ -80,13 +81,13 @@ async function interruptGroup(step: (ready: string) => string, options: { gitCal
   try {
     const env: Record<string, string | undefined> = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", AGENT_TOOL_CONFIG: "" };
     for (const args of [["init", "-q", "-b", "main"], ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "chore: initialize"]]) execFileSync("git", args, { cwd: root, env });
-    const ready = path.join(scratch, "ready"), calls = path.join(scratch, "calls"), plan = path.join(scratch, "plan.json");
+    const ready = path.join(scratch, "ready"), second = path.join(scratch, "second"), calls = path.join(scratch, "calls"), plan = path.join(scratch, "plan.json");
     if (options.gitCalls) {
       const bin = path.join(scratch, "bin"); mkdirSync(bin);
       writeFileSync(path.join(bin, "git"), `#!/bin/sh\nif [ -f ${JSON.stringify(ready)} ]; then echo x >> ${JSON.stringify(calls)}; sleep 0.3; fi\nexec ${JSON.stringify(Bun.which("git")!)} "$@"\n`, { mode: 0o755 });
       env["PATH"] = `${bin}${path.delimiter}${env["PATH"]}`;
     }
-    writeFileSync(plan, JSON.stringify({ label: "verify", steps: [{ label: "first", command: [process.execPath, "-e", step(ready)] }] }));
+    writeFileSync(plan, JSON.stringify({ label: "verify", steps: [{ label: "first", command: [process.execPath, "-e", step(ready)] }, { label: "second", command: [process.execPath, "-e", `require("fs").writeFileSync(${JSON.stringify(second)}, "yes")`] }] }));
     const child = spawn(process.execPath, [path.resolve(import.meta.dir, "../index.ts"), "run-group", plan], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     child.stdout.on("data", chunk => stdout += chunk);
@@ -101,7 +102,7 @@ async function interruptGroup(step: (ready: string) => string, options: { gitCal
       const printed = JSON.parse(stdout);
       const saved = JSON.parse(readFileSync(printed.report, "utf8"));
       for (const receipt of saved.steps.map((item: { receipt: { log: string } | null }) => item.receipt)) if (receipt) rmSync(path.dirname(receipt.log), { recursive: true, force: true });
-      return { signal, printed, saved };
+      return { signal, printed, saved, secondRan: existsSync(second) };
     } finally { child.kill("SIGKILL"); }
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -110,22 +111,23 @@ async function interruptGroup(step: (ready: string) => string, options: { gitCal
 }
 
 test("an interrupted group saves a finished, failed report before it exits on the signal", async () => {
-  const { signal, printed, saved } = await interruptGroup(ready => `require("fs").writeFileSync(${JSON.stringify(ready)}, "yes"); setInterval(() => {}, 1000);`);
-  // Signal termination is preserved for the caller, after the report.
-  expect(signal).toBe("SIGTERM");
+  const { signal, printed, saved, secondRan } = await interruptGroup(ready => `require("fs").writeFileSync(${JSON.stringify(ready)}, "yes"); setInterval(() => {}, 1000);`);
+  // Signal termination is preserved for the caller, after the report, and no further step starts.
+  expect([signal, secondRan]).toEqual(["SIGTERM", false]);
   for (const record of [printed, saved]) {
     expect([record.status, record.error, typeof record.endedAt]).toEqual(["failed", "Interrupted by SIGTERM.", "string"]);
-    expect(record.steps.map((step: { status: string }) => step.status)).toEqual(["failed"]);
+    expect(record.steps.map((step: { status: string }) => step.status)).toEqual(["failed", "pending"]);
     expect(record.steps[0].receipt.signal).toBe("SIGTERM");
   }
 }, 20_000);
 
-// After a step, sourceState makes seven git calls; the final read after the last step makes seven more.
-for (const [phase, gitCalls] of [["after a step", 2], ["in the final read", 9]] as const) {
+// Each source read makes seven git calls: after the first step (calls 1-7), after the second (8-14),
+// and the final read (15-21).
+for (const [phase, gitCalls, steps] of [["after a step", 2, ["passed", "pending"]], ["in the final read", 16, ["passed", "passed"]]] as const) {
   test(`a signal that arrives while the group fingerprints the source ${phase} fails the group`, async () => {
-    // The step has exited; the signal lands in a synchronous source read.
-    const { signal, saved } = await interruptGroup(ready => `require("fs").writeFileSync(${JSON.stringify(ready)}, "yes");`, { gitCalls });
-    expect(signal).toBe("SIGTERM");
-    expect([saved.status, saved.error, saved.steps[0].status]).toEqual(["failed", "Interrupted by SIGTERM.", "passed"]);
+    // The first step has exited; the signal lands in a synchronous source read.
+    const { signal, saved, secondRan } = await interruptGroup(ready => `require("fs").writeFileSync(${JSON.stringify(ready)}, "yes");`, { gitCalls });
+    expect([signal, secondRan]).toEqual(["SIGTERM", steps[1] === "passed"]);
+    expect([saved.status, saved.error, saved.steps.map((step: { status: string }) => step.status)]).toEqual(["failed", "Interrupted by SIGTERM.", steps]);
   }, 30_000);
 }
