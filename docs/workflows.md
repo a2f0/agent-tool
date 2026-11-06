@@ -186,7 +186,10 @@ failed jobs fail immediately. Duplicate jobs from push/PR workflows must all
 finish. A changed PR HEAD or state fails immediately. Timeout and interval are
 seconds (interval 1–60, default 10); `--timeout 0` performs one observation.
 Without `--timeout`, the wait is `merge.checksTimeoutSeconds` from
-`agent-tool.json`, or 900 seconds when that is unset.
+`agent-tool.json`, or 900 seconds when that is unset. Each `gh` or `git` call
+during a wait may run for the time left before the deadline, but at least 15
+and at most 120 seconds; a call that runs longer is stopped and fails the wait,
+so a hung call ends it instead of keeping it running forever.
 
 Every observation also compares the head with the live tip of the PR's base
 branch through GitHub's compare API, asking again only after the base moves,
@@ -360,7 +363,9 @@ registry gitHead when present, SHA-512 tarball integrity, and the package.json
 inside the tarball. Tarballs must come from HTTPS registry.npmjs.org, are capped
 at 100 MiB, and are read with `tar -xzOf` without extraction to disk. `tar` must
 be on PATH. Reports include workflow URL and artifact integrity. Timeout and
-interval use the same options as PR checks. Project-specific deploy previews,
+interval use the same options and per-call limits as PR checks; without
+`--timeout` it waits 3600 seconds, since publishing runs can take most of an
+hour before npm propagation. Project-specific deploy previews,
 health checks, trusted-publishing credentials, and release artifacts remain local.
 
 ## Durable validation groups

@@ -1,5 +1,6 @@
 import { gitEnvironment } from "./environment";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
+import { boundedExecFileSync } from "../system/boundedCalls";
 import { randomUUID } from "node:crypto";
 
 import { viewCurrentBranchPr } from "./currentBranchPr";
@@ -30,7 +31,7 @@ interface SpawnResult {
 export const MAX_BUFFER_BYTES = 512 * 1024 * 1024;
 
 export function run(command: string, args: string[]): string {
-  return execFileSync(command, args, {
+  return boundedExecFileSync(command, args, {
     env: gitEnvironment(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
