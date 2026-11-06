@@ -5,6 +5,7 @@ import { decidePublish, readRegistryState } from "./npm";
 import { assert, flag, json, oid, option, output, poll, repository, timeoutOptions } from "../workflows/core";
 
 function packageName(name: unknown): asserts name is string { assert(typeof name === "string" && /^(?:@[a-z0-9._-]+\/)?[a-z0-9][a-z0-9._-]*$/.test(name), "Invalid npm package name."); }
+export const RELEASE_TIMEOUT_SECONDS = 3600;
 export interface ReleaseRun { databaseId: number; status: string; conclusion: string; headSha: string; url: string }
 /**
  * Downloads and checks the published tarball. Resolves null only when the
@@ -64,7 +65,8 @@ export async function releaseCommand(args: string[]): Promise<number> {
     output({ name: manifest.name, version: manifest.version, privateSource: manifest.private === true, ...decision }); return 0;
   }
   const workflow = option(args, "--workflow");
-  const options = timeoutOptions(args);
+  // Publishing runs commonly take 35-45 minutes before npm propagation, so wait an hour unless told otherwise.
+  const options = timeoutOptions(args, RELEASE_TIMEOUT_SECONDS);
   assert(action === "verify" && args.length === 3 && workflow, "Usage: release verify <package> <version> <merge-oid> --workflow <name> [--timeout seconds] [--interval seconds]");
   const [name, version, commit] = args as [string, string, string];
   packageName(name); oid(commit);

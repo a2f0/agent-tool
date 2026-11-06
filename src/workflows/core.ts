@@ -1,13 +1,14 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { lstatSync, realpathSync, writeSync } from "node:fs";
 import path from "node:path";
 import { gitEnvironment } from "../git/environment";
+import { boundedExecFileSync, withCallDeadline } from "../system/boundedCalls";
 
 export function output(value: unknown): void { writeSync(1, `${JSON.stringify(value, null, 2)}\n`); }
 export function assert(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }
 export function oid(value: string): string { assert(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value), "Expected a full commit OID."); return value; }
 export function read(command: string, args: string[], cwd = process.cwd()): string {
-  return execFileSync(command, args, { cwd, env: gitEnvironment(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 }).trimEnd();
+  return boundedExecFileSync(command, args, { cwd, env: gitEnvironment(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 }).trimEnd();
 }
 export function git(args: string[], cwd = process.cwd()): string { return read("git", args, cwd); }
 export function json<T>(args: string[]): T { return JSON.parse(read("gh", args)) as T; }
@@ -88,9 +89,10 @@ export function timeoutOptions(args: string[], defaultSeconds = 900): { timeoutM
 export async function poll<T>(inspect: () => { done: boolean; value: T } | Promise<{ done: boolean; value: T }>, options: { timeoutMs: number; intervalMs: number }): Promise<T> {
   const deadline = Date.now() + options.timeoutMs;
   while (true) {
-    const result = await inspect();
+    // Each external call inside an inspection is bounded too, so a hung one cannot outlast the wait.
+    const result = await withCallDeadline(deadline, inspect);
     if (result.done) return result.value;
-    assert(Date.now() < deadline, `Timed out waiting: ${JSON.stringify(result.value)}`);
+    assert(Date.now() < deadline, `Timed out waiting: ${JSON.stringify(result.value)} Pass --timeout <seconds> to wait longer.`);
     await new Promise(resolve => setTimeout(resolve, Math.min(options.intervalMs, deadline - Date.now())));
   }
 }
