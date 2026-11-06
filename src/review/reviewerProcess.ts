@@ -16,27 +16,35 @@ export interface ReviewerResult {
   readonly error?: Error;
 }
 
+/** A started reviewer, as the interruption handler sees it. */
+interface Reviewer { stop(signal: NodeJS.Signals): void }
+
 interface ReviewScope {
   signal: NodeJS.Signals | null;
-  readonly children: Set<ChildProcess>;
+  readonly reviewers: Set<Reviewer>;
 }
 
 let scope: ReviewScope | null = null;
-const stopping = new WeakSet<ChildProcess>();
 
 /** Signal handlers run only between tasks; let one that is already pending run first. */
 const handlePendingSignals = () => new Promise(resolve => setImmediate(resolve));
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-const running = (child: ChildProcess) => child.exitCode === null && child.signalCode === null;
+// Each reviewer leads its own process group, so stopping it reaches every descendant that stays
+// in the group (a CLI wrapper's native binary, a shell's children), as `agent-tool run` does.
+const grouped = process.platform !== "win32";
 
-/** Ask a reviewer to stop, and kill it if it is still running after the grace period. */
-function stop(child: ChildProcess, signal: NodeJS.Signals): void {
-  if (!running(child)) return;
-  child.kill(signal);
-  if (stopping.has(child)) return;
-  stopping.add(child);
-  const timer = setTimeout(() => { if (running(child)) child.kill("SIGKILL"); }, STOP_GRACE_MS);
-  child.once("exit", () => clearTimeout(timer));
+function signalGroup(child: ChildProcess, signal: NodeJS.Signals | 0): boolean {
+  if (!child.pid) return false;
+  try {
+    if (grouped) process.kill(-child.pid, signal);
+    else if (signal) child.kill(signal);
+    else return child.exitCode === null && child.signalCode === null;
+    return true;
+  } catch (error) {
+    // EPERM: the group still exists, now holding a process this user cannot signal.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 /**
@@ -48,10 +56,10 @@ function stop(child: ChildProcess, signal: NodeJS.Signals): void {
  */
 export async function withReviewInterrupts<T>(work: () => Promise<T>): Promise<T> {
   if (scope) return work();
-  const current: ReviewScope = { signal: null, children: new Set() };
+  const current: ReviewScope = { signal: null, reviewers: new Set() };
   const handlers = FORWARDED_SIGNALS.map(value => [value, () => {
     current.signal ??= value;
-    for (const child of current.children) stop(child, value);
+    for (const reviewer of current.reviewers) reviewer.stop(value);
   }] as const);
   scope = current;
   for (const [value, handler] of handlers) process.on(value, handler);
@@ -74,9 +82,12 @@ export async function withReviewInterrupts<T>(work: () => Promise<T>): Promise<T
  * Run a reviewer CLI without blocking the event loop, so an interruption can
  * stop it. The prompt goes to stdin, stdout is captured up to `maxBuffer`, and
  * stderr goes to the `stderr` descriptor. Past `timeoutMs` or `maxBuffer` the
- * reviewer is stopped, and killed if it ignores SIGTERM, and the result carries
- * an `ETIMEDOUT` or `ENOBUFS` error as `spawnSync` reports them. Inside an
- * interrupted `withReviewInterrupts`, no reviewer starts.
+ * reviewer is stopped, and the result carries an `ETIMEDOUT` or `ENOBUFS`
+ * error as `spawnSync` reports them. A stopped reviewer's process group gets
+ * the signal, then SIGKILL after `STOP_GRACE_MS`; the run settles only once
+ * that group is gone, and a group the reviewer left behind when it exited is
+ * stopped the same way. Inside an interrupted `withReviewInterrupts`, no
+ * reviewer starts.
  */
 export async function spawnReviewer(
   command: string,
@@ -88,49 +99,62 @@ export async function spawnReviewer(
   if (owner?.signal) {
     return { status: null, signal: null, stdout: "", error: new Error(`review interrupted by ${owner.signal}`) };
   }
-  return new Promise(resolve => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    let error: Error | undefined;
-    let settled = false;
-    let closeTimer: ReturnType<typeof setTimeout> | undefined;
-    let child: ChildProcess;
-    try {
-      child = spawn(command, args, { cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", options.stderr] });
-    } catch (spawnError) {
-      resolve({ status: null, signal: null, stdout: "", error: spawnError as Error });
-      return;
-    }
-    const fail = (code: string, message: string) => {
-      error ??= Object.assign(new Error(message), { code });
-      stop(child, "SIGTERM");
-    };
-    const timer = setTimeout(() => fail("ETIMEDOUT", `${command} timed out after ${options.timeoutMs} ms`), options.timeoutMs);
-    const finish = (status: number | null, signal: NodeJS.Signals | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      clearTimeout(closeTimer);
-      owner?.children.delete(child);
-      resolve({ status, signal, stdout: Buffer.concat(chunks).toString("utf8"), ...(error ? { error } : {}) });
-    };
-    owner?.children.add(child);
+  let child: ChildProcess;
+  try {
+    child = spawn(command, args, { cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", options.stderr], detached: grouped });
+  } catch (spawnError) {
+    return { status: null, signal: null, stdout: "", error: spawnError as Error };
+  }
+  const chunks: Buffer[] = [];
+  let size = 0;
+  let error: Error | undefined;
+  let killAt: number | null = null;
+  const reviewer: Reviewer = {
+    stop(signal) {
+      signalGroup(child, signal);
+      killAt ??= Date.now() + STOP_GRACE_MS;
+    },
+  };
+  const fail = (code: string, message: string) => {
+    error ??= Object.assign(new Error(message), { code });
+    reviewer.stop("SIGTERM");
+  };
+  owner?.reviewers.add(reviewer);
+  const timer = setTimeout(() => fail("ETIMEDOUT", `${command} timed out after ${options.timeoutMs} ms`), options.timeoutMs);
+  // While stopping, escalate to SIGKILL at the deadline even if the reviewer has not exited yet.
+  const escalation = setInterval(() => { if (killAt !== null && Date.now() >= killAt) signalGroup(child, "SIGKILL"); }, 50);
+  try {
     child.stdout!.on("data", (chunk: Buffer) => {
       size += chunk.length;
       if (size > options.maxBuffer) fail("ENOBUFS", `${command} wrote more than ${options.maxBuffer} bytes to stdout`);
       else chunks.push(chunk);
     });
+    const closed = new Promise<void>(resolve => child.stdout!.once("close", () => resolve()));
     // A reviewer may exit without reading the whole prompt.
     child.stdin!.on("error", () => {});
     child.stdin!.end(options.input);
-    child.once("error", spawnError => {
-      error ??= spawnError;
-      if (child.pid === undefined) finish(null, null);
+    const exit = await new Promise<{ status: number | null; signal: NodeJS.Signals | null }>(resolve => {
+      child.once("error", spawnError => {
+        error ??= spawnError;
+        if (child.pid === undefined) resolve({ status: null, signal: null });
+      });
+      child.once("exit", (status, signal) => resolve({ status, signal }));
     });
-    child.once("exit", (status, signal) => {
-      // A descendant still holding stdout must not keep the review waiting.
-      closeTimer = setTimeout(() => { child.stdout?.destroy(); finish(status, signal); }, CLOSE_GRACE_MS);
-    });
-    child.once("close", (status, signal) => finish(status, signal));
-  });
+    if (child.pid !== undefined) {
+      // The review is over once its process group is: stop whatever the reviewer left in it.
+      if (signalGroup(child, 0)) reviewer.stop("SIGTERM");
+      while (signalGroup(child, 0)) {
+        if (killAt !== null && Date.now() >= killAt + STOP_GRACE_MS) break;
+        await sleep(25);
+      }
+      // A descendant outside the group may still hold stdout; do not wait on it forever.
+      await Promise.race([closed, sleep(CLOSE_GRACE_MS)]);
+      child.stdout?.destroy();
+    }
+    return { status: exit.status, signal: exit.signal, stdout: Buffer.concat(chunks).toString("utf8"), ...(error ? { error } : {}) };
+  } finally {
+    clearTimeout(timer);
+    clearInterval(escalation);
+    owner?.reviewers.delete(reviewer);
+  }
 }

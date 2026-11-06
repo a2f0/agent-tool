@@ -61,6 +61,23 @@ test("an interrupted review stops its reviewer and removes the snapshot before e
   } finally { child.kill("SIGKILL"); if (alive(reviewer)) process.kill(reviewer, "SIGKILL"); }
 }, 30_000);
 
+test("an interrupted review also stops the reviewer's descendants", async () => {
+  // Like a CLI wrapper around a native binary: the reviewer waits on a child of its own.
+  const setup = fixture(pidFile => `cat > /dev/null\nsleep 60 &\necho $! > ${JSON.stringify(`${pidFile}.child`)}\necho $$ > ${JSON.stringify(pidFile)}\nwait`);
+  const { child, closed, reviewer } = await startReview(setup);
+  const descendant = Number(readFileSync(`${setup.pidFile}.child`, "utf8"));
+  try {
+    expect([alive(reviewer), alive(descendant)]).toEqual([true, true]);
+    child.kill("SIGTERM");
+    expect((await closed).signal).toBe("SIGTERM");
+    expect([alive(reviewer), alive(descendant)]).toEqual([false, false]);
+    expect(readdirSync(setup.temporary)).toEqual([]);
+  } finally {
+    child.kill("SIGKILL");
+    for (const pid of [reviewer, descendant]) if (alive(pid)) process.kill(pid, "SIGKILL");
+  }
+}, 30_000);
+
 test("a reviewer that ignores SIGTERM past the review timeout is killed", async () => {
   const setup = fixture(pidFile => `trap '' TERM\ncat > /dev/null\necho $$ > ${JSON.stringify(pidFile)}\nwhile :; do sleep 1; done`, { schemaVersion: 1, review: { timeoutMs: 1000 } });
   const { child, closed, reviewer, stderr } = await startReview(setup);
