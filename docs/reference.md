@@ -508,7 +508,8 @@ every reviewer: severity levels, security, type safety, and missing tests, and
 implicit state machines the diff adds or extends (Major when an impossible
 combination or stale async result is reachable, judged by the installed
 `explicit-state-machines` skill's convert and leave-alone criteria when the
-snapshot has it). Files are materialized from raw Git blobs with collision and path
+snapshot has it and the diff leaves that skill unchanged, since the snapshot is
+the reviewed head). Files are materialized from raw Git blobs with collision and path
 validation, and diffs are text-only without external drivers. Snapshots are
 cleaned up, output must end in a verdict, and an incomplete but successful run
 is retried once. Helper Git operations disable hooks and replace objects.

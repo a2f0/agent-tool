@@ -123,8 +123,10 @@ describe("buildReviewPrompt", () => {
         "Do not flag independent toggles, single booleans, or closed unions with one writer",
       );
       expect(instructions).toContain(
-        "When the snapshot has `.agents/skills/explicit-state-machines/SKILL.md` or `.claude/skills/explicit-state-machines/SKILL.md`, apply its convert and leave-alone criteria",
+        "When the snapshot has `.agents/skills/explicit-state-machines/SKILL.md` or `.claude/skills/explicit-state-machines/SKILL.md` and the diff does not change that skill's directory, apply its convert and leave-alone criteria",
       );
+      // The snapshot is the PR head, so a PR that edits the skill must not relax its own review.
+      expect(instructions).toContain("when the diff changes it, judge by this bullet alone");
       // Still one bullet.
       expect(instructions.split("\n").filter(line => line.includes("state machine"))).toHaveLength(1);
     }
