@@ -109,29 +109,33 @@ export async function runGroup(args: string[]): Promise<number> {
   const started = performance.now();
   let record: GroupRecord = { schemaVersion: 1, id, label: plan.label, startedAt: new Date().toISOString(), endedAt: null, durationMs: 0, status: "running", before, after: null, steps: plan.steps.map(step => ({ label: step.label, status: "pending", receipt: null })), error: null };
   const send = (event: GroupEvent) => { record = groupTransition(record, event); };
-  save(report, record);
   // A signal must not end the process before the report is finished: the step's runner forwards it
   // to the step and returns, the group stops, and the signal is raised again once the report is saved.
   const interrupt: { signal: NodeJS.Signals | null } = { signal: null };
   const handlers = FORWARDED_SIGNALS.map(value => [value, () => { interrupt.signal ??= value; }] as const);
   for (const [value, handler] of handlers) process.on(value, handler);
+  // Handlers run only between tasks, and a signal still queued when they are removed is lost.
+  // Fingerprinting and saving are synchronous, so yield before each decision that reads it.
+  const interrupted = async () => { await new Promise(resolve => setImmediate(resolve)); return interrupt.signal; };
+  save(report, record);
   let code = 0;
   try {
     try {
       for (const [index, step] of plan.steps.entries()) {
-        if (interrupt.signal) break;
+        if (await interrupted()) break;
         send({ type: "stepStarted", index }); save(report, record);
         code = await runCommand(["--label", step.label, "--", ...step.command], receipt => { send({ type: "stepFinished", index, receipt }); save(report, record); }, { quiet: true, reraiseChildSignal: false, reraiseInterrupt: false });
         const after = sourceState();
         assert(JSON.stringify(after) === JSON.stringify(before), "Source state changed during validation; results do not establish the current checkout.");
         if (code !== 0) break;
       }
-      if (interrupt.signal) throw new Error(`Interrupted by ${interrupt.signal}.`);
+      if (await interrupted()) throw new Error(`Interrupted by ${interrupt.signal}.`);
     } catch (error) { code = 1; send({ type: "failed", error: (error as Error).message }); }
     send({ type: "finished", passed: code === 0, endedAt: new Date().toISOString(), durationMs: Math.round(performance.now() - started) });
     try { send({ type: "settled", after: sourceState() }); } catch (error) { code = 1; send({ type: "settleFailed", error: (error as Error).message }); }
     save(report, record);
     output({ ...record, report });
+    await interrupted();
   } finally {
     for (const [value, handler] of handlers) process.removeListener(value, handler);
   }
