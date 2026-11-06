@@ -4,12 +4,16 @@ import { constants } from "node:os";
 import { DEFAULT_LIMITS, outputLimit, plainText, printLogTail } from "./output";
 import { createLog } from "./logFile";
 
-const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+export const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
 export interface RunReceipt { status: string; label?: string; exitCode: number; signal: string | null; durationMs: number; outputBytes: number; log: string; leftoverProcessGroup?: number }
 
-/** Run directly into a private file: child output never accumulates in memory. */
-export async function runCommand(args: string[], record?: (receipt: RunReceipt) => void, options: { quiet?: boolean; reraiseChildSignal?: boolean } = {}): Promise<number> {
+/**
+ * Run directly into a private file: child output never accumulates in memory.
+ * A caller that must record the interruption before exiting passes
+ * `reraiseInterrupt: false` and re-raises the signal itself.
+ */
+export async function runCommand(args: string[], record?: (receipt: RunReceipt) => void, options: { quiet?: boolean; reraiseChildSignal?: boolean; reraiseInterrupt?: boolean } = {}): Promise<number> {
   const limits = { ...DEFAULT_LIMITS };
   let label: string | undefined;
   while (args[0] !== "--" && args.length) {
@@ -99,7 +103,7 @@ export async function runCommand(args: string[], record?: (receipt: RunReceipt) 
   }
   // Preserve signal termination for calling shells/supervisors, after the receipt.
   if (signal) {
-    if (interrupted || options.reraiseChildSignal !== false) {
+    if (interrupted ? options.reraiseInterrupt !== false : options.reraiseChildSignal !== false) {
       process.kill(process.pid, signal);
       // Let the runtime deliver its signal before main sets process.exitCode
       // can turn signal termination into an ordinary numeric exit under load.

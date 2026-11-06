@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, writeFileSync } from "node:fs";
+import { constants } from "node:os";
 import path from "node:path";
-import { runCommand, type RunReceipt } from "./run";
+import { FORWARDED_SIGNALS, runCommand, type RunReceipt } from "./run";
 import { assert, git, head, oid, option, output } from "../workflows/core";
 import { gitEnvironment } from "../git/environment";
 
@@ -109,20 +110,39 @@ export async function runGroup(args: string[]): Promise<number> {
   let record: GroupRecord = { schemaVersion: 1, id, label: plan.label, startedAt: new Date().toISOString(), endedAt: null, durationMs: 0, status: "running", before, after: null, steps: plan.steps.map(step => ({ label: step.label, status: "pending", receipt: null })), error: null };
   const send = (event: GroupEvent) => { record = groupTransition(record, event); };
   save(report, record);
+  // A signal must not end the process before the report is finished: the step's runner forwards it
+  // to the step and returns, the group stops, and the signal is raised again once the report is saved.
+  const interrupt: { signal: NodeJS.Signals | null } = { signal: null };
+  const handlers = FORWARDED_SIGNALS.map(value => [value, () => { interrupt.signal ??= value; }] as const);
+  for (const [value, handler] of handlers) process.on(value, handler);
   let code = 0;
   try {
-    for (const [index, step] of plan.steps.entries()) {
-      send({ type: "stepStarted", index }); save(report, record);
-      code = await runCommand(["--label", step.label, "--", ...step.command], receipt => { send({ type: "stepFinished", index, receipt }); save(report, record); }, { quiet: true, reraiseChildSignal: false });
-      const after = sourceState();
-      assert(JSON.stringify(after) === JSON.stringify(before), "Source state changed during validation; results do not establish the current checkout.");
-      if (code !== 0) break;
-    }
-  } catch (error) { code = 1; send({ type: "failed", error: (error as Error).message }); }
-  send({ type: "finished", passed: code === 0, endedAt: new Date().toISOString(), durationMs: Math.round(performance.now() - started) });
-  try { send({ type: "settled", after: sourceState() }); } catch (error) { code = 1; send({ type: "settleFailed", error: (error as Error).message }); }
-  save(report, record);
-  output({ ...record, report }); return code;
+    try {
+      for (const [index, step] of plan.steps.entries()) {
+        if (interrupt.signal) break;
+        send({ type: "stepStarted", index }); save(report, record);
+        code = await runCommand(["--label", step.label, "--", ...step.command], receipt => { send({ type: "stepFinished", index, receipt }); save(report, record); }, { quiet: true, reraiseChildSignal: false, reraiseInterrupt: false });
+        const after = sourceState();
+        assert(JSON.stringify(after) === JSON.stringify(before), "Source state changed during validation; results do not establish the current checkout.");
+        if (code !== 0) break;
+      }
+      if (interrupt.signal) throw new Error(`Interrupted by ${interrupt.signal}.`);
+    } catch (error) { code = 1; send({ type: "failed", error: (error as Error).message }); }
+    send({ type: "finished", passed: code === 0, endedAt: new Date().toISOString(), durationMs: Math.round(performance.now() - started) });
+    try { send({ type: "settled", after: sourceState() }); } catch (error) { code = 1; send({ type: "settleFailed", error: (error as Error).message }); }
+    save(report, record);
+    output({ ...record, report });
+  } finally {
+    for (const [value, handler] of handlers) process.removeListener(value, handler);
+  }
+  const { signal } = interrupt;
+  if (signal) {
+    // Preserve signal termination for calling shells and supervisors, as `run` does.
+    process.kill(process.pid, signal);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    return 128 + (constants.signals[signal] ?? 0);
+  }
+  return code;
 }
 
 export function listRuns(args: string[]): number {

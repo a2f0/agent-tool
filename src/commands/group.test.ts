@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { groupTransition, type GroupEvent, type GroupRecord } from "./group";
@@ -59,4 +59,38 @@ test("a step whose runner cannot start is reported failed, not still running", (
       expect(record.error).toContain("ENOENT");
     } finally { rmSync(plan, { force: true }); }
   } finally { rmSync(root, { recursive: true, force: true }); }
+}, 20_000);
+
+test("an interrupted group saves a finished, failed report before it exits on the signal", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "group-tests-"));
+  const scratch = mkdtempSync(path.join(tmpdir(), "group-interrupt-"));
+  try {
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", AGENT_TOOL_CONFIG: "" };
+    for (const args of [["init", "-q", "-b", "main"], ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "chore: initialize"]]) execFileSync("git", args, { cwd: root, env });
+    const ready = path.join(scratch, "ready"), plan = path.join(scratch, "plan.json");
+    writeFileSync(plan, JSON.stringify({ label: "verify", steps: [{ label: "slow", command: [process.execPath, "-e", `require("fs").writeFileSync(${JSON.stringify(ready)}, "yes"); setInterval(() => {}, 1000);`] }, { label: "later", command: ["true"] }] }));
+    const child = spawn(process.execPath, [path.resolve(import.meta.dir, "../index.ts"), "run-group", plan], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    child.stdout.on("data", chunk => stdout += chunk);
+    const closed = new Promise<NodeJS.Signals | null>(resolve => child.once("close", (_code, signal) => resolve(signal)));
+    try {
+      const deadline = Date.now() + 10_000;
+      while (!existsSync(ready) && Date.now() < deadline) await Bun.sleep(20);
+      expect(existsSync(ready)).toBe(true);
+      child.kill("SIGTERM");
+      // Signal termination is preserved for the caller, after the report.
+      expect(await closed).toBe("SIGTERM");
+    } finally { child.kill("SIGKILL"); }
+    const printed = JSON.parse(stdout);
+    const saved = JSON.parse(readFileSync(printed.report, "utf8"));
+    for (const record of [printed, saved]) {
+      expect([record.status, record.error, typeof record.endedAt]).toEqual(["failed", "Interrupted by SIGTERM.", "string"]);
+      expect(record.steps.map((step: { status: string }) => step.status)).toEqual(["failed", "pending"]);
+      expect(record.steps[0].receipt.signal).toBe("SIGTERM");
+    }
+    rmSync(path.dirname(saved.steps[0].receipt.log), { recursive: true, force: true });
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
 }, 20_000);
