@@ -435,6 +435,11 @@ test("a nested checkout whose .git Git cannot open never resolves to the enclosi
     expect(result.stderr).toContain(`${realpathSync(nested)} has its own .git, but Git resolved the enclosing repository ${realpathSync(f.root)}`);
   }
   expect(existsSync(f.stateFile + ".calls")).toBe(false);
+  // Names that merely start with two dots are still inside the outer repository, and a dangling .git link still counts.
+  const dotted = path.join(f.root, "..inner"); mkdirSync(path.join(dotted, ".git"), { recursive: true });
+  expect(() => checkoutRoot(dotted)).toThrow(`${realpathSync(dotted)} has its own .git`);
+  const linked = path.join(f.root, "linked"); mkdirSync(linked); symlinkSync(path.join(f.root, "missing-git-dir"), path.join(linked, ".git"));
+  expect(() => checkoutRoot(linked)).toThrow(`${realpathSync(linked)} has its own .git`);
   // A readable nested checkout is its own repository.
   rmSync(path.join(nested, ".git"), { recursive: true }); execFileSync("git", ["init", "-q"], { cwd: nested, env: f.env });
   expect(checkoutRoot(nested)).toBe(realpathSync(nested));

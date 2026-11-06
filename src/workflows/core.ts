@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, realpathSync, writeSync } from "node:fs";
+import { lstatSync, realpathSync, writeSync } from "node:fs";
 import path from "node:path";
 import { gitEnvironment } from "../git/environment";
 
@@ -33,12 +33,16 @@ export function currentBranch(): string {
 export function assertOwnCheckout(root: string, cwd = process.cwd()): void {
   const top = realpathSync(root);
   const relative = path.relative(top, realpathSync(cwd));
-  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return;
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return;
   let current = top;
   for (const part of relative.split(path.sep)) {
     current = path.join(current, part);
-    assert(!existsSync(path.join(current, ".git")), `${current} has its own .git, but Git resolved the enclosing repository ${top}; the nested checkout's Git directory is unreadable or incomplete (mid-checkout?). Retry once it is readable.`);
+    assert(!hasEntry(path.join(current, ".git")), `${current} has its own .git, but Git resolved the enclosing repository ${top}; the nested checkout's Git directory is unreadable or incomplete (mid-checkout?). Retry once it is readable.`);
   }
+}
+/** Whether anything, even a dangling link, exists at `file`; an entry that cannot be inspected counts. */
+function hasEntry(file: string): boolean {
+  try { lstatSync(file); return true; } catch (error) { return (error as NodeJS.ErrnoException).code !== "ENOENT"; }
 }
 /** The top level of the checkout Git resolves from `cwd`, never an enclosing repository. */
 export function checkoutRoot(cwd = process.cwd()): string {
