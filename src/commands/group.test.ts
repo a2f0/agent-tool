@@ -30,7 +30,7 @@ test("run-group events outside their state are ignored", () => {
   expect(apply([{ type: "stepStarted", index: 7 }], running)).toBe(running);
   const done = apply([{ type: "stepFinished", index: 0, receipt: passed }, finish(true), { type: "settled", after: source }], running);
   // A finished group changes no more, apart from its one final source read.
-  for (const event of [{ type: "stepStarted", index: 1 }, { type: "stepFinished", index: 0, receipt: failed }, { type: "failed", error: "late" }, finish(false), { type: "settled", after: { ...source, fingerprint: "g" } }, { type: "settleFailed", error: "late" }] satisfies GroupEvent[]) expect(groupTransition(done, event)).toBe(done);
+  for (const event of [{ type: "stepStarted", index: 1 }, { type: "stepFinished", index: 0, receipt: failed }, { type: "failed", error: "late" }, { type: "interrupted", signal: "SIGTERM" }, finish(false), { type: "settled", after: { ...source, fingerprint: "g" } }, { type: "settleFailed", error: "late" }] satisfies GroupEvent[]) expect(groupTransition(done, event)).toBe(done);
   expect(groupTransition(running, { type: "settled", after: source })).toBe(running);
 });
 
@@ -41,6 +41,14 @@ test("a failure ends the running step without a receipt and keeps later steps pe
   // A failed final source read fails a passed group, keeping an earlier error.
   expect(apply([finish(true), { type: "settleFailed", error: "unreadable" }])).toMatchObject({ status: "failed", error: "unreadable", after: null });
   expect(apply([{ type: "failed", error: "first" }, finish(false), { type: "settleFailed", error: "second" }]).error).toBe("first");
+});
+
+test("an interrupted group lets its running step finish and never passes", () => {
+  const record = apply([{ type: "stepStarted", index: 0 }, { type: "interrupted", signal: "SIGTERM" }, { type: "stepFinished", index: 0, receipt: passed }, { type: "interrupted", signal: "SIGINT" }, finish(true)]);
+  expect(record.steps.map(step => step.status)).toEqual(["passed", "pending"]);
+  // The first signal is the one recorded, and an earlier error is kept.
+  expect([record.status, record.error]).toEqual(["failed", "Interrupted by SIGTERM."]);
+  expect(apply([{ type: "failed", error: "ENOENT" }, { type: "interrupted", signal: "SIGTERM" }, finish(false)]).error).toBe("ENOENT");
 });
 
 test("a step whose runner cannot start is reported failed, not still running", () => {

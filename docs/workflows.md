@@ -390,7 +390,8 @@ and nonignored untracked content fingerprints before/after, monotonic durations,
 and per-step log receipts. Every step is recorded as running before launch;
 SIGINT, SIGTERM, or SIGHUP to the coordinator is forwarded to the running step,
 starts no further step, and finalizes the report as failed (`Interrupted by
-<signal>.`) before the coordinator terminates by that signal; a SIGKILLed
+<signal>.`) before the coordinator terminates by that signal. A signal handled
+after the group has finished changes neither its report nor its exit status. A SIGKILLed
 coordinator leaves an incomplete record, never a passed group. A child
 signal fails its step and finalizes the group report. Group stdout is one JSON
 report containing the per-step receipts. Failure
