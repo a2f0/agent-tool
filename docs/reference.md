@@ -116,7 +116,7 @@ For repository workflow commands added alongside these interfaces, see
 | `pr checks [--wait] [--head oid] [--allow-behind] [--timeout seconds] [--interval seconds]` | Report or wait for the PR head's checks; stop when the head falls behind its live base |
 | `pr cancel-runs --head <oid>` | Cancel the unfinished GitHub Actions runs of a superseded PR head |
 | `pr logs [--head oid] [--max-bytes N] [--tail-lines N]` | Save each failed GitHub Actions job log of the PR head privately and show a bounded tail |
-| `pr merge <subject-or-empty> <head-oid> <base-branch>` | Check CI and synchronously squash the reviewed HEAD |
+| `pr merge <subject-or-empty> <head-oid> <base-branch>` | Run every `pr preflight` gate against the live base, then synchronously squash the reviewed HEAD |
 | `versions plan\|bump\|check <base-oid>` | Plan, rewrite, or check package versions against an exact base |
 | `versions prepare <base-oid>` | Bump, refresh `bun.lock`, validate, and commit versions; print a JSON receipt |
 | `versions resolve-conflicts` | Resolve only version-field conflicts in configured manifests |
@@ -145,7 +145,7 @@ Global options are `--repo <directory>` and `--config <file>`. Effort accepts
 `low`, `medium`, `high`, `xhigh`, and `max`; the default is `xhigh` for Claude
 and `high` for Codex and OpenCode. Legacy camelCase action names, listed in
 `--help`, remain available. Legacy `squashMerge` also accepts a manual form
-without a reviewed HEAD; prefer `pr merge`.
+without a reviewed HEAD, which skips the preflight gates; prefer `pr merge`.
 
 A successful review exit means a complete review was returned, ending in a
 `VERDICT:` line. BLOCKER or MAJOR findings still require action. The review
