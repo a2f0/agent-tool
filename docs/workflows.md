@@ -5,6 +5,14 @@ repository hooks. Their stdout is JSON; exit zero means the operation or check
 succeeded. Mutation commands do not infer authorization. Use the repository's
 pinned agent-tool and preserve its validation, review, and deployment policy.
 
+Commands act on the repository Git finds from the working directory. Git
+skips a `.git` it cannot open, such as an unreadable one or one missing `HEAD`,
+and searches upward, so a checkout nested in another repository (a workspace's
+`checkouts/<name>`) would resolve to the outer one. When a directory between
+the resolved top level and the working directory has its own `.git`, commands
+that read repository identity (`release verify` and every command that runs at
+the checkout root) fail instead; rerun once the nested checkout is readable.
+
 ## Branches
 
 ```sh
