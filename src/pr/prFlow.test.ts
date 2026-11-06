@@ -165,7 +165,7 @@ describe("PR CLI flows ported from a2f0.net", () => {
   describe("runs every preflight gate itself before merging", () => {
     test.each(["squashMerge", "pr"])("%s refuses a head that lacks the live base", (command) => {
       const args = command === "pr" ? ["pr", "merge"] : [command];
-      const moved = git("commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "feat: newer base");
+      const moved = git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "feat: newer base");
       git("push", "-q", path.join(temporary, "remote.git"), `${moved}:refs/heads/production`);
       const result = invoke("merged", [...args, "", head, "production"]);
       expect(result.status).toBe(1);
