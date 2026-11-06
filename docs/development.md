@@ -19,7 +19,8 @@ Repository scripts are grouped by purpose: `scripts/build/` generates the skill
 bundle, `scripts/testing/` contains installed/compiled package smoke checks,
 `scripts/release/` builds distributable artifacts, and `scripts/checks/` contains
 the historical extraction inventory helper. Canonical portable skills live in
-`skills/`. Do not install generated copies over those sources.
+`skills/`, each a `SKILL.md` with optional Markdown files in `references/`. Do
+not install generated copies over those sources.
 
 README explains purpose, setup, and normal use. AGENTS.md contains operational
 requirements. Reference documents hold reusable command contracts and maintenance
@@ -53,7 +54,7 @@ its layers. A test asserts the real configuration passes.
    schemas.
 3. Domains: `bun/`, `commands/`, `dependencies/`, `graph/`, `images/`,
    `permissions/`, `pr/`, `processes/`, `release/`, `review/`, `screenshots/`,
-   `skills/`, `version/`, and `harnesses.ts`.
+   `skills/`, `stateMachines/`, `version/`, and `harnesses.ts`.
    Domains may use each other without cycles.
 4. Workflows: the rest of `workflows/`, which compose domains into repository
    commands such as `branch`, `pr`, `hooks`, and `repo`.

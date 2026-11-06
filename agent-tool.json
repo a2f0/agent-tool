@@ -34,7 +34,7 @@
       {
         "name": "domains",
         "include": [
-          "src/{bun,commands,dependencies,graph,images,permissions,pr,processes,release,review,screenshots,skills,version}/**",
+          "src/{bun,commands,dependencies,graph,images,permissions,pr,processes,release,review,screenshots,skills,stateMachines,version}/**",
           "src/harnesses.ts"
         ]
       },

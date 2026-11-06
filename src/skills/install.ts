@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { harnessNamed } from "../harnesses";
-import { BUNDLED_SKILLS } from "./bundled";
+import { BUNDLED_SKILL_REFERENCES, BUNDLED_SKILLS } from "./bundled";
 
 const MANIFEST = ".agent-tool-skills.json";
 const hash = (source: string) => createHash("sha256").update(source).digest("hex");
@@ -35,6 +35,11 @@ function atomicWrite(file: string, contents: string): void {
 
 export interface SkillChange { path: string; status: "create" | "update" | "unchanged" }
 
+/** Every file each bundled skill installs, relative to its skill directory: `SKILL.md`, then its references. */
+export function bundledSkillFiles(): [name: string, files: [relative: string, source: string][]][] {
+  return Object.entries(BUNDLED_SKILLS).map(([name, source]) => [name, [["SKILL.md", source], ...Object.entries(BUNDLED_SKILL_REFERENCES[name] ?? {})]]);
+}
+
 function readManifest(root: string): Record<string, string> {
   const file = safeDestination(root, MANIFEST);
   if (!existsSync(file)) return {};
@@ -53,16 +58,18 @@ export function installSkills(rootDir: string, target: string, apply = false): S
   const previous = readManifest(root);
   const pending: { file: string; relative: string; source: string; change: SkillChange }[] = [];
   for (const directory of directories) {
-    for (const [name, source] of Object.entries(BUNDLED_SKILLS)) {
-      const relative = `${directory}/${name}/SKILL.md`;
-      const file = safeDestination(root, relative);
-      let current: string | undefined;
-      if (existsSync(file)) {
-        if (!lstatSync(file).isFile()) throw new Error(`Skill destination is not a regular file: ${relative}`);
-        current = readFileSync(file, "utf8");
-        if (current !== source && hash(current) !== previous[relative]) throw new Error(`Locally edited or unmanaged skill: ${relative}. Preserve it before installing.`);
+    for (const [name, sources] of bundledSkillFiles()) {
+      for (const [inside, source] of sources) {
+        const relative = `${directory}/${name}/${inside}`;
+        const file = safeDestination(root, relative);
+        let current: string | undefined;
+        if (existsSync(file)) {
+          if (!lstatSync(file).isFile()) throw new Error(`Skill destination is not a regular file: ${relative}`);
+          current = readFileSync(file, "utf8");
+          if (current !== source && hash(current) !== previous[relative]) throw new Error(`Locally edited or unmanaged skill: ${relative}. Preserve it before installing.`);
+        }
+        pending.push({ file, relative, source, change: { path: relative, status: current === source ? "unchanged" : current === undefined ? "create" : "update" } });
       }
-      pending.push({ file, relative, source, change: { path: relative, status: current === source ? "unchanged" : current === undefined ? "create" : "update" } });
     }
   }
   // Preflight every destination before writing any files.

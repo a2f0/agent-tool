@@ -22,7 +22,7 @@ out of agent sessions where that matters.
 
 | Class | Decision | Commands |
 | --- | --- | --- |
-| `read` | allow | Context, checks, listings, previews, diagnostics, and logs |
+| `read` | allow | Context, checks, listings, previews, diagnostics, logs, and read-only scans such as `state-machines` |
 | `local` | allow | `bun install\|update\|remove\|test`, `bun x` for executables classified `local`, `branch create`, `versions`, `images build`, `screenshots build`, `review`, `teardown --apply`, and applied skill or hook installs |
 | `share` | allow | `branch push`, `pr open`, `pr cancel-runs`, `pr threads reply\|resolve`, `repo cleanup --apply` |
 | `release` | ask | `pr merge`, and direct `gh pr merge`, `npm publish`, `bun publish` |
