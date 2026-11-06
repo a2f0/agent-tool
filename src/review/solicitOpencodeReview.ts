@@ -1,6 +1,5 @@
 import { reviewExecutable } from "./executable";
 import { loadConfig, DEFAULT_CONFIG } from "../config";
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -19,6 +18,7 @@ import {
 import { buildReviewPrompt, OPENCODE_ACCESS_NOTE } from "./reviewPrompt";
 import { type ReviewerEnv, relayReviewWithRetry } from "./runReview";
 import { withReviewDiagnostics } from "./diagnostics";
+import { spawnReviewer } from "./reviewerProcess";
 
 /**
  * The model every opencode review runs under. Pinned so the review never
@@ -150,12 +150,12 @@ export function buildOpencodeReviewArgs(variant: string, model = OPENCODE_MODEL)
  * needs still resolves. Global config still loads, but the inline config's
  * agent-scoped deny rules take precedence over whatever it sets.
  */
-export function spawnOpencodeReview(
+export async function spawnOpencodeReview(
   prompt: string,
   effort: ReviewEffort,
   snapshotRoot: string,
   env: ReviewerEnv = process.env,
-): number {
+): Promise<number> {
   const executable = reviewExecutable("opencode", env);
   if (executable === undefined) {
     process.stderr.write("OpenCode executable unavailable outside the repository.\n");
@@ -164,16 +164,15 @@ export function spawnOpencodeReview(
   const model = loadConfig().review.opencodeModel;
   const outDir = mkdtempSync(path.join(tmpdir(), "agent-tool-opencode-"));
   try {
-    return relayReviewWithRetry("opencode", () => {
-      const result = withReviewDiagnostics("opencode", fd => spawnSync(
+    return await relayReviewWithRetry("opencode", async () => {
+      const result = await withReviewDiagnostics("opencode", fd => spawnReviewer(
         executable,
         buildOpencodeReviewArgs(resolveOpencodeVariant(effort, loadConfig().review.opencodeVariants), model),
         {
-          stdio: ["pipe", "pipe", fd],
+          stderr: fd,
           input: prompt,
-          encoding: "utf8",
           maxBuffer: MAX_BUFFER_BYTES,
-          timeout: loadConfig().review.timeoutMs,
+          timeoutMs: loadConfig().review.timeoutMs,
           // Neutral cwd: opencode would otherwise load the snapshot's
           // branch-controlled config and instructions into the reviewer.
           cwd: outDir,
@@ -206,7 +205,7 @@ export function spawnOpencodeReview(
 export function solicitOpencodeReview(
   rootDir: string,
   effortArg?: string,
-): number {
+): Promise<number> {
   const effort = resolveReviewEffort(effortArg, DEFAULT_OPENCODE_EFFORT);
   const context = resolveReviewContext();
   return withPinnedReviewInput(rootDir, context, (input) => {

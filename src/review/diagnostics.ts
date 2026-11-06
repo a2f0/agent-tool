@@ -4,12 +4,12 @@ import { DEFAULT_LIMITS, printLogTail } from "../commands/output";
 
 /** Reviewer stderr is a transcript, not the review. Keep it off the model's
  * context while retaining complete local evidence and bounded failure details. */
-export function withReviewDiagnostics<T extends { status: number | null; error?: Error }>(
-  reviewer: string, run: (fd: number) => T,
-): T {
+export async function withReviewDiagnostics<T extends { status: number | null; error?: Error }>(
+  reviewer: string, run: (fd: number) => T | Promise<T>,
+): Promise<T> {
   const { directory, log, fd } = createLog("agent-tool-review-log-");
   try {
-    const result = run(fd);
+    const result = await run(fd);
     const outputBytes = fstatSync(fd).size;
     if (outputBytes > 0) {
       writeSync(2, `${JSON.stringify({ reviewer, outputBytes, log })}\n`);

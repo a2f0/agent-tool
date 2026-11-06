@@ -1,6 +1,5 @@
 import { reviewExecutable } from "./executable";
 import { loadConfig } from "../config";
-import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 import {
@@ -17,6 +16,7 @@ import {
 import { buildReviewPrompt, CLAUDE_ACCESS_NOTE } from "./reviewPrompt";
 import { type ReviewerEnv, relayReviewWithRetry } from "./runReview";
 import { withReviewDiagnostics } from "./diagnostics";
+import { spawnReviewer } from "./reviewerProcess";
 
 /**
  * Tools the reviewer gets. Read-only, and deliberately not empty: the diff alone
@@ -77,30 +77,29 @@ export function buildClaudeReviewArgs(
  * that failure is stochastic — so a caller's fallback chain treats a degenerate
  * review the same as a crashed one.
  */
-export function spawnClaudeReview(
+export async function spawnClaudeReview(
   prompt: string,
   effort: ReviewEffort,
   snapshotRoot: string,
   env: ReviewerEnv = process.env,
-): number {
+): Promise<number> {
   const executable = reviewExecutable("claude", env);
   if (executable === undefined) {
     process.stderr.write("Claude executable unavailable outside the repository.\n");
     return 1;
   }
-  return relayReviewWithRetry("claude", () => {
+  return await relayReviewWithRetry("claude", async () => {
     // Captured rather than inherited: a review has to be read to be judged, and
     // `claude` exits 0 whether it reviewed the diff or merely said it would.
     // `--print` emits the review in one final block, so nothing streams anyway.
-    const result = withReviewDiagnostics("claude", fd => spawnSync(
+    const result = await withReviewDiagnostics("claude", fd => spawnReviewer(
       executable,
       buildClaudeReviewArgs(effort, snapshotRoot, loadConfig().review.claudeModel),
       {
-        stdio: ["pipe", "pipe", fd],
+        stderr: fd,
         input: prompt,
-        encoding: "utf8",
         maxBuffer: MAX_BUFFER_BYTES,
-          timeout: loadConfig().review.timeoutMs,
+        timeoutMs: loadConfig().review.timeoutMs,
         cwd: snapshotRoot,
         // Passed explicitly so `claude` resolves against this PATH rather than
         // the one the runtime snapshotted at startup.
@@ -124,7 +123,7 @@ export function spawnClaudeReview(
 export function solicitClaudeCodeReview(
   rootDir: string,
   effortArg?: string,
-): number {
+): Promise<number> {
   const effort = resolveReviewEffort(effortArg, DEFAULT_CLAUDE_EFFORT);
   const context = resolveReviewContext();
   return withPinnedReviewInput(rootDir, context, (input) => {

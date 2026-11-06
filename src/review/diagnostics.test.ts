@@ -9,7 +9,7 @@ for (const exit of [0, 9]) {
   test(`review diagnostics retain complete stderr and keep verdict visible for exit ${exit}`, () => {
     const source = `import {withReviewDiagnostics} from ${JSON.stringify(helper)};
       import {spawnSync} from "node:child_process";
-      const result = withReviewDiagnostics("stub", fd => spawnSync(process.execPath, ["-e", 'process.stderr.write("x".repeat(4*1024*1024)+"\\\\nlast diagnostic\\\\n"); console.log("Findings remain visible\\\\nVERDICT: MAJOR"); process.exitCode=${exit}'], {stdio:["ignore","pipe",fd],encoding:"utf8"}));
+      const result = await withReviewDiagnostics("stub", fd => spawnSync(process.execPath, ["-e", 'process.stderr.write("x".repeat(4*1024*1024)+"\\\\nlast diagnostic\\\\n"); console.log("Findings remain visible\\\\nVERDICT: MAJOR"); process.exitCode=${exit}'], {stdio:["ignore","pipe",fd],encoding:"utf8"}));
       process.stdout.write(result.stdout); process.exitCode=result.status;`;
     const result = spawnSync(process.execPath, ["-e", source], { encoding: "utf8", timeout: 10000 });
     expect(result.status).toBe(exit);

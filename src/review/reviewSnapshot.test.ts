@@ -96,14 +96,14 @@ afterEach(() => {
 });
 
 describe("withReviewSnapshot", () => {
-  test("exports only the immutable tracked HEAD", () => {
+  test("exports only the immutable tracked HEAD", async () => {
     const rootDir = createRepository();
     const head = git(rootDir, ["rev-parse", "HEAD"]);
     writeFileSync(path.join(rootDir, "src", "tracked.txt"), "working tree\n");
     writeFileSync(path.join(rootDir, "untracked-secret.txt"), "secret\n");
 
     let snapshotRoot = "";
-    withReviewSnapshot(rootDir, head, (repositoryRoot) => {
+    await withReviewSnapshot(rootDir, head, (repositoryRoot) => {
       snapshotRoot = repositoryRoot;
       const trackedPath = path.join(repositoryRoot, "src", "tracked.txt");
 
@@ -119,21 +119,21 @@ describe("withReviewSnapshot", () => {
     expect(existsSync(snapshotRoot)).toBe(false);
   });
 
-  test("removes the snapshot when the review throws", () => {
+  test("removes the snapshot when the review throws", async () => {
     const rootDir = createRepository();
     const head = git(rootDir, ["rev-parse", "HEAD"]);
     let snapshotRoot = "";
 
-    expect(() =>
+    await expect(
       withReviewSnapshot(rootDir, head, (repositoryRoot) => {
         snapshotRoot = repositoryRoot;
         throw new Error("review failed");
       }),
-    ).toThrow("review failed");
+    ).rejects.toThrow("review failed");
     expect(existsSync(snapshotRoot)).toBe(false);
   });
 
-  test("ignores branch-controlled export attributes and content filters", () => {
+  test("ignores branch-controlled export attributes and content filters", async () => {
     const rootDir = createRepository();
     writeFileSync(
       path.join(rootDir, ".gitattributes"),
@@ -156,7 +156,7 @@ describe("withReviewSnapshot", () => {
     git(rootDir, ["commit", "--quiet", "-m", "test: add hostile attributes"]);
     const head = git(rootDir, ["rev-parse", "HEAD"]);
 
-    withReviewSnapshot(rootDir, head, (repositoryRoot) => {
+    await withReviewSnapshot(rootDir, head, (repositoryRoot) => {
       expect(
         readFileSync(path.join(repositoryRoot, "hidden.txt"), "utf8"),
       ).toBe("still visible\n");
@@ -169,7 +169,7 @@ describe("withReviewSnapshot", () => {
     });
   });
 
-  test("reads the committed blobs rather than local replacement refs", () => {
+  test("reads the committed blobs rather than local replacement refs", async () => {
     const rootDir = createRepository();
     const originalBlob = execFileSync(
       "git",
@@ -188,37 +188,37 @@ describe("withReviewSnapshot", () => {
     git(rootDir, ["replace", originalBlob, replacementBlob]);
     const head = git(rootDir, ["rev-parse", "HEAD"]);
 
-    withReviewSnapshot(rootDir, head, (repositoryRoot) => {
+    await withReviewSnapshot(rootDir, head, (repositoryRoot) => {
       expect(
         readFileSync(path.join(repositoryRoot, "src", "tracked.txt"), "utf8"),
       ).toBe("committed\n");
     });
   });
 
-  test("materializes the pinned commit when HEAD advances", () => {
+  test("materializes the pinned commit when HEAD advances", async () => {
     const rootDir = createRepository();
     const pinnedHead = git(rootDir, ["rev-parse", "HEAD"]);
     writeFileSync(path.join(rootDir, "src", "tracked.txt"), "later commit\n");
     git(rootDir, ["add", "."]);
     git(rootDir, ["commit", "--quiet", "-m", "test: advance head"]);
 
-    withReviewSnapshot(rootDir, pinnedHead, (repositoryRoot) => {
+    await withReviewSnapshot(rootDir, pinnedHead, (repositoryRoot) => {
       expect(
         readFileSync(path.join(repositoryRoot, "src", "tracked.txt"), "utf8"),
       ).toBe("committed\n");
     });
   });
 
-  test("rejects backslash paths before materializing the tree", () => {
+  test("rejects backslash paths before materializing the tree", async () => {
     const rootDir = createRepository();
     const hostileCommit = commitTreeWithPaths(rootDir, ["..\\..\\target"]);
 
-    expect(() =>
+    await expect(
       withReviewSnapshot(rootDir, hostileCommit, () => undefined),
-    ).toThrow("Unsafe path in reviewed Git tree");
+    ).rejects.toThrow("Unsafe path in reviewed Git tree");
   });
 
-  test("rejects case and Unicode destination collisions", () => {
+  test("rejects case and Unicode destination collisions", async () => {
     const rootDir = createRepository();
     const collisions = [
       ["Case.txt", "case.txt"],
@@ -227,15 +227,15 @@ describe("withReviewSnapshot", () => {
 
     for (const paths of collisions) {
       const hostileCommit = commitTreeWithPaths(rootDir, paths);
-      expect(() =>
+      await expect(
         withReviewSnapshot(rootDir, hostileCommit, () => undefined),
-      ).toThrow("Colliding paths in reviewed Git tree");
+      ).rejects.toThrow("Colliding paths in reviewed Git tree");
     }
   });
 
   test.skipIf(!hasPlatformFilesystemAlias)(
     "rejects aliases defined by the destination filesystem",
-    () => {
+    async () => {
       const rootDir = createRepository();
       const paths = platformFilesystemAlias ?? [];
       expect(paths[0]?.normalize("NFC").toLowerCase()).not.toBe(
@@ -243,13 +243,13 @@ describe("withReviewSnapshot", () => {
       );
       const hostileCommit = commitTreeWithPaths(rootDir, paths);
 
-      expect(() =>
+      await expect(
         withReviewSnapshot(rootDir, hostileCommit, () => undefined),
-      ).toThrow("Colliding paths in reviewed Git tree");
+      ).rejects.toThrow("Colliding paths in reviewed Git tree");
     },
   );
 
-  test("materializes symlinks whose targets stay inside the snapshot", () => {
+  test("materializes symlinks whose targets stay inside the snapshot", async () => {
     const rootDir = createRepository();
     symlinkSync("src/tracked.txt", path.join(rootDir, "tracked-link"));
     symlinkSync("tracked-link", path.join(rootDir, "tracked-chain"));
@@ -257,7 +257,7 @@ describe("withReviewSnapshot", () => {
     git(rootDir, ["commit", "--quiet", "-m", "test: add safe symlink"]);
     const head = git(rootDir, ["rev-parse", "HEAD"]);
 
-    withReviewSnapshot(rootDir, head, (repositoryRoot) => {
+    await withReviewSnapshot(rootDir, head, (repositoryRoot) => {
       expect(
         readFileSync(path.join(repositoryRoot, "tracked-link"), "utf8"),
       ).toBe("committed\n");
@@ -267,7 +267,7 @@ describe("withReviewSnapshot", () => {
     });
   });
 
-  test("rejects absolute and escaping symlink targets", () => {
+  test("rejects absolute and escaping symlink targets", async () => {
     const hostileTargets = ["/etc/passwd", "../../outside-snapshot"];
 
     for (const target of hostileTargets) {
@@ -277,13 +277,13 @@ describe("withReviewSnapshot", () => {
       git(rootDir, ["commit", "--quiet", "-m", "test: add hostile symlink"]);
       const head = git(rootDir, ["rev-parse", "HEAD"]);
 
-      expect(() => withReviewSnapshot(rootDir, head, () => undefined)).toThrow(
+      await expect(withReviewSnapshot(rootDir, head, () => undefined)).rejects.toThrow(
         "Unsafe symlink target",
       );
     }
   });
 
-  test("rejects a chained symlink that resolves outside the snapshot", () => {
+  test("rejects a chained symlink that resolves outside the snapshot", async () => {
     const rootDir = createRepository();
     mkdirSync(path.join(rootDir, "nested"));
     symlinkSync("..", path.join(rootDir, "nested", "inflate"));
@@ -295,7 +295,7 @@ describe("withReviewSnapshot", () => {
     git(rootDir, ["commit", "--quiet", "-m", "test: add symlink chain"]);
     const head = git(rootDir, ["rev-parse", "HEAD"]);
 
-    expect(() => withReviewSnapshot(rootDir, head, () => undefined)).toThrow(
+    await expect(withReviewSnapshot(rootDir, head, () => undefined)).rejects.toThrow(
       "Unsafe symlink target",
     );
   });

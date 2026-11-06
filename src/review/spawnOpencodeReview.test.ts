@@ -94,26 +94,26 @@ afterAll(() => {
 });
 
 describe("spawnOpencodeReview", () => {
-  test("accepts a review that ends with a verdict", () => {
+  test("accepts a review that ends with a verdict", async () => {
     stubOpencode("## Review\n\n- Minor: `a.ts:1` naming.\n\nVERDICT: MINOR\n");
 
-    expect(spawnOpencodeReview("prompt", "high", stubDir, stubEnv)).toBe(0);
+    expect(await spawnOpencodeReview("prompt", "high", stubDir, stubEnv)).toBe(0);
   });
 
-  test("wires the effort level into --variant, xhigh collapsing onto max", () => {
+  test("wires the effort level into --variant, xhigh collapsing onto max", async () => {
     stubOpencode("## Review\n\nAll good.\n\nVERDICT: CLEAN\n");
 
-    expect(spawnOpencodeReview("prompt", "xhigh", stubDir, stubEnv)).toBe(0);
+    expect(await spawnOpencodeReview("prompt", "xhigh", stubDir, stubEnv)).toBe(0);
     expect(readFileSync(argvPath, "utf8").trim()).toContain("--variant max");
 
-    expect(spawnOpencodeReview("prompt", "low", stubDir, stubEnv)).toBe(0);
+    expect(await spawnOpencodeReview("prompt", "low", stubDir, stubEnv)).toBe(0);
     expect(readFileSync(argvPath, "utf8").trim()).toContain("--variant low");
   });
 
-  test("runs from a neutral cwd, not the snapshot", () => {
+  test("runs from a neutral cwd, not the snapshot", async () => {
     stubOpencode("## Review\n\nAll good.\n\nVERDICT: CLEAN\n");
 
-    expect(spawnOpencodeReview("prompt", "high", stubDir, stubEnv)).toBe(0);
+    expect(await spawnOpencodeReview("prompt", "high", stubDir, stubEnv)).toBe(0);
     // The outDir is removed after the review, so compare basenames (immune to
     // the macOS /var vs /private/var symlink spelling) rather than realpaths.
     const cwd = readFileSync(cwdPath, "utf8").trim();
@@ -121,10 +121,10 @@ describe("spawnOpencodeReview", () => {
     expect(cwd.split("/").pop()).not.toBe(stubDir.split("/").pop());
   });
 
-  test("ships the confinement config and an empty config dir", () => {
+  test("ships the confinement config and an empty config dir", async () => {
     stubOpencode("## Review\n\nAll good.\n\nVERDICT: CLEAN\n");
 
-    expect(spawnOpencodeReview("prompt", "high", stubDir, stubEnv)).toBe(0);
+    expect(await spawnOpencodeReview("prompt", "high", stubDir, stubEnv)).toBe(0);
     const config = readFileSync(configPath, "utf8");
     const parsed = JSON.parse(config) as {
       agent: Record<
@@ -157,37 +157,37 @@ describe("spawnOpencodeReview", () => {
     );
   });
 
-  test("rejects a bare intent sentence despite a success exit", () => {
+  test("rejects a bare intent sentence despite a success exit", async () => {
     // The regression: opencode exits 0 having only announced what it would do.
     stubOpencode("I'll review this PR diff using the project's guidelines.\n");
 
-    expect(spawnOpencodeReview("prompt", "high", stubDir, stubEnv)).toBe(1);
+    expect(await spawnOpencodeReview("prompt", "high", stubDir, stubEnv)).toBe(1);
   });
 
-  test("recovers when the degenerate output does not repeat", () => {
+  test("recovers when the degenerate output does not repeat", async () => {
     // The observed flake is stochastic; one retry should absorb it.
     stubFlakyOpencode("## Review\n\nLooks fine.\n\nVERDICT: CLEAN\n");
 
-    expect(spawnOpencodeReview("prompt", "high", stubDir, stubEnv)).toBe(0);
+    expect(await spawnOpencodeReview("prompt", "high", stubDir, stubEnv)).toBe(0);
     expect(existsSync(path.join(stubDir, "flaked-once"))).toBe(true);
   });
 
-  test("rejects empty output despite a success exit", () => {
+  test("rejects empty output despite a success exit", async () => {
     stubOpencode("");
 
-    expect(spawnOpencodeReview("prompt", "high", stubDir, stubEnv)).toBe(1);
+    expect(await spawnOpencodeReview("prompt", "high", stubDir, stubEnv)).toBe(1);
   });
 
-  test("passes through a nonzero exit without second-guessing it", () => {
+  test("passes through a nonzero exit without second-guessing it", async () => {
     stubOpencode("Credit balance too low\n", 2);
 
-    expect(spawnOpencodeReview("prompt", "high", stubDir, stubEnv)).toBe(2);
+    expect(await spawnOpencodeReview("prompt", "high", stubDir, stubEnv)).toBe(2);
   });
 
-  test("reports failure when the CLI is missing entirely", () => {
+  test("reports failure when the CLI is missing entirely", async () => {
     stubOpencode("VERDICT: CLEAN"); // installed, but not on bareEnv's PATH
 
     // Missing executables may be ENOENT (1) or a runtime launch failure (127).
-    expect(spawnOpencodeReview("prompt", "high", stubDir, bareEnv)).not.toBe(0);
+    expect(await spawnOpencodeReview("prompt", "high", stubDir, bareEnv)).not.toBe(0);
   });
 });

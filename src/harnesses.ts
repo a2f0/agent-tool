@@ -12,7 +12,7 @@ export interface Harness {
   skillDirectory: string;
   defaultEffort: ReviewEffort;
   accessNote: string;
-  review: (prompt: string, effort: ReviewEffort, snapshotRoot: string) => number;
+  review: (prompt: string, effort: ReviewEffort, snapshotRoot: string) => Promise<number>;
 }
 
 /** Harness-specific discovery and invocation stay behind this small boundary. */
@@ -29,7 +29,7 @@ export function harnessNamed(name: string): Harness {
 }
 
 /** An explicit local base enables review without GitHub or network access. */
-export function review(rootDir: string, name: string, effortArg?: string, base?: string): number {
+export function review(rootDir: string, name: string, effortArg?: string, base?: string): Promise<number> {
   const harness = harnessNamed(name);
   const effort = resolveReviewEffort(effortArg, harness.defaultEffort);
   const context: PrContext = base === undefined ? resolveReviewContext() : {
@@ -39,8 +39,8 @@ export function review(rootDir: string, name: string, effortArg?: string, base?:
     title: "",
     baseRef: run("git", ["rev-parse", "--verify", "--end-of-options", `${base}^{commit}`]),
   };
-  return withPinnedReviewInput(rootDir, context, input => {
-    const exitCode = harness.review(buildReviewPrompt({
+  return withPinnedReviewInput(rootDir, context, async input => {
+    const exitCode = await harness.review(buildReviewPrompt({
       context,
       diff: input.diff,
       reviewInstructions: input.reviewInstructions,

@@ -37,13 +37,13 @@ export const MAX_REVIEW_ATTEMPTS = 2;
  * line with them while the in-memory check below still saw a complete review
  * and exited 0.
  */
-export function relayReviewWithRetry(
+export async function relayReviewWithRetry(
   command: string,
-  runAttempt: () => ReviewAttempt,
-): number {
+  runAttempt: () => ReviewAttempt | Promise<ReviewAttempt>,
+): Promise<number> {
   let last: ReviewAttempt = { exitCode: 1, review: "" };
   for (let attempt = 1; attempt <= MAX_REVIEW_ATTEMPTS; attempt += 1) {
-    last = runAttempt();
+    last = await runAttempt();
     if (last.exitCode !== 0) {
       writeSync(1, last.review);
       return last.exitCode;

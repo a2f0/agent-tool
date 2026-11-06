@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 
 import { type PrContext } from "../git/prContext";
 import { readReviewInstructions } from "./reviewPrompt";
+import { withReviewInterrupts } from "./reviewerProcess";
 import { withReviewSnapshot } from "./reviewSnapshot";
 
 interface PinnedReviewInput {
@@ -61,12 +62,24 @@ function ensureChanges(
   }
 }
 
-/** Resolve refs once, then derive every review artifact from those commit IDs. */
+/**
+ * Resolve refs once, then derive every review artifact from those commit IDs.
+ * An interruption stops the reviewer and removes the snapshot before the
+ * signal ends the process.
+ */
 export function withPinnedReviewInput<T>(
   rootDir: string,
   context: PrContext,
-  callback: (input: PinnedReviewInput) => T,
-): T {
+  callback: (input: PinnedReviewInput) => T | Promise<T>,
+): Promise<T> {
+  return withReviewInterrupts(() => pinnedReviewInput(rootDir, context, callback));
+}
+
+async function pinnedReviewInput<T>(
+  rootDir: string,
+  context: PrContext,
+  callback: (input: PinnedReviewInput) => T | Promise<T>,
+): Promise<T> {
   const baseCommit = resolveCommit(rootDir, context.baseRef);
   const headCommit = resolveCommit(rootDir, "HEAD");
   ensureChanges(rootDir, baseCommit, headCommit);

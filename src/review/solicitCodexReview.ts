@@ -1,6 +1,5 @@
 import { reviewExecutable } from "./executable";
 import { loadConfig } from "../config";
-import { spawnSync } from "node:child_process";
 import {
   mkdtempSync,
   readFileSync,
@@ -23,6 +22,7 @@ import {
 import { buildReviewPrompt, CODEX_ACCESS_NOTE } from "./reviewPrompt";
 import { type ReviewerEnv, relayReviewWithRetry } from "./runReview";
 import { withReviewDiagnostics } from "./diagnostics";
+import { spawnReviewer } from "./reviewerProcess";
 
 /**
  * Build the `codex exec` argv. `exec`, not `review`: `codex review` writes its
@@ -123,12 +123,12 @@ function readLastMessage(lastMessageFile: string): string {
  * Degenerate exit-0 output is retried once via
  * the shared gate, same as the Claude path.
  */
-export function spawnCodexReview(
+export async function spawnCodexReview(
   prompt: string,
   effort: ReviewEffort,
   snapshotRoot: string,
   env: ReviewerEnv = process.env,
-): number {
+): Promise<number> {
   const codexExecutable = reviewExecutable("codex", env);
   if (codexExecutable === undefined) {
     process.stderr.write("Codex executable unavailable outside the repository.\n");
@@ -138,12 +138,12 @@ export function spawnCodexReview(
   const codexRuntimeRoot = path.dirname(codexExecutable);
   let attempt = 0;
   try {
-    return relayReviewWithRetry("codex", () => {
+    return await relayReviewWithRetry("codex", async () => {
       // A fresh file per attempt, so a retry that crashes before writing can
       // never be read as the previous attempt's stale message.
       attempt += 1;
       const lastMessageFile = path.join(outDir, `review-${attempt}.md`);
-      const result = withReviewDiagnostics("codex", fd => spawnSync(
+      const result = await withReviewDiagnostics("codex", fd => spawnReviewer(
         codexExecutable,
         buildCodexReviewArgs(
           effort,
@@ -153,11 +153,10 @@ export function spawnCodexReview(
           loadConfig().review.codexModel,
         ),
         {
-          stdio: ["pipe", "pipe", fd],
+          stderr: fd,
           input: prompt,
-          encoding: "utf8",
           maxBuffer: MAX_BUFFER_BYTES,
-          timeout: loadConfig().review.timeoutMs,
+          timeoutMs: loadConfig().review.timeoutMs,
           // Codex loads project AGENTS.md from its cwd. Keep cwd neutral and
           // grant read-only access to the reviewed repository explicitly.
           cwd: outDir,
@@ -181,7 +180,7 @@ export function spawnCodexReview(
 export function solicitCodexReview(
   rootDir: string,
   effortArg?: string,
-): number {
+): Promise<number> {
   const effort = resolveReviewEffort(effortArg, DEFAULT_CODEX_EFFORT);
   const context = resolveReviewContext();
   return withPinnedReviewInput(rootDir, context, (input) => {
