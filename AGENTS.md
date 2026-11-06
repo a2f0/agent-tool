@@ -57,3 +57,21 @@ Both scripts run this checkout's source CLI, `bun src/index.ts run` and
 an installed release. [Development guidance](docs/development.md#validation)
 lists each validation check in this form, for example
 `bun run agent:run --label tests -- bun test`.
+
+## State machines
+
+Make implicit state machines explicit when you write or change code: one closed
+state type (a discriminated union, enum, or sealed type) carrying each state's
+data, typed events, and one pure transition function, with effects run on
+entering a state and async work tagged so only the current request can finish.
+Follow the `explicit-state-machines` skill (its source is
+`skills/explicit-state-machines/`) for what to convert, what to leave alone, and
+how to prove behavior did not change; `bun src/index.ts state-machines` lists
+leads. Reviews flag new implicit machines.
+
+Here the tag is `status`, with an exported pure transition beside the union
+(`groupTransition` in `src/commands/group.ts`, `galleryTransition` in
+`src/screenshots/gallery.ts`); see
+[development guidance](docs/development.md#state-machines). Machines cluster in
+run-group reports and the screenshot gallery; most CLI flows are pure
+classifiers whose booleans are the JSON contract.
