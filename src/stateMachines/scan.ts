@@ -76,6 +76,7 @@ const SKIPPED = [
   /(^|\/)\.(agents|claude|codex|opencode)\//,
   /(^|\/)(__tests__|__mocks__|e2e|fixtures?|test|tests)\//,
   /\.(test|spec|stories|e2e)\.[a-z]+$/,
+  /\.(test|spec)(Utils|Helpers|-utils|-helpers)\.[a-z]+$/,
   /_test\.(go|py)$/,
   /(^|\/)(test_[^/]*|conftest)\.py$/,
   /(Tests?|Spec)\.(swift|kt|java)$/,
@@ -220,23 +221,29 @@ const STATUS_SETTER = /\bset_?([A-Za-z_$][\w$]*)\(\s*(["'`])([\w-]+)\2\s*\)/g;
 export function scanText(text: string, syntax: "c" | "hash"): Signal[] {
   const flags: Writes = new Map();
   const statuses: Writes = new Map();
-  codeLines(text, syntax).forEach((line, index) => {
+  const lines = codeLines(text, syntax);
+  const sql = sqlStatusFacts(lines);
+  lines.forEach((line, index) => {
     const at = index + 1;
     noteFlagWrites(line, at, flags);
-    noteStatusAssigns(line, at, statuses);
+    noteStatusAssigns(line, at, statuses, sql);
     if (syntax === "hash") noteTclWrites(line, at, flags, statuses);
     noteStatusSetters(line, at, statuses);
   });
   return signalsFrom(flags, statuses);
 }
 
-/** The values each flag or status field is written with, and the lines that write it. */
-type Writes = Map<string, { values: Set<string>; lines: Set<number> }>;
+/**
+ * The values each flag or status field is written with, the lines that write
+ * it, and whether any write is not a guarded SQL update.
+ */
+type Writes = Map<string, { values: Set<string>; lines: Set<number>; unguarded: boolean }>;
 
-function note(map: Writes, name: string, value: string, line: number): void {
-  const entry = map.get(name) ?? { values: new Set<string>(), lines: new Set<number>() };
+function note(map: Writes, name: string, value: string, line: number, guarded = false): void {
+  const entry = map.get(name) ?? { values: new Set<string>(), lines: new Set<number>(), unguarded: false };
   entry.values.add(value);
   entry.lines.add(line);
+  entry.unguarded ||= !guarded;
   map.set(name, entry);
 }
 
@@ -245,6 +252,7 @@ function noteFlagWrites(line: string, at: number, flags: Writes): void {
   for (const match of line.matchAll(USE_STATE)) if (isFlag(match[1])) note(flags, match[1], match[2], at);
   for (const match of line.matchAll(ASSIGN)) {
     const name = targetName(match[1], match[2]);
+    if (match[0].includes(":") && isCasePayloadLabel(line, match.index)) continue;
     if (isFlag(name)) note(flags, name, match[3].toLowerCase(), at);
   }
   for (const match of line.matchAll(SETTER)) {
@@ -253,11 +261,136 @@ function noteFlagWrites(line: string, at: number, flags: Writes): void {
   }
 }
 
-function noteStatusAssigns(line: string, at: number, statuses: Writes): void {
+/**
+ * Whether the `label:` starting at `index` is the first argument label of an
+ * implicit member such as Swift's `.interruptionEnded(shouldResume: true)`: an
+ * enum case's payload, so part of an event, not a write to state. Looks back
+ * over one identifier only, so it is linear and bounded.
+ */
+function isCasePayloadLabel(line: string, index: number): boolean {
+  let at = index - 1;
+  while (at >= 0 && (line[at] === " " || line[at] === "\t")) at--;
+  if (line[at] !== "(") return false;
+  const end = --at;
+  while (at >= 0 && /[\w$]/.test(line[at]!)) at--;
+  if (at === end || line[at] !== ".") return false;
+  return at === 0 || !/[\w$)\]?!]/.test(line[at - 1]!);
+}
+
+function noteStatusAssigns(line: string, at: number, statuses: Writes, sql: SqlFacts): void {
   for (const match of line.matchAll(STATUS_ASSIGN)) {
     const name = targetName(match[1], match[2]);
-    if (STATUS.test(name)) note(statuses, name, match[4], at);
+    if (!STATUS.test(name)) continue;
+    const key = `${at}:${match.index + match[0].search(/\s*=/)}`;
+    if (sql.comparisons.has(key)) continue;
+    note(statuses, name, match[4], at, sql.guarded.has(key));
   }
+}
+
+/** Where SQL compares a status (`WHERE status = 'x'`), and which SQL writes name their from-state, keyed `line:end`. */
+interface SqlFacts {
+  readonly comparisons: Set<string>;
+  readonly guarded: Set<string>;
+}
+
+interface Token {
+  readonly text: string;
+  readonly kind: "word" | "literal" | "punct";
+  readonly line: number;
+  /** Column just past the token, matching where an assignment target ends. */
+  readonly end: number;
+}
+
+/** Words, single-quoted literals and punctuation, one pass per line; a literal ends at the line's end. */
+function sqlTokens(lines: string[]): Token[] {
+  const tokens: Token[] = [];
+  lines.forEach((text, index) => {
+    const line = index + 1;
+    let at = 0;
+    while (at < text.length) {
+      const char = text[at]!;
+      if (char === " " || char === "\t" || char === "\r") {
+        at++;
+      } else if (/[\w$#.]/.test(char)) {
+        const start = at;
+        while (at < text.length && /[\w$#.]/.test(text[at]!)) at++;
+        tokens.push({ text: text.slice(start, at), kind: "word", line, end: at });
+      } else if (char === "'") {
+        const close = text.indexOf("'", at + 1);
+        const end = close < 0 ? text.length : close + 1;
+        tokens.push({ text: text.slice(at, end), kind: "literal", line, end });
+        at = end;
+      } else {
+        tokens.push({ text: char, kind: "punct", line, end: ++at });
+      }
+    }
+  });
+  return tokens;
+}
+
+/** Uppercase SQL keywords: lowercase `and`/`or`/`in` are code in Python and Ruby. */
+const COMPARES_AFTER = new Set(["WHERE", "AND", "OR", "ON", "WHEN", "NOT"]);
+const STATEMENT_STARTS = new Set(["UPDATE", "SELECT", "INSERT", "DELETE"]);
+/** A statement ends at `;` or at the delimiter of the string holding it. */
+const STATEMENT_ENDS = new Set([";", "`", '"']);
+/** Lines an `UPDATE` may span before the scan stops treating what follows as its clauses. */
+const STATEMENT_LINES = 40;
+
+/** Whether the token at `index` follows `WHERE`, `AND` and the like, past any opening parentheses. */
+function followsComparisonKeyword(tokens: Token[], index: number): boolean {
+  let at = index - 1;
+  while (at >= 0 && tokens[at]!.text === "(") at--;
+  return at >= 0 && COMPARES_AFTER.has(tokens[at]!.text);
+}
+
+/**
+ * SQL facts about status fields, found token by token with no backtracking:
+ * comparisons after `WHERE`/`AND`/`OR`/`ON`/`WHEN` or inside a `SELECT` or
+ * `DELETE` are reads, not writes, and
+ * an `UPDATE ... SET status = 'x'` is guarded when its own `WHERE` names the
+ * same field's from-state (`status = 'y'`, `= ?`, `= $1`, `= :from`, `IN (...)`). Such
+ * updates make their module the transition table, which the skill leaves alone.
+ */
+function sqlStatusFacts(lines: string[]): SqlFacts {
+  const facts: SqlFacts = { comparisons: new Set(), guarded: new Set() };
+  const tokens = sqlTokens(lines);
+  let update: { line: number; phase: "update" | "set" | "where"; writes: { field: string; key: string }[]; guards: Set<string> } | undefined;
+  // Inside a SELECT or DELETE, where every `field = 'x'` is a comparison.
+  let reading: number | undefined;
+  const close = () => {
+    for (const write of update?.writes ?? []) if (update!.guards.has(write.field)) facts.guarded.add(write.key);
+    update = undefined;
+    reading = undefined;
+  };
+  tokens.forEach((token, index) => {
+    if ((update && token.line - update.line > STATEMENT_LINES) || (reading !== undefined && token.line - reading > STATEMENT_LINES)) close();
+    if (token.kind === "punct" && STATEMENT_ENDS.has(token.text)) return close();
+    if (token.kind !== "word") return;
+    if (STATEMENT_STARTS.has(token.text)) {
+      close();
+      if (token.text === "UPDATE") update = { line: token.line, phase: "update", writes: [], guards: new Set() };
+      else if (token.text !== "INSERT") reading = token.line;
+      return;
+    }
+    if (update && token.text === "SET") update.phase = "set";
+    if (update && token.text === "WHERE") update.phase = "where";
+    const field = token.text.slice(token.text.lastIndexOf(".") + 1);
+    if (!STATUS.test(field)) return;
+    const [next, value] = [tokens[index + 1], tokens[index + 2]];
+    const key = `${token.line}:${token.end}`;
+    const assignsLiteral = next?.text === "=" && value?.kind === "literal";
+    if (reading !== undefined || update?.phase === "where" || followsComparisonKeyword(tokens, index)) {
+      if (assignsLiteral) facts.comparisons.add(key);
+      const namesFrom =
+        (next?.text === "=" && value !== undefined && (value.kind === "literal" || value.text === "?" || value.text === ":" || value.text === "@" || /^\$\w+$/.test(value.text))) ||
+        ((next?.text === "IN" || next?.text === "in") && value?.text === "(");
+      if (update?.phase === "where" && namesFrom) update.guards.add(field);
+      return;
+    }
+    if (update?.phase === "set" && assignsLiteral) update.writes.push({ field, key });
+  });
+  close();
+  return facts;
 }
 
 /** Tcl's `set name value`: a flag when the value is boolean, otherwise a status. */
@@ -286,7 +419,8 @@ function signalsFrom(flags: Writes, statuses: Writes): Signal[] {
     });
   }
   for (const [name, entry] of statuses) {
-    if (entry.values.size >= 3 && entry.lines.size >= 3) {
+    // A field written only by guarded SQL updates already has its transition table.
+    if (entry.unguarded && entry.values.size >= 3 && entry.lines.size >= 3) {
       signals.push({ kind: "status", names: [name], values: [...entry.values].sort(), lines: [...entry.lines].sort((a, b) => a - b) });
     }
   }
