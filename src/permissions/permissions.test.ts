@@ -63,7 +63,7 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
   for (const command of ["gh pr merge 1", "npm publish", "bun publish", "bun add left-pad", "npm install left-pad", "pnpm add left-pad", "yarn add left-pad", "bunx cowsay", "bun x cowsay", "npx cowsay"]) expect(codexAllows(codex, command)).toBe(false);
 });
 
-test("apply semantics label generated groups without changing any permission decision or prefix", () => {
+test("apply semantics label routine groups while preserving every allow prefix", () => {
   const codex = codexRules();
   const groups = new Map<string, string[]>();
   let label = "";
@@ -71,7 +71,7 @@ test("apply semantics label generated groups without changing any permission dec
   for (const line of codex.split("\n")) {
     const heading = /^# (\w+):/.exec(line);
     if (heading) label = heading[1]!;
-    const rule = /^prefix_rule\(pattern=(\[.*\]), decision="(allow|prompt)"/.exec(line);
+    const rule = /^prefix_rule\(pattern=(\[.*\]), decision="(allow)"/.exec(line);
     if (!rule) continue;
     groups.set(label, [...(groups.get(label) ?? []), line]);
     actual.push({ tokens: JSON.parse(rule[1]!), decision: rule[2]! });

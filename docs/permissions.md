@@ -27,8 +27,8 @@ out of agent sessions where that matters.
 | `read` | allow | Context, checks, listings, previews, diagnostics, logs, and read-only scans such as `state-machines` |
 | `local` | allow | `bun install\|update\|remove\|test`, `bun x` for executables classified `local`, `branch create`, `versions`, `images build`, `screenshots build`, `review`, `teardown --apply`, and applied skill or hook installs |
 | `share` | allow | `branch push`, `pr open`, `pr cancel-runs`, `pr threads reply\|resolve`, `repo cleanup --apply` |
-| `release` | ask | `pr merge`, and direct `gh pr merge`, `npm publish`, `bun publish` |
-| `intake` | ask | `bun add`, and direct `bun add`, `npm install`, `pnpm add`, `yarn add`, and `bunx`, `bun x`, `npx`, which can download a package |
+| `release` | ask | `pr merge` and executables classified `release` |
+| `intake` | ask | `bun add` and executables classified `intake` |
 | `policy` | ask | `permissions install --apply` |
 | `exec` | ask | Executables classified `exec`: ones that run whatever file or command they are given |
 
@@ -218,7 +218,8 @@ agent-tool permissions check              # CI
   commands get no rule: an explicit `prompt` overrides a broader user allow and
   is rejected when `approval_policy = "never"`, even with `danger-full-access`.
   Prefix rules cannot match a trailing flag, so a command whose `--apply` form
-  asks gets no rule in either form. When both forms allow, they still allow. Generated grouping uses
+  asks gets no rule in either form. When both forms allow, they still allow.
+  Generated grouping uses
   the stricter decision and, on a decision tie, the applied effect: cleanup is
   grouped under `share`, teardown and applied skill/hook installs under `local`,
   not their read-only previews. These labels are descriptive, not additional
@@ -247,6 +248,19 @@ With `never` plus a restrictive sandbox, commands that need an escalation can
 still fail; with `danger-full-access`, they can run within the user's authorized
 scope. The PR helper still enforces review identity, CI, and repository merge
 policy independently of harness permissions.
+
+This also removes mandatory prompts for users of interactive approval modes.
+With `on-request`, a merge or publish that the sandbox permits can now run
+without a prompt. To keep a mandatory checkpoint, put your own rules in
+`~/.codex/rules/default.rules`, for example:
+
+```python
+prefix_rule(pattern=["gh", "pr", "merge"], decision="prompt")
+prefix_rule(pattern=["node_modules/.bin/agent-tool", "pr", "merge"], decision="prompt")
+```
+
+Add the invocation forms you use. Explicit prompts still require an approval
+mode that can ask; pairing them with `never` rejects matching commands.
 
 ### Auto mode
 
