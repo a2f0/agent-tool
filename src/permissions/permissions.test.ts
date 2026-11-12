@@ -1,9 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { CATALOG, CLASSES, GUARDS, INVOCATIONS, claudePermissions, codexRules, strictest, type PermissionClass } from "./catalog";
+import { CATALOG, CLASSES, INVOCATIONS, claudePermissions, codexRules, strictest, type PermissionClass } from "./catalog";
 import { checkPermissions, installPermissions } from "./install";
 import { HELP } from "../cli";
 import { parseConfig } from "../config";
@@ -16,6 +17,20 @@ function project() { const root = mkdtempSync(path.join(tmpdir(), "permissions-"
 /** Claude Code's Bash rule match: `*` spans any text, including spaces. */
 function allowed(rules: string[], command: string): boolean {
   return rules.some(rule => new RegExp(`^${rule.slice(5, -1).replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`).test(command));
+}
+
+function codexPrefixes(source: string): string[][] {
+  return source.split("\n").flatMap(line => {
+    const rule = /^prefix_rule\(pattern=(\[.*\]), decision="allow"/.exec(line);
+    if (!rule) return [];
+    const tokens = JSON.parse(rule[1]!) as (string | string[])[];
+    return tokens.reduce<string[][]>((rows, token) => rows.flatMap(row => (Array.isArray(token) ? token : [token]).map(value => [...row, value])), [[]]);
+  });
+}
+
+function codexAllows(source: string, command: string): boolean {
+  const words = command.split(" ");
+  return codexPrefixes(source).some(prefix => prefix.every((word, index) => words[index] === word));
 }
 
 test("dependency verbs split by class: add asks, update and remove run", () => {
@@ -36,10 +51,16 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
   expect(rules.allow.some(rule => /agent-tool run(?:-group)? /.test(rule))).toBe(false);
   const codex = codexRules();
   expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", ["install", "update", "remove", "test"]], decision="allow"');
-  expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", "add"], decision="prompt"');
-  // Prefix rules cannot see a trailing --apply, so Codex prompts for the whole command.
-  expect(codex).toContain('prefix_rule(pattern=["agent-tool", "permissions", "install"], decision="prompt"');
-  expect(codex).not.toMatch(/"repo", "cleanup"\], decision="prompt"/);
+  // Explicit prompts reject even authorized commands when Codex's approval policy is never.
+  // Both harnesses leave these actions to the user's mode, without preauthorizing them.
+  expect(codex).not.toContain('decision="prompt"');
+  for (const invocation of INVOCATIONS) {
+    for (const command of ["pr merge '' abc main", "bun add left-pad", "permissions install", "permissions install --apply", "run --label x -- command", "run-group checks.json", "proc start -- command"]) {
+      expect({ command: `${invocation} ${command}`, allowed: codexAllows(codex, `${invocation} ${command}`) }).toEqual({ command: `${invocation} ${command}`, allowed: false });
+    }
+    expect(codexAllows(codex, `${invocation} repo cleanup 12 abc --apply`)).toBe(true);
+  }
+  for (const command of ["gh pr merge 1", "npm publish", "bun publish", "bun add left-pad", "npm install left-pad", "pnpm add left-pad", "yarn add left-pad", "bunx cowsay", "bun x cowsay", "npx cowsay"]) expect(codexAllows(codex, command)).toBe(false);
 });
 
 test("apply semantics label generated groups without changing any permission decision or prefix", () => {
@@ -64,10 +85,7 @@ test("apply semantics label generated groups without changing any permission dec
   const expand = (tokens: (string | string[])[]): string[][] => tokens.reduce<string[][]>((rows, token) => rows.flatMap(row => (Array.isArray(token) ? token : [token]).map(value => [...row, value])), [[]]);
   const effective = actual.flatMap(({ tokens, decision }) => expand(tokens).map(words => `${words.join(" ")}=${decision}`)).sort();
   const oldDecision = (base: PermissionClass, apply?: PermissionClass) => CLASSES[base].decision === "ask" || (apply && CLASSES[apply].decision === "ask") ? "ask" : "allow";
-  const expected = [
-    ...INVOCATIONS.flatMap(invocation => CATALOG.map(entry => `${invocation} ${entry.command}=${oldDecision(entry.class, entry.applyClass) === "ask" ? "prompt" : "allow"}`)),
-    ...GUARDS.map(entry => `${entry.command}=${CLASSES[entry.class].decision === "ask" ? "prompt" : "allow"}`),
-  ].sort();
+  const expected = INVOCATIONS.flatMap(invocation => CATALOG.filter(entry => oldDecision(entry.class, entry.applyClass) === "allow").map(entry => `${invocation} ${entry.command}=allow`)).sort();
   expect(effective).toEqual(expected);
   const claude = claudePermissions();
   const oldAllow = INVOCATIONS.flatMap(invocation => CATALOG.filter(entry => oldDecision(entry.class, entry.applyClass) === "allow").map(entry => `Bash(${invocation} ${entry.command}${entry.command.startsWith("--") ? "" : " *"})`));
@@ -152,6 +170,31 @@ test("edited or unmanaged Codex rules are preserved", () => {
   expect(checkPermissions(root, "codex")[0]!.status).toBe("unmanaged");
 });
 
+test("Codex migration removes managed prompts while preserving separate user rules", () => {
+  const root = project();
+  const file = path.join(root, ".codex/rules/agent-tool.rules");
+  const userFile = path.join(root, ".codex/rules/user.rules");
+  const earlier = 'prefix_rule(pattern=["agent-tool", "pr", "merge"], decision="prompt")\n';
+  const user = 'prefix_rule(pattern=["npm", "publish"], decision="forbidden")\n';
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, earlier);
+  writeFileSync(userFile, user);
+  writeFileSync(path.join(root, ".agent-tool-permissions.json"), JSON.stringify({ schemaVersion: 1, codex: { file: ".codex/rules/agent-tool.rules", sha256: createHash("sha256").update(earlier).digest("hex") } }));
+  expect(checkPermissions(root, "codex")[0]!.status).toBe("outdated");
+  expect(installPermissions(root, "codex")).toEqual([{ path: ".codex/rules/agent-tool.rules", status: "update" }]);
+  expect(readFileSync(file, "utf8")).toBe(earlier);
+  // Refuse locally edited managed rules before replacing anything.
+  writeFileSync(file, earlier + user);
+  expect(() => installPermissions(root, "codex", true)).toThrow(/Locally edited or unmanaged rules/);
+  expect(readFileSync(file, "utf8")).toBe(earlier + user);
+  writeFileSync(file, earlier);
+  installPermissions(root, "codex", true);
+  expect(readFileSync(file, "utf8")).not.toContain('decision="prompt"');
+  expect(readFileSync(userFile, "utf8")).toBe(user);
+  expect(checkPermissions(root, "codex")[0]!.status).toBe("unchanged");
+  expect(installPermissions(root, "codex", true)[0]!.status).toBe("unchanged");
+});
+
 test("the CLI previews by default and rejects unknown harnesses", () => {
   const root = project();
   const cli = path.resolve(import.meta.dir, "../index.ts");
@@ -161,7 +204,7 @@ test("the CLI previews by default and rejects unknown harnesses", () => {
   expect(spawnSync(process.execPath, [cli, "permissions", "show", "--harness", "opencode"], { cwd: root, encoding: "utf8" }).stderr).toMatch(/Unknown permissions harness/);
 });
 
-test("executables run through bun x only when classified, and bunx or npx ask", () => {
+test("only routine classified executables receive allow rules", () => {
   const root = project();
   writeFileSync(path.join(root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { biome: "local", wrangler: "release", tsx: "exec" } } }));
   expect(projectCommands(root)).toEqual([{ command: "bun x biome", class: "local" }, { command: "bun x tsx", class: "exec" }, { command: "bun x wrangler", class: "release" }]);
@@ -169,9 +212,12 @@ test("executables run through bun x only when classified, and bunx or npx ask", 
   expect(rules.allow).toContain("Bash(bun run agent-tool bun x biome *)");
   for (const command of ["bun run agent-tool bun x wrangler deploy", "bun run agent-tool bun x tsx script.ts", "bun run agent-tool bun x eslint .", "bunx biome", "bun x biome", "npx biome"]) expect(allowed(rules.allow, command)).toBe(false);
   const codex = codexRules(projectCommands(root));
-  expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", "x", "tsx"], decision="prompt"');
-  expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", "x", "wrangler"], decision="prompt"');
-  expect(codex).toContain('prefix_rule(pattern=[["bunx", "npx"]], decision="prompt"');
+  expect(codex).not.toContain('decision="prompt"');
+  for (const invocation of INVOCATIONS) {
+    expect(codexAllows(codex, `${invocation} bun x biome check`)).toBe(true);
+    for (const command of ["bun x tsx script.ts", "bun x wrangler deploy", "bun x eslint ."]) expect(codexAllows(codex, `${invocation} ${command}`)).toBe(false);
+  }
+  for (const command of ["bunx biome", "bun x biome", "npx biome"]) expect(codexAllows(codex, command)).toBe(false);
   expect(rules.allow.some(rule => / bun run [^*]/.test(rule.replace("Bash(bun run agent-tool", "Bash(")))).toBe(false);
   for (const permissions of [{ executables: { biome: "safe" } }, { executables: { "@scope/tool": "local" } }, { scripts: { check: "local" } }]) {
     expect(() => parseConfig(JSON.stringify({ schemaVersion: 1, permissions }))).toThrow();

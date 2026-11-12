@@ -42,12 +42,6 @@ export const CATALOG: CatalogEntry[] = [
 // `bun x` runs only executables that `permissions.executables` classifies; project.ts adds those.
 // Package scripts are not classified, so `bun run` keeps the harness default.
 
-/** Direct spellings of classified actions. Codex prompts for them, so a raw command cannot bypass its agent-tool form. */
-export const GUARDS: { command: string; class: PermissionClass }[] = [
-  ...["bun add", "bun a", "npm install", "npm i", "npm add", "pnpm add", "yarn add", "bunx", "bun x", "npx"].map(command => ({ command, class: "intake" as const })),
-  ...["gh pr merge", "npm publish", "bun publish"].map(command => ({ command, class: "release" as const })),
-];
-
 /** How agents invoke an installed agent-tool: the package script, the bin link, or PATH. */
 export const INVOCATIONS = ["bun run agent-tool", "node_modules/.bin/agent-tool", "agent-tool"];
 
@@ -83,30 +77,34 @@ export function claudePermissions(project: CatalogEntry[] = []): ClaudePermissio
 const quote = (value: string) => JSON.stringify(value);
 const element = (values: string[]) => values.length === 1 ? quote(values[0]!) : `[${values.map(quote).join(", ")}]`;
 
-/** Codex prefix rules: `allow` runs outside the sandbox without a prompt; `prompt` always asks. */
+/**
+ * Only allow rules are generated, as for Claude. Codex's explicit prompt rules
+ * reject commands when approval_policy is never, even with danger-full-access.
+ * Asking classes stay unlisted so the user's approval and sandbox policies apply.
+ */
 export function codexRules(project: CatalogEntry[] = []): string {
   const lines = [
     "# Managed by agent-tool; regenerate with `agent-tool permissions install --apply`.",
-    "# Codex applies the most restrictive matching rule. Commands with an --apply form",
-    "# use their stricter decision because prefix rules cannot match trailing flags.",
+    "# Only routine commands receive allow rules. Other commands keep the user's",
+    "# approval and sandbox policies; explicit prompts would reject them in never mode.",
+    "# A command whose --apply form asks gets no rule, since prefixes also match --apply.",
     "# Equal decisions group under the applied effect, not the read-only preview.",
   ];
   const groups = new Map<string, { prefix: string[]; last: string[]; class: PermissionClass }>();
   const add = (tokens: string[], value: PermissionClass) => {
+    if (CLASSES[value].decision !== "allow") return;
     const prefix = tokens.slice(0, -1), key = `${value}\0${prefix.join("\0")}`;
     const group = groups.get(key) ?? { prefix, last: [], class: value };
     group.last.push(tokens.at(-1)!); groups.set(key, group);
   };
   for (const invocation of INVOCATIONS) for (const entry of [...CATALOG, ...project]) add([...invocation.split(" "), ...entry.command.split(" ")], strictest(entry));
-  for (const guard of GUARDS) add(guard.command.split(" "), guard.class);
   for (const value of Object.keys(CLASSES) as PermissionClass[]) {
     const rules = [...groups.values()].filter(group => group.class === value);
     if (!rules.length) continue;
     lines.push("", `# ${value}: ${CLASSES[value].description}`);
     for (const rule of rules) {
       const pattern = [...rule.prefix.map(quote), element(rule.last)].join(", ");
-      const reason = CLASSES[value].decision === "ask" ? `decision="prompt", justification=${quote(CLASSES[value].description)}` : `decision="allow"`;
-      lines.push(`prefix_rule(pattern=[${pattern}], ${reason}, match=[${quote([...rule.prefix, rule.last[0]!].join(" "))}])`);
+      lines.push(`prefix_rule(pattern=[${pattern}], decision="allow", match=[${quote([...rule.prefix, rule.last[0]!].join(" "))}])`);
     }
   }
   return `${lines.join("\n")}\n`;
