@@ -1,16 +1,18 @@
 # Permissions
 
-Agents can run without blanket approval (`bypassPermissions` in Claude Code,
-`--yolo` in Codex) when routine commands are allowed and the few consequential
-ones still need the user. agent-tool assigns each of its commands a permission
-class and generates harness rules from that table, so the decision is made once,
-next to the code, rather than in every harness configuration.
+agent-tool assigns each of its commands a permission class and generates allow
+rules for routine commands. Consequential commands keep the user's chosen
+approval mode and sandbox policy. The same classification drives both Claude
+Code and Codex; generated project rules do not force extra prompts or grant
+blanket approval.
 
 ## What the rules protect
 
-The rules keep a cooperating agent from taking a consequential step (merging,
-publishing, deploying, adding third-party code, or changing its own permissions)
-without the user seeing it first. They are not a sandbox. An allowed command
+The rules preauthorize routine commands. They leave consequential steps (merging,
+publishing, deploying, adding third-party code, or changing permissions) to the
+harness's user or managed policy and the user's conversation authorization.
+An `ask` class means no generated allow rule, not a guaranteed interactive prompt.
+The rules are not a sandbox. An allowed command
 still runs repository code: tests and tools can do anything their source says,
 and an agent that edits that source can change what an allowed command does.
 Classes describe agent-tool's own commands and the executables a repository
@@ -25,8 +27,8 @@ out of agent sessions where that matters.
 | `read` | allow | Context, checks, listings, previews, diagnostics, logs, and read-only scans such as `state-machines` |
 | `local` | allow | `bun install\|update\|remove\|test`, `bun x` for executables classified `local`, `branch create`, `versions`, `images build`, `screenshots build`, `review`, `teardown --apply`, and applied skill or hook installs |
 | `share` | allow | `branch push`, `pr open`, `pr cancel-runs`, `pr threads reply\|resolve`, `repo cleanup --apply` |
-| `release` | ask | `pr merge`, and direct `gh pr merge`, `npm publish`, `bun publish` |
-| `intake` | ask | `bun add`, and direct `bun add`, `npm install`, `pnpm add`, `yarn add`, and `bunx`, `bun x`, `npx`, which can download a package |
+| `release` | ask | `pr merge` and executables classified `release` |
+| `intake` | ask | `bun add` and executables classified `intake` |
 | `policy` | ask | `permissions install --apply` |
 | `exec` | ask | Executables classified `exec`: ones that run whatever file or command they are given |
 
@@ -36,10 +38,9 @@ stay unclassified and keep the harness's default decision; do not add a broad
 `agent-tool *` allow rule, which would include them. `src/permissions/catalog.ts` holds the
 table; a test checks that every entry names a command the CLI accepts.
 
-Codex rules also list the direct package-manager and `gh` spellings, so that a
-raw command cannot bypass its agent-tool form. They catch the common spellings, not every
-alias: `bun install <name>` also adds a package, and asking for it would also
-ask for every frozen install. Treat them as a guard rail, not a sandbox.
+Direct package-manager and `gh` spellings receive no generated rules either.
+Both raw and wrapped consequential commands keep the harness default. Explicit
+user or managed rules can still restrict them; agent-tool never edits those rules.
 
 ## Dependency commands
 
@@ -213,20 +214,20 @@ agent-tool permissions check              # CI
   `--apply`. Other settings and rules in the file are kept; reinstalling
   replaces only entries a previous install recorded, including the `ask`
   entries that versions before 0.1.28 wrote.
-- `.codex/rules/agent-tool.rules` holds prefix rules. Codex applies the most
-  restrictive matching rule, so its `prompt` rules also override a broader user
-  rule such as `prefix_rule(pattern=["gh"], decision="allow")`. Prefix rules
-  cannot match a trailing flag, so a command whose `--apply` form **asks** prompts
-  in every form. When both forms allow, they still allow. Generated grouping uses
+- `.codex/rules/agent-tool.rules` holds only `allow` prefix rules. Consequential
+  commands get no rule: an explicit `prompt` overrides a broader user allow and
+  is rejected when `approval_policy = "never"`, even with `danger-full-access`.
+  Prefix rules cannot match a trailing flag, so a command whose `--apply` form
+  asks gets no rule in either form. When both forms allow, they still allow.
+  Generated grouping uses
   the stricter decision and, on a decision tie, the applied effect: cleanup is
   grouped under `share`, teardown and applied skill/hook installs under `local`,
   not their read-only previews. These labels are descriptive, not additional
-  permission ranks. This regrouping changes no effective allow/ask decision,
-  expanded command prefix, runtime guard, or harness trust. A locally edited
-  rules file is refused rather than overwritten.
+  permission ranks. Reinstalling replaces the managed file and removes the
+  forced prompts written by older versions. A locally edited rules file is
+  refused rather than overwritten; other `.rules` files are left alone.
 
-The rules take effect only outside bypass modes. Each harness also has limits
-that the rules cannot change:
+Each harness also has limits that the rules cannot change:
 
 - Claude Code applies project `allow` rules only after the workspace is trusted.
   An `allow` rule does not match a command that starts with an assignment such
@@ -238,7 +239,28 @@ that the rules cannot change:
   agent-tool's network commands need. A shell script is split into separate
   commands only when it is a plain chain joined by `&&`, `||`, `;`, or `|`;
   redirection (including `2>&1`), substitution, variables, and control flow make
-  the whole script one opaque command that prompts.
+  the whole script one opaque command subject to the harness default.
+
+After upgrading agent-tool, regenerate the managed permissions and start a new
+Codex session so it loads the updated rules. Removing a generated prompt does
+not change the active session's approval policy, sandbox, or user/managed rules.
+With `never` plus a restrictive sandbox, commands that need an escalation can
+still fail; with `danger-full-access`, they can run within the user's authorized
+scope. The PR helper still enforces review identity, CI, and repository merge
+policy independently of harness permissions.
+
+This also removes mandatory prompts for users of interactive approval modes.
+With `on-request`, a merge or publish that the sandbox permits can now run
+without a prompt. To keep a mandatory checkpoint, put your own rules in
+`~/.codex/rules/default.rules`, for example:
+
+```python
+prefix_rule(pattern=["gh", "pr", "merge"], decision="prompt")
+prefix_rule(pattern=["node_modules/.bin/agent-tool", "pr", "merge"], decision="prompt")
+```
+
+Add the invocation forms you use. Explicit prompts still require an approval
+mode that can ask; pairing them with `never` rejects matching commands.
 
 ### Auto mode
 

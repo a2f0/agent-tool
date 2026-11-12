@@ -16,9 +16,9 @@ const USAGE = `Usage:
 const EXECUTABLE = /^[\w.+-][\w.+-]*$/;
 
 /**
- * An executable whose class asks relies on a generated ask rule. If the recorded rules predate
- * its classification, an older allowance could run it without approval, so refuse until they
- * are regenerated.
+ * An executable whose class asks must have no generated allow rule. If the recorded rules
+ * predate its classification, an older allowance could preauthorize it, so refuse until
+ * they are regenerated.
  */
 function assertCurrentRules(root: string, command: string): void {
   if (!existsSync(path.join(root, ".agent-tool-permissions.json"))) return;
