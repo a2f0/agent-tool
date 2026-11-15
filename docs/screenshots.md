@@ -238,8 +238,10 @@ the manifest's labels.
 - Each change replaces the URL with `<base-path>/<project>/<screen>/` (never
   on the first render), and updates the title and heading.
 - The starting project is the deep link's, else `mobile` below 700px when
-  captured, else the first; the theme follows `prefers-color-scheme` when the
-  opening screen was captured in it.
+  captured, else the first. The starting theme is the page's: the element's
+  computed `color-scheme` when it names `light` or `dark` alone, as a site's
+  theme switch sets it on `<html>`, else `prefers-color-scheme`; a screen not
+  captured in that theme opens in one it was captured in.
 - Loading reserves the gallery's height; error and empty states are compact.
 
 Methods and properties: `select({ project?, theme?, screen? })`,
