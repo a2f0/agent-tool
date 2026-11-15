@@ -5,6 +5,11 @@ Keep the development Bun version in `.mise.toml` aligned with `package.json`'s
 job continues to check the version in `engines.bun`. Node/npm setup remains
 explicit in the trusted-publishing workflow.
 
+`mise.lock` is committed beside `.mise.toml`; regenerate it with `mise lock`
+whenever `.mise.toml` changes. mise-action installs with `--locked` when the
+lockfile exists, so every workflow's mise-action `version` must read the lock's
+format (format 4 needs mise 2026.11.1+): raise those pins before the format.
+
 Invoke `update-dependencies` in Claude Code, Codex, OpenCode, or Hermes to inventory and
 upgrade package dependencies, runtimes, mise tools, Actions, native toolchains,
 Ansible, Terraform providers/modules, and other repository-owned pins. It reads
