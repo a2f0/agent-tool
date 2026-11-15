@@ -199,6 +199,24 @@ describe("<screenshot-gallery>", () => {
     expect($(element, '.shots-slide[data-index="1"]').textContent).toBe("No dark-theme capture of Notes in the phone layout.");
   });
 
+  test("the starting theme is the page's color-scheme when it names one, else the visitor's preference", async () => {
+    // happy-dom computes no color-scheme, and its matchMedia never prefers dark.
+    const { getComputedStyle: computed, matchMedia: media } = globalThis;
+    let scheme = "";
+    globalThis.getComputedStyle = (element: Element, pseudo?: string | null) => element.localName === "screenshot-gallery" ? { colorScheme: scheme } as CSSStyleDeclaration : computed(element, pseudo);
+    globalThis.matchMedia = (query: string) => Object.defineProperty(media(query), "matches", { value: query === "(prefers-color-scheme: dark)" });
+    try {
+      const opened: string[] = [];
+      for (scheme of ["light", "only light", "dark", "normal", "light dark"]) {
+        document.body.replaceChildren();
+        opened.push((await mount({ "initial-project": "mobile", "initial-screen": "home" })).theme);
+      }
+      expect(opened).toEqual(["light", "light", "dark", "dark", "dark"]);
+    } finally {
+      Object.assign(globalThis, { getComputedStyle: computed, matchMedia: media });
+    }
+  });
+
   test("the lightbox opens on the current screen, follows steps, and closes back to its frame", async () => {
     const element = await mount({ "initial-project": "mobile" });
     $(element, '.shots-slide[data-index="0"] .shots-frame').click();

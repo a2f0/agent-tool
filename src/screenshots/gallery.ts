@@ -222,6 +222,17 @@ function prefers(query: string): boolean {
   return typeof matchMedia === "function" && matchMedia(query).matches;
 }
 
+/**
+ * Whether the page renders `element` dark: its computed `color-scheme` when
+ * that names light or dark alone, as a site's theme switch sets it, else the
+ * visitor's `prefers-color-scheme`, which `normal` and `light dark` follow.
+ */
+function rendersDark(element: Element): boolean {
+  const declared = typeof getComputedStyle === "function" ? getComputedStyle(element).colorScheme ?? "" : "";
+  const schemes = new Set(declared.split(/\s+/).filter(scheme => scheme === "light" || scheme === "dark"));
+  return schemes.size === 1 ? schemes.has("dark") : prefers("(prefers-color-scheme: dark)");
+}
+
 function editable(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 }
@@ -361,7 +372,7 @@ function defineGallery(): CustomElementConstructor {
       const requestedScreen = this.getAttribute("initial-screen") ?? deepLink?.screen;
       this.#project = startingProject(manifest, requestedProject, prefers("(max-width: 699px)"));
       const screen = startingScreen(manifest, this.#project, requestedScreen);
-      this.#theme = startingTheme(manifest, this.#project, screen, prefers("(prefers-color-scheme: dark)"));
+      this.#theme = startingTheme(manifest, this.#project, screen, rendersDark(this));
       const signal = this.#abort!.signal;
 
       const title = element("p", { class: "shots-title", "aria-live": "polite" });
