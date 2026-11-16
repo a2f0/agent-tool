@@ -108,6 +108,12 @@ test("steps resolve through package scripts, shell strings, and run-group plans 
   // Like npm, a directory without a package.json runs the nearest one above it.
   mkdirSync(path.join(root, "packages/api/src"), { recursive: true });
   expect(resolveStep(root, ["sh", "-c", "cd packages/api/src && npm test"]).findings.map(finding => finding.runner)).toEqual(["jest"]);
+  // A later `--` belongs to the script, so a wrapped command after it is still followed.
+  const wrapped = project({ "package.json": { scripts: { capture: "agent-tool run" } }, "packages/api/package.json": { scripts: {} }, "scripts/fast.json": { label: "fast", steps: [{ label: "unit", command: ["bun", "test"] }] } });
+  expect(resolveStep(wrapped, ["bun", "run", "capture", "--label", "t", "--", "bun", "test"]).findings.map(finding => finding.runner)).toEqual(["bun test"]);
+  expect(resolveStep(wrapped, ["bun", "run", "capture", "--", "--label", "t", "--", "bun", "test"]).findings.map(finding => finding.runner)).toEqual(["bun test"]);
+  // `--repo` inside the checkout still resolves run-group plans from its root, as the CLI does.
+  expect(resolveStep(wrapped, ["agent-tool", "--repo", "packages/api", "run-group", "scripts/fast.json"])).toMatchObject({ errors: [], findings: [{ runner: "bun test" }] });
   // `--repo` moves the command into that package.
   expect(resolveStep(root, ["agent-tool", "--repo", "packages/api", "run", "--", "bun", "run", "test"]).findings.map(finding => finding.runner)).toEqual(["jest"]);
   expect(resolveStep(root, ["agent-tool", "run-group", "scripts/missing.json"]).errors[0]).toContain("Cannot read run-group plan scripts/missing.json");

@@ -201,7 +201,9 @@ function bun(context: Context, args: string[], cwd: string, chain: string[], dep
   else if (sub === "run") {
     const run = options(rest.slice(1), TOOLS.bun);
     const target = run.rest[0];
-    if (target) runScript(context, target, run.rest.slice(1).filter(arg => arg !== "--"), directoryOption(directory, run.seen), workspaceScoped(seen, TOOLS.bun) || workspaceScoped(run.seen, TOOLS.bun), chain, depth, run.rest);
+    // Only a leading `--` separates the script's arguments; later ones belong to the script.
+    const forwarded = run.rest.slice(1);
+    if (target) runScript(context, target, forwarded[0] === "--" ? forwarded.slice(1) : forwarded, directoryOption(directory, run.seen), workspaceScoped(seen, TOOLS.bun) || workspaceScoped(run.seen, TOOLS.bun), chain, depth, run.rest);
   }
   // `bun <name>` runs a package script of that name, else a file or built-in.
   else runScript(context, sub, rest.slice(1), directory, workspaceScoped(seen, TOOLS.bun), chain, depth, null);
@@ -248,6 +250,16 @@ function packageManager(context: Context, manager: "npm" | "pnpm" | "yarn", args
   else if (manager !== "npm") runScript(context, sub, rest.slice(1), directory, workspaces, chain, depth, rest);
 }
 
+/** The checkout holding `directory`: this repository's root when it is inside it, else the nearest directory with a `.git`. */
+function checkoutOf(context: Context, directory: string): string {
+  if (directory === context.root || directory.startsWith(`${context.root}${path.sep}`)) {
+    for (let current = directory; current !== context.root; current = path.dirname(current)) if (existsSync(path.join(current, ".git"))) return current;
+    return context.root;
+  }
+  for (let current = directory; current !== path.dirname(current); current = path.dirname(current)) if (existsSync(path.join(current, ".git"))) return current;
+  return directory;
+}
+
 function agentTool(context: Context, input: string[], invokedIn: string, chain: string[], depth: number): void {
   const args = [...input];
   // `--repo` moves the command, and the run-group plans it resolves, to that checkout.
@@ -255,7 +267,9 @@ function agentTool(context: Context, input: string[], invokedIn: string, chain: 
   while (args[0] === "--repo" || args[0] === "--config") { if (args[0] === "--repo" && args[1]) { cwd = path.resolve(cwd, args[1]); repo = cwd; } args.splice(0, 2); }
   const text = display(["agent-tool", ...args]);
   if (args[0] === "run-group" && args[1]) {
-    const plan = path.resolve(repo ?? context.root, args[1]);
+    // Like the CLI, resolve the plan and run its steps from the root of the checkout `--repo` names.
+    const checkout = repo ? checkoutOf(context, repo) : context.root;
+    const plan = path.resolve(checkout, args[1]);
     const relative = path.relative(context.root, plan);
     let steps: { label: string; command: string[] }[];
     try {
@@ -264,7 +278,7 @@ function agentTool(context: Context, input: string[], invokedIn: string, chain: 
       if (!Array.isArray(value.steps) || !value.steps.every(valid)) throw new Error("expected steps with a label and command");
       steps = value.steps;
     } catch (error) { context.errors.push(`Cannot read run-group plan ${relative} (${chain.join(" -> ")}): ${(error as Error).message}`); return; }
-    for (const step of steps) visit(context, step.command, repo ?? context.root, [...chain, `${relative} step ${step.label}: ${display(step.command)}`], depth + 1);
+    for (const step of steps) visit(context, step.command, checkout, [...chain, `${relative} step ${step.label}: ${display(step.command)}`], depth + 1);
   } else if (args[0] === "run") {
     const separator = args.indexOf("--");
     if (separator !== -1) visit(context, args.slice(separator + 1), cwd, chain, depth + 1);
