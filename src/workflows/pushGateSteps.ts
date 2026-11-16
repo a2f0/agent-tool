@@ -131,7 +131,8 @@ function visit(context: Context, input: string[], cwd: string, chain: string[], 
   while (argv.length && (ASSIGNMENT.test(argv[0]!) || WRAPPERS.has(argv[0]!))) argv.shift();
   if (argv[0] === "env") { argv.shift(); while (argv.length && (argv[0]!.startsWith("-") || ASSIGNMENT.test(argv[0]!))) argv.shift(); }
   if (!argv.length) return;
-  const name = path.basename(argv[0]!);
+  // `npx vitest@4` names the runner with a version selector.
+  const name = path.basename(argv[0]!).replace(/(?<=.)@[^@/]*$/, "");
   const args = argv.slice(1);
   const text = display(argv);
   if (SHELLS.has(name)) {
@@ -230,12 +231,14 @@ function packageManager(context: Context, manager: "npm" | "pnpm" | "yarn", args
   else if (manager !== "npm") runScript(context, sub, rest.slice(1), directory, workspaces, chain, depth, rest);
 }
 
-function agentTool(context: Context, input: string[], cwd: string, chain: string[], depth: number): void {
+function agentTool(context: Context, input: string[], invokedIn: string, chain: string[], depth: number): void {
   const args = [...input];
-  while (args[0] === "--repo" || args[0] === "--config") args.splice(0, 2);
+  // `--repo` moves the command, and the run-group plans it resolves, to that checkout.
+  let cwd = invokedIn, repo: string | null = null;
+  while (args[0] === "--repo" || args[0] === "--config") { if (args[0] === "--repo" && args[1]) { cwd = path.resolve(cwd, args[1]); repo = cwd; } args.splice(0, 2); }
   const text = display(["agent-tool", ...args]);
   if (args[0] === "run-group" && args[1]) {
-    const plan = path.resolve(context.root, args[1]);
+    const plan = path.resolve(repo ?? context.root, args[1]);
     const relative = path.relative(context.root, plan);
     let steps: { label: string; command: string[] }[];
     try {
@@ -244,7 +247,7 @@ function agentTool(context: Context, input: string[], cwd: string, chain: string
       if (!Array.isArray(value.steps) || !value.steps.every(valid)) throw new Error("expected steps with a label and command");
       steps = value.steps;
     } catch (error) { context.errors.push(`Cannot read run-group plan ${relative} (${chain.join(" -> ")}): ${(error as Error).message}`); return; }
-    for (const step of steps) visit(context, step.command, context.root, [...chain, `${relative} step ${step.label}: ${display(step.command)}`], depth + 1);
+    for (const step of steps) visit(context, step.command, repo ?? context.root, [...chain, `${relative} step ${step.label}: ${display(step.command)}`], depth + 1);
   } else if (args[0] === "run") {
     const separator = args.indexOf("--");
     if (separator !== -1) visit(context, args.slice(separator + 1), cwd, chain, depth + 1);

@@ -21,6 +21,9 @@ export function outcome(status: string, conclusion: string | null): Outcome {
   return conclusion !== null && PASSING.includes(conclusion) ? "passing" : "failing";
 }
 
+/** Runs order by creation time, then by id, which GitHub assigns increasingly, for runs created in the same second. */
+const newer = (a: WorkflowRun, b: WorkflowRun) => a.createdAt > b.createdAt || (a.createdAt === b.createdAt && a.id > b.id);
+
 /**
  * Each workflow's most recent push run on the branch. A workflow whose path
  * filters skipped the tip keeps the state of its last run, so a docs-only
@@ -30,7 +33,7 @@ export function latestRuns(runs: WorkflowRun[]): WorkflowRun[] {
   const latest = new Map<number, WorkflowRun>();
   for (const run of runs) {
     const current = latest.get(run.workflowId);
-    if (!current || run.createdAt > current.createdAt || (run.createdAt === current.createdAt && run.id > current.id)) latest.set(run.workflowId, run);
+    if (!current || newer(run, current)) latest.set(run.workflowId, run);
   }
   return [...latest.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -60,8 +63,8 @@ export function classify(workflows: Outcome[], required: (Outcome | "missing")[]
 
 /** The latest passing run of the same workflow created before the failing one, if the window holds one. */
 export function lastGreen(runs: WorkflowRun[], failing: WorkflowRun): WorkflowRun | null {
-  return runs.filter(run => run.workflowId === failing.workflowId && run.createdAt < failing.createdAt && outcome(run.status, run.conclusion) === "passing")
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
+  return runs.filter(run => run.workflowId === failing.workflowId && newer(failing, run) && outcome(run.status, run.conclusion) === "passing")
+    .sort((a, b) => newer(a, b) ? -1 : newer(b, a) ? 1 : 0)[0] ?? null;
 }
 
 export interface Merge { oid: string; subject: string; pr: { number: number; title: string | null; url: string | null; headOid: string | null } | null }
@@ -130,7 +133,7 @@ export function baseHealthCommand(args: string[]): number {
     const greens = failingRuns.map(run => ({ run, green: lastGreen(runs, run) }));
     if (greens.length && greens.every(item => item.green)) {
       // The oldest of the failing workflows' last green runs starts a range that covers all of them.
-      const oldest = greens.map(item => item.green!).sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]!;
+      const oldest = greens.map(item => item.green!).sort((a, b) => newer(a, b) ? 1 : newer(b, a) ? -1 : 0)[0]!;
       green = { oid: oldest.headSha, workflows: failingRuns.map(run => run.name) };
       const compare = json<{ commits: RangeCommit[] }>(["api", `repos/${name}/compare/${oldest.headSha}...${tip}`, "--jq", "{commits: [.commits[] | {sha, message: .commit.message}]}"]);
       const merged = json<MergedPull[]>(["pr", "list", "-R", name, "--state", "merged", "--base", branch, "--limit", String(limit), "--json", "number,title,url,headRefOid,mergeCommit"]);

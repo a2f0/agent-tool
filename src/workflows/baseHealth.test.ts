@@ -37,6 +37,10 @@ test("each workflow keeps its latest run, so a path-filtered tip neither hides n
   expect(latestRuns(runs).map(item => [item.workflowId, item.id])).toEqual([[1, 3], [3, 2], [2, 4]]);
   expect(lastGreen(runs, runs[0]!)?.id).toBe(1);
   expect(lastGreen(runs, runs[1]!)).toBeNull();
+  // Runs created in the same second order by id.
+  const sameSecond = [run(7, 1, "CI", tip, "failure", "2026-11-04T00:00:00Z"), run(6, 1, "CI", older, "success", "2026-11-04T00:00:00Z"), run(5, 1, "CI", green, "success", "2026-11-04T00:00:00Z")];
+  expect(latestRuns(sameSecond).map(item => item.id)).toEqual([7]);
+  expect(lastGreen(sameSecond, sameSecond[0]!)?.id).toBe(6);
 });
 
 test("required checks map to their workflow's run and count as missing when the tip lacks them", () => {
