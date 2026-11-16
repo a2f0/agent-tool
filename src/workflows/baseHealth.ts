@@ -140,7 +140,17 @@ export function baseHealthCommand(args: string[]): number {
       breakingRange = { from: oldest.headSha, to: tip, merges: breakingMerges(compare.commits.slice(0, limit), merged), truncated: compare.commits.length > limit };
     } else if (failingRuns.length) notes.push(`No passing run of ${greens.filter(item => !item.green).map(item => item.run.name).join(", ")} within the last ${limit} push runs; raise --limit to find the breaking range.`);
     const pulls = json<OpenPull[]>(["pr", "list", "-R", name, "--state", "open", "--limit", String(limit), "--json", "number,title,body,url"]);
-    repairs = openRepairs(pulls, failingRuns.map(run => ({ runId: run.id, jobIds: failingJobs.flatMap(job => job.runId === run.id && job.jobId !== null ? [job.jobId] : []) })));
+    // A failing required check outside the listed runs still names its run and job in its link.
+    const cited = new Map<number, number[]>(failingRuns.map(run => [run.id, []]));
+    for (const job of failingJobs) {
+      const link = job.url?.match(/\/actions\/runs\/(\d+)(?:\/job\/(\d+))?/);
+      const runId = job.runId ?? (link ? Number(link[1]) : null);
+      const jobId = job.jobId ?? (link?.[2] ? Number(link[2]) : null);
+      if (runId === null) continue;
+      if (!cited.has(runId)) cited.set(runId, []);
+      if (jobId !== null) cited.get(runId)!.push(jobId);
+    }
+    repairs = openRepairs(pulls, [...cited].map(([runId, jobIds]) => ({ runId, jobIds })));
   }
   output({ repo: name, branch, status, tip: { oid: tip, hasRuns: tipHasRuns }, inProgress: workflows.some(item => item.outcome === "pending"), workflows, requiredChecks, failingJobs, lastGreen: green, breakingRange, openRepairs: repairs, limit, notes });
   return 0;

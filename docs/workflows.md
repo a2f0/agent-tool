@@ -325,10 +325,12 @@ stderr as `push-gate:` lines.
 A repository with neither a section nor a tracked hook passes with a note that
 it has no gate. Steps are resolved through `bun run`, `npm run`, `pnpm run`,
 and `yarn` package scripts (with their `pre` and `post` scripts and appended
-arguments; npm's own options count anywhere before `--`), recursively, splitting shell strings at `&&`, `||`, `;`, `|`,
+arguments, from the nearest `package.json` at or above the directory; npm's
+own options count anywhere before `--`), recursively, splitting shell strings at `&&`, `||`, `;`, `|`,
 `&`, and newlines and following `cd` (which ends with its subshell); through `sh -c` and `bash -c`; through
-`bunx`, `npx`, and `bun x` (a version selector such as `vitest@4` is
-ignored), and `agent-tool [--repo <dir>] run -- <command>`; and through
+`bunx`, `npx`, `bun x`, and `exec` (a version selector such as `vitest@4`
+is ignored, and a `--call` string is split like a script), and `agent-tool
+[--repo <dir>] run -- <command>`; and through
 `agent-tool run-group <plan>` plans. Workspace filters (`--filter`, `-r`,
 `--workspace`) resolve to every workspace package, from `package.json`
 workspaces or `pnpm-workspace.yaml`, that declares the script.

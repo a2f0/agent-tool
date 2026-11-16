@@ -159,6 +159,17 @@ test("green, pending, and no-ci tips make no follow-up calls", () => {
   expect(report.notes[0]).toContain("lacks CI on pushes");
 }, 60_000);
 
+test("a failing required check outside the listed runs is still cited, and open PRs naming its run are repairs", () => {
+  const f = githubFixture({
+    tip, runs: [run(2, 1, "CI", tip, "success", "2026-11-02T00:00:00Z")],
+    checkRuns: [{ name: "deploy", status: "completed", conclusion: "failure", url: "https://github.com/o/r/actions/runs/7770000001/job/8880000001" }],
+    jobs: {}, open: [{ number: 4, title: "fix: deploy", body: "Repairs run 7770000001.", url: "u4" }, { number: 5, title: "chore: other", body: "", url: "u5" }],
+  }, { merge: { requiredChecks: [{ name: "deploy" }] } });
+  const report = JSON.parse(f.health().stdout);
+  expect(report).toMatchObject({ status: "red", failingJobs: [{ workflow: null, runId: null, job: "deploy", jobId: null, url: "https://github.com/o/r/actions/runs/7770000001/job/8880000001" }] });
+  expect(report.openRepairs).toEqual([{ number: 4, title: "fix: deploy", url: "u4", references: ["7770000001"] }]);
+}, 60_000);
+
 test("a failure without a green run in the window says how to widen it, and options are validated", () => {
   const f = githubFixture({ tip, runs: [run(2, 1, "CI", tip, "failure", "2026-11-02T00:00:00Z")], jobs: { 2: [{ id: 5, name: "test", status: "completed", conclusion: "timed_out", url: "j" }] }, open: [] });
   const report = JSON.parse(f.health(["--branch", "main"]).stdout);

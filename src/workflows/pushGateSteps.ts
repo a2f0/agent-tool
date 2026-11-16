@@ -17,7 +17,7 @@ interface Tool { values: Set<string>; workspaces: Set<string> }
 const tool = (values: string[], workspaces: string[] = []): Tool => ({ values: new Set(values), workspaces: new Set(workspaces) });
 const TOOLS = {
   bun: tool(["--cwd", "--filter", "-F", "--env-file", "--preload", "-r", "--config", "-c", "--shell", "--elide-lines"], ["--filter", "-F", "--workspaces"]),
-  npm: tool(["--prefix", "--workspace", "-w", "--registry", "--cache", "--userconfig"], ["--workspace", "-w", "--workspaces", "-ws"]),
+  npm: tool(["--prefix", "--workspace", "-w", "--registry", "--cache", "--userconfig", "-c", "--call", "-p", "--package"], ["--workspace", "-w", "--workspaces", "-ws"]),
   pnpm: tool(["-C", "--dir", "--filter", "-F", "--reporter"], ["--filter", "-F", "--recursive", "-r"]),
   yarn: tool(["--cwd"]),
   exec: tool(["-p", "--package", "-c", "--call"]),
@@ -65,8 +65,14 @@ function options(argv: string[], spec: Tool): { rest: string[]; seen: Map<string
   return { rest: argv.slice(index), seen };
 }
 
-/** `npx -- vitest run`: the command follows an optional `--`. */
-const afterSeparator = (args: string[]) => args[0] === "--" ? args.slice(1) : args;
+/** `npx`, `bunx`, `bun x`, and `<manager> exec|dlx`: a command after an optional `--`, or a shell string given to `--call`. */
+function execute(context: Context, args: string[], cwd: string, chain: string[], depth: number): void {
+  const { rest, seen } = options(args, TOOLS.exec);
+  const call = seen.get("--call") ?? seen.get("-c");
+  if (typeof call === "string") visitShell(context, call, cwd, chain, depth + 1);
+  const command = rest[0] === "--" ? rest.slice(1) : rest;
+  if (command.length) visit(context, command, cwd, chain, depth + 1);
+}
 
 function directoryOption(cwd: string, seen: Map<string, string | true>): string {
   for (const name of ["--cwd", "--prefix", "-C", "--dir"]) { const value = seen.get(name); if (typeof value === "string") return path.resolve(cwd, value); }
@@ -107,8 +113,15 @@ function workspaceDirectories(context: Context): string[] {
   return [...directories];
 }
 
+/** Package managers run scripts from the nearest `package.json` at or above the directory, within the repository. */
+function packageRoot(context: Context, directory: string): string {
+  let current = directory;
+  while (!existsSync(path.join(current, "package.json")) && current !== context.root && current.startsWith(`${context.root}${path.sep}`)) current = path.dirname(current);
+  return current;
+}
+
 function runScript(context: Context, name: string, args: string[], directory: string, workspaces: boolean, chain: string[], depth: number, fallback: string[] | null): void {
-  const directories = workspaces ? workspaceDirectories(context).filter(dir => typeof scripts(dir)?.[name] === "string") : [directory];
+  const directories = workspaces ? workspaceDirectories(context).filter(dir => typeof scripts(dir)?.[name] === "string") : [packageRoot(context, directory)];
   let found = false;
   for (const dir of directories) {
     const table = scripts(dir);
@@ -144,7 +157,7 @@ function visit(context: Context, input: string[], cwd: string, chain: string[], 
   } else if (name === "agent-tool" || ((name === "bun" || name === "node") && /(?:^|\/)agent-tool\/src\/index\.ts$/.test(args[0] ?? ""))) {
     agentTool(context, name === "agent-tool" ? args : args.slice(1), cwd, chain, depth);
   } else if (name === "bun") bun(context, args, cwd, chain, depth, text);
-  else if (name === "bunx" || name === "npx") { const command = afterSeparator(options(args, TOOLS.exec).rest); if (command.length) visit(context, command, cwd, chain, depth + 1); }
+  else if (name === "bunx" || name === "npx") execute(context, args, cwd, chain, depth);
   else if (name === "npm" || name === "pnpm" || name === "yarn") packageManager(context, name, args, cwd, chain, depth, text);
   else if (name === "turbo") { if (turboTasks(args).some(task => /^test/.test(task.slice(task.lastIndexOf("#") + 1)))) report(context, "test", text, chain); }
   else if (testRunner(name, args)) report(context, "test", text, chain);
@@ -183,7 +196,7 @@ function bun(context: Context, args: string[], cwd: string, chain: string[], dep
   if (!sub) return;
   if (sub === "test") report(context, "test", text, chain);
   else if (INSTALLS.bun.includes(sub)) report(context, "install", text, chain);
-  else if (sub === "x") { const command = afterSeparator(options(rest.slice(1), TOOLS.exec).rest); if (command.length) visit(context, command, directory, chain, depth + 1); }
+  else if (sub === "x") execute(context, rest.slice(1), directory, chain, depth);
   else if (sub === "exec") { if (rest[1]) visitShell(context, rest[1], directory, chain, depth + 1); }
   else if (sub === "run") {
     const run = options(rest.slice(1), TOOLS.bun);
@@ -226,8 +239,10 @@ function packageManager(context: Context, manager: "npm" | "pnpm" | "yarn", args
   } else if (["test", "t", "tst", "start", "stop", "restart"].includes(sub)) {
     runScript(context, ["t", "tst"].includes(sub) ? "test" : sub, scriptArgs(rest.slice(1)), directory, workspaces, chain, depth, null);
   } else if (["exec", "x", "dlx"].includes(sub)) {
-    const command = afterSeparator(options(rest.slice(1), TOOLS.exec).rest);
-    if (command.length) visit(context, command, directory, chain, depth + 1);
+    // npm has already read `--call` wherever it appeared.
+    const call = seen.get("--call") ?? seen.get("-c");
+    if (manager === "npm" && typeof call === "string") visitShell(context, call, directory, chain, depth + 1);
+    execute(context, rest.slice(1), directory, chain, depth);
   }
   // pnpm and yarn run a script by its bare name, else an installed executable of that name.
   else if (manager !== "npm") runScript(context, sub, rest.slice(1), directory, workspaces, chain, depth, rest);
