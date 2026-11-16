@@ -106,7 +106,7 @@ export function preflight(expectedHead: string, baseBranch: string, reviewedBase
   assert(pr.state === "OPEN" && !pr.isDraft && pr.mergeable === "MERGEABLE" && pr.mergeStateStatus === "CLEAN", notReady(pr, baseBranch, strict));
   const target = resolvePullRequestMergeTarget(identity, baseBranch);
   assert(target.headOid === expectedHead, "PR head changed during preflight.");
-  let liveBase = fetchedLiveBase ?? remoteBranchHead(resolveRepositoryGitUrl(identity.repo), baseBranch);
+  const liveBase = fetchedLiveBase ?? remoteBranchHead(resolveRepositoryGitUrl(identity.repo), baseBranch);
   assert(liveBase, `Could not read the live ${baseBranch} branch of ${identity.repo}.`);
   const baseOid = reviewedBase ?? liveBase;
   if (strict) {
@@ -120,8 +120,9 @@ export function preflight(expectedHead: string, baseBranch: string, reviewedBase
   assert(checks.ok, checks.reason ?? "Checks have not passed.");
   // Explicit version policy opts in; unversioned repositories need no manifest.
   if (config.versions.packages !== null) {
-    if (!strict && liveBase !== baseOid && !fetchedLiveBase) liveBase = resolveFreshBaseRef(identity.repo, baseBranch);
     const versionBase = strict ? baseOid : liveBase;
+    // Preflight is read-only, so it never fetches; `pr merge` fetched the live base before calling it.
+    assert(versionBase === baseOid || spawnSync("git", ["cat-file", "-e", `${versionBase}^{commit}`], { stdio: "ignore", env: gitEnvironment() }).status === 0, `The live ${baseBranch} ${versionBase} moved since review and is not in this clone; fetch it with \`agent-tool repo context --fetch\`, then run preflight again to check package versions against it.`);
     assert(planVersions(process.cwd(), versionBase).every(plan => plan.headVersion === plan.targetVersion), strict || versionBase === reviewedBase
       ? "Package versions are stale against the reviewed base."
       : `Package versions are stale against the live ${baseBranch} ${versionBase}; another merge took this version. Integrate the base, prepare versions, validate, and review again.`);

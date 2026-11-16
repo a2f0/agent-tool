@@ -423,8 +423,10 @@ the reviewed head contains the reviewed base, passing checks, and explicit
 package version policy. A base that moved since review is acceptable: the
 reviewed head stays bound through `expectedHeadOid`, and when
 `versions.packages` is configured the versions must still be current against
-the live base, which preflight fetches, because two merges that take the same
-version merge cleanly but the second cannot publish. With
+the live base, because two merges that take the same version merge cleanly but
+the second cannot publish. Preflight is read-only and never fetches: when the
+moved live base is not in the clone it says to fetch it (`repo context
+--fetch`) and run again, while `pr merge` fetches it itself. With
 `merge.requireStrictBaseFreshness` the live base must equal the reviewed base
 and configured strict rulesets are checked, as before. Preflight returns the
 checked head/base/PR identifiers with `liveBaseOid`, `baseMoved`, and

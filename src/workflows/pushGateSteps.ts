@@ -65,6 +65,9 @@ function options(argv: string[], spec: Tool): { rest: string[]; seen: Map<string
   return { rest: argv.slice(index), seen };
 }
 
+/** `npx -- vitest run`: the command follows an optional `--`. */
+const afterSeparator = (args: string[]) => args[0] === "--" ? args.slice(1) : args;
+
 function directoryOption(cwd: string, seen: Map<string, string | true>): string {
   for (const name of ["--cwd", "--prefix", "-C", "--dir"]) { const value = seen.get(name); if (typeof value === "string") return path.resolve(cwd, value); }
   return cwd;
@@ -141,7 +144,7 @@ function visit(context: Context, input: string[], cwd: string, chain: string[], 
   } else if (name === "agent-tool" || ((name === "bun" || name === "node") && /(?:^|\/)agent-tool\/src\/index\.ts$/.test(args[0] ?? ""))) {
     agentTool(context, name === "agent-tool" ? args : args.slice(1), cwd, chain, depth);
   } else if (name === "bun") bun(context, args, cwd, chain, depth, text);
-  else if (name === "bunx" || name === "npx") { const { rest } = options(args, TOOLS.exec); if (rest.length) visit(context, rest, cwd, chain, depth + 1); }
+  else if (name === "bunx" || name === "npx") { const command = afterSeparator(options(args, TOOLS.exec).rest); if (command.length) visit(context, command, cwd, chain, depth + 1); }
   else if (name === "npm" || name === "pnpm" || name === "yarn") packageManager(context, name, args, cwd, chain, depth, text);
   else if (name === "turbo") { if (turboTasks(args).some(task => /^test/.test(task.slice(task.lastIndexOf("#") + 1)))) report(context, "test", text, chain); }
   else if (testRunner(name, args)) report(context, "test", text, chain);
@@ -180,7 +183,7 @@ function bun(context: Context, args: string[], cwd: string, chain: string[], dep
   if (!sub) return;
   if (sub === "test") report(context, "test", text, chain);
   else if (INSTALLS.bun.includes(sub)) report(context, "install", text, chain);
-  else if (sub === "x") { const inner = options(rest.slice(1), TOOLS.exec).rest; if (inner.length) visit(context, inner, directory, chain, depth + 1); }
+  else if (sub === "x") { const command = afterSeparator(options(rest.slice(1), TOOLS.exec).rest); if (command.length) visit(context, command, directory, chain, depth + 1); }
   else if (sub === "exec") { if (rest[1]) visitShell(context, rest[1], directory, chain, depth + 1); }
   else if (sub === "run") {
     const run = options(rest.slice(1), TOOLS.bun);
@@ -223,8 +226,7 @@ function packageManager(context: Context, manager: "npm" | "pnpm" | "yarn", args
   } else if (["test", "t", "tst", "start", "stop", "restart"].includes(sub)) {
     runScript(context, ["t", "tst"].includes(sub) ? "test" : sub, scriptArgs(rest.slice(1)), directory, workspaces, chain, depth, null);
   } else if (["exec", "x", "dlx"].includes(sub)) {
-    const inner = options(rest.slice(1), TOOLS.exec).rest;
-    const command = inner[0] === "--" ? inner.slice(1) : inner;
+    const command = afterSeparator(options(rest.slice(1), TOOLS.exec).rest);
     if (command.length) visit(context, command, directory, chain, depth + 1);
   }
   // pnpm and yarn run a script by its bare name, else an installed executable of that name.

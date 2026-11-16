@@ -209,7 +209,35 @@ describe("PR CLI flows ported from a2f0.net", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(`Package versions are stale against the live production ${taken}; another merge took this version.`);
       expect(existsSync(path.join(fixture, "mutation.json"))).toBe(false);
-    });
+      const preflight = invoke("merged", ["pr", "preflight", head, "production", base], "", config);
+      expect(preflight.status).toBe(1);
+      expect(preflight.stderr).toContain(`Package versions are stale against the live production ${taken}`);
+    }, 60_000);
+
+    test("read-only preflight never fetches a moved base it needs for versions; it says to fetch", () => {
+      const commit = (message: string) => { git("add", "."); git("-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-qm", message); return git("rev-parse", "HEAD"); };
+      const remote = path.join(temporary, "remote.git");
+      writeFileSync(path.join(fixture, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" })); const base = commit("feat: add package");
+      git("push", "-q", remote, `${base}:refs/heads/production`);
+      writeFileSync(path.join(fixture, "package.json"), JSON.stringify({ name: "example", version: "1.0.1" })); writeFileSync(path.join(fixture, "change.txt"), "change\n"); head = commit("feat: example change");
+      git("push", "-q", remote, "feature");
+      // Another clone moves the base; this clone never sees the commit.
+      const other = path.join(temporary, "other");
+      execFileSync("git", ["clone", "-q", "--branch", "production", remote, other]);
+      execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "chore: elsewhere"], { cwd: other });
+      execFileSync("git", ["push", "-q", "origin", "production"], { cwd: other });
+      const moved = execFileSync("git", ["rev-parse", "HEAD"], { cwd: other, encoding: "utf8" }).trim();
+      const config = path.join(temporary, "versions.json");
+      writeFileSync(config, JSON.stringify({ schemaVersion: 1, merge: { requiredChecks: [{ name: "build", workflow: "CI" }] }, versions: { packages: ["."], lockfile: null } }));
+      const result = invoke("merged", ["pr", "preflight", head, "production", base], "", config);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`The live production ${moved} moved since review and is not in this clone; fetch it with \`agent-tool repo context --fetch\``);
+      expect(spawnSync("git", ["cat-file", "-e", moved], { cwd: fixture }).status).not.toBe(0);
+      git("fetch", "-q", remote, "production");
+      const fetched = invoke("merged", ["pr", "preflight", head, "production", base], "", config);
+      expect(fetched.stderr).toBe(""); expect(fetched.status).toBe(0);
+      expect(JSON.parse(fetched.stdout)).toMatchObject({ baseOid: base, liveBaseOid: moved, baseMoved: true });
+    }, 60_000);
 
     test("merges only into the branch that passed preflight", () => {
       const result = invoke("retarget-late", ["pr", "merge", "", head, "production"]);
