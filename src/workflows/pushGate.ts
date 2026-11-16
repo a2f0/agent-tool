@@ -58,6 +58,14 @@ export interface PushedRef extends PushTuple {
 /** The destination as Git names it; `advertised` counts the commits it advertises that this clone has, null when its refs could not be listed. */
 export interface PushDestination { name: string | null; url: string; advertised: number | null; error: string | null }
 
+/**
+ * Hide credentials a URL carries (`https://user:token@host/...`) before it is
+ * printed or handed to steps. An ssh user name alone is kept.
+ */
+export function redactUrl(value: string): string {
+  return value.replace(/([a-z][a-z0-9+.-]*:\/\/)([^/@\s]+)@/gi, (_, scheme: string, userinfo: string) => /^ssh:/i.test(scheme) && !userinfo.includes(":") ? `${scheme}${userinfo}@` : `${scheme}***@`);
+}
+
 const fullOid = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const LIST_TIMEOUT_MS = 60_000;
 function gitWithInput(args: string[], input: string): { status: number | null; stdout: string; stderr: string } {
@@ -74,14 +82,16 @@ function gitWithInput(args: string[], input: string): { status: number | null; s
  * `git remote set-url`, so subtracting them could skip commits the
  * destination lacks.
  */
-export function listDestination(remote: string, url: string, list = true): PushDestination & { commits: string[] } {
+export function listDestination(remote: string, pushUrl: string, list = true): PushDestination & { commits: string[] } {
   const configured = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(remote) && spawnSync("git", ["remote", "get-url", remote], { stdio: "ignore", env: gitEnvironment() }).status === 0;
   const name = configured ? remote : null;
+  // Only the redacted URL is reported; the real one is used to list refs.
+  const url = redactUrl(pushUrl);
   if (!list) return { name, url, advertised: null, error: null, commits: [] };
-  assert(!url.startsWith("-"), "The push URL must not start with '-'.");
+  assert(!pushUrl.startsWith("-"), "The push URL must not start with '-'.");
   // Never prompt for credentials or wait forever: a failed listing falls back to the old tip Git reported.
-  const listed = spawnSync("git", ["ls-remote", url], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" }, maxBuffer: 256 * 1024 * 1024, timeout: LIST_TIMEOUT_MS, killSignal: "SIGKILL" });
-  if (listed.error || listed.status !== 0) return { name, url, advertised: null, error: (listed.stderr || listed.error?.message || "git ls-remote failed").trim(), commits: [] };
+  const listed = spawnSync("git", ["ls-remote", pushUrl], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" }, maxBuffer: 256 * 1024 * 1024, timeout: LIST_TIMEOUT_MS, killSignal: "SIGKILL" });
+  if (listed.error || listed.status !== 0) return { name, url, advertised: null, error: redactUrl(listed.stderr || listed.error?.message || "git ls-remote failed").replaceAll(pushUrl, url).trim(), commits: [] };
   const candidates = [...new Set(listed.stdout.split("\n").map(line => line.split("\t", 1)[0]!).filter(oid => fullOid.test(oid)))];
   if (!candidates.length) return { name, url, advertised: 0, error: null, commits: [] };
   const checked = gitWithInput(["cat-file", "--batch-check=%(objectname) %(objecttype)"], candidates.map(oid => `${oid}^{commit}`).join("\n") + "\n");
@@ -178,6 +188,7 @@ const say = (message: string) => writeSync(2, `push-gate: ${message}\n`);
 
 export async function runPushGate(args: string[], root: string): Promise<number> {
   assert(args.length === 3 && args[0] === "--pre-push" && !!args[1] && !!args[2], "Usage: push-gate run --pre-push <remote> <url>");
+  // The remote argument is a URL, credentials and all, when the push named no remote.
   const [, remote, url] = args as [string, string, string];
   const started = performance.now();
   assert(!isatty(0), "push-gate run reads the refs being pushed from stdin; run it through git push.");

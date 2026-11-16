@@ -262,7 +262,12 @@ function agentTool(context: Context, input: string[], cwd: string, chain: string
  */
 function visitShell(context: Context, script: string, cwd: string, chain: string[], depth: number): void {
   let directory = cwd;
-  for (const words of splitShell(script)) {
+  // A `cd` inside parentheses ends with its subshell.
+  const outer: string[] = [];
+  for (const item of parseShell(script)) {
+    if (item === "(") { outer.push(directory); continue; }
+    if (item === ")") { directory = outer.pop() ?? directory; continue; }
+    const words = item;
     while (words.length && KEYWORDS.has(words[0]!)) words.shift();
     if (!words.length || words[0] === "for" || words[0] === "case" || /\(\)$/.test(words[0]!)) continue;
     if (words[0] === "cd") { if (words[1] && words[1] !== "-" && !words[1].startsWith("$")) directory = path.resolve(directory, words[1]); continue; }
@@ -271,7 +276,12 @@ function visitShell(context: Context, script: string, cwd: string, chain: string
 }
 
 export function splitShell(script: string): string[][] {
-  const commands: string[][] = [];
+  return parseShell(script).filter((item): item is string[] => Array.isArray(item));
+}
+
+/** Simple commands in order, with `(` and `)` marking where a subshell starts and ends. */
+function parseShell(script: string): (string[] | "(" | ")")[] {
+  const commands: (string[] | "(" | ")")[] = [];
   let words: string[] = [];
   let word = "";
   let quoted = false;
@@ -296,7 +306,9 @@ export function splitShell(script: string): string[][] {
     } else if ("&|;\n()".includes(char)) {
       // `2>&1` and `&>` are redirections, not separators.
       if (char === "&" && (word.endsWith(">") || script[index + 1] === ">")) { word += char; continue; }
-      endCommand(); if ((char === "&" || char === "|") && script[index + 1] === char) index++;
+      endCommand();
+      if (char === "(" || char === ")") commands.push(char);
+      else if ((char === "&" || char === "|") && script[index + 1] === char) index++;
     } else if (char === " " || char === "\t") endWord();
     else word += char;
   }

@@ -286,7 +286,9 @@ JSON file that exists while the steps run:
 }
 ```
 
-`remote.name` is null for a push to a URL. `remote.advertised` counts the
+`remote.name` is null for a push to a URL, and `remote.url` replaces any
+credentials the URL carries with `***`, as the printed report does.
+`remote.advertised` counts the
 advertised commits this clone has, and is null, with `remote.error` set, when
 the listing failed. `scan` is `since-remote-tip` (the remote had the ref at a
 commit this clone has), `unknown-remote-tip` (it had the ref at a commit this
@@ -324,7 +326,7 @@ A repository with neither a section nor a tracked hook passes with a note that
 it has no gate. Steps are resolved through `bun run`, `npm run`, `pnpm run`,
 and `yarn` package scripts (with their `pre` and `post` scripts and appended
 arguments; npm's own options count anywhere before `--`), recursively, splitting shell strings at `&&`, `||`, `;`, `|`,
-`&`, and newlines and following `cd`; through `sh -c` and `bash -c`; through
+`&`, and newlines and following `cd` (which ends with its subshell); through `sh -c` and `bash -c`; through
 `bunx`, `npx`, `bun x`, and `agent-tool run -- <command>`; and through
 `agent-tool run-group <plan>` plans. Workspace filters (`--filter`, `-r`,
 `--workspace`) resolve to every workspace package, from `package.json`

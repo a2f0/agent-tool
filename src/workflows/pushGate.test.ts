@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parseConfig } from "../config";
-import { PUSH_GATE_HOOK } from "./pushGate";
+import { PUSH_GATE_HOOK, redactUrl } from "./pushGate";
 import { resolveStep, splitShell } from "./pushGateSteps";
 
 const cli = path.resolve(import.meta.dir, "../index.ts");
@@ -123,6 +123,27 @@ test("known test runners and installs are reported wherever they appear", () => 
     expect({ command, findings: resolveStep(root, command).findings }).toEqual({ command, findings: [] });
   }
 });
+
+test("a cd inside a subshell does not move the commands after it", () => {
+  const root = project({ "package.json": { scripts: { test: "vitest run" } }, "packages/api/package.json": { scripts: { lint: "eslint .", test: "jest" } } });
+  expect(resolveStep(root, ["sh", "-c", "(cd packages/api && bun run lint) && bun run test"]).findings.map(finding => finding.runner)).toEqual(["vitest run"]);
+  expect(resolveStep(root, ["sh", "-c", "(cd packages/api && bun run test) && bun run lint"]).findings.map(finding => finding.runner)).toEqual(["jest"]);
+});
+
+test("push URLs lose their credentials before they are reported", () => {
+  expect(redactUrl("https://user:ghp_secret@github.com/o/r.git")).toBe("https://***@github.com/o/r.git");
+  expect(redactUrl("https://ghp_secret@github.com/o/r.git")).toBe("https://***@github.com/o/r.git");
+  expect(redactUrl("ssh://git:secret@host/o/r.git")).toBe("ssh://***@host/o/r.git");
+  expect(redactUrl("fatal: unable to access 'https://x:secret@h/r/': refused")).toBe("fatal: unable to access 'https://***@h/r/': refused");
+  for (const unchanged of ["ssh://git@github.com/o/r.git", "git@github.com:o/r.git", "/srv/repo.git", "https://github.com/o/r.git"]) expect(redactUrl(unchanged)).toBe(unchanged);
+  const f = fixture({ pushGate: { steps: [captureStep] } });
+  const head = f.git(["rev-parse", "HEAD"]);
+  const url = "https://user:ghp_secret@127.0.0.1:9/o/r.git";
+  const result = f.gate([["refs/heads/main", head, "refs/heads/main", zero]], url, url);
+  expect(result.status).toBe(0);
+  for (const text of [result.stdout, result.stderr, readFileSync(path.join(f.root, ".git/push-context.json"), "utf8")]) expect(text).not.toContain("ghp_secret");
+  expect(JSON.parse(result.stdout).remote).toMatchObject({ name: null, url: "https://***@127.0.0.1:9/o/r.git", advertised: null });
+}, 60_000);
 
 test("shell splitting keeps quoted operators and drops redirections", () => {
   expect(splitShell(`a 'b && c' && d "e|f" | g; h 2>&1 >out & i\n(j) || k &> log`)).toEqual([["a", "b && c"], ["d", "e|f"], ["g"], ["h"], ["i"], ["j"], ["k"]]);
