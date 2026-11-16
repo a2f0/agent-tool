@@ -101,6 +101,9 @@ test("steps resolve through package scripts, shell strings, and run-group plans 
   // pnpm's own workspace manifest counts as well.
   const pnpm = project({ "package.json": { scripts: {} }, "pnpm-workspace.yaml": "packages:\n  - 'apps/*'\n  - '!apps/skip'\n", "apps/web/package.json": { scripts: { test: "vitest" } }, "apps/skip/package.json": { scripts: { test: "jest" } } });
   expect(resolveStep(pnpm, ["pnpm", "-r", "test"]).findings.map(finding => finding.runner)).toEqual(["vitest"]);
+  // A `--` before the script name only ends the manager's options.
+  expect(resolveStep(root, ["npm", "run", "--", "check"]).findings.map(finding => finding.runner)).toEqual(["vitest run"]);
+  expect(resolveStep(root, ["bun", "run", "--silent", "--", "check"]).findings.map(finding => finding.runner)).toEqual(["vitest run"]);
   // npm reads its own options after the script name too.
   expect(resolveStep(root, ["npm", "run", "test", "--workspaces"]).findings.map(finding => finding.runner)).toEqual(["jest"]);
   expect(resolveStep(root, ["npm", "test", "--prefix", "packages/api"]).findings.map(finding => finding.runner)).toEqual(["jest"]);

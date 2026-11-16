@@ -74,6 +74,12 @@ function execute(context: Context, args: string[], cwd: string, chain: string[],
   if (command.length) visit(context, command, cwd, chain, depth + 1);
 }
 
+/** `run [options] [--] <script> [args]`: a `--` before the script name only ends the manager's options. */
+function scriptOptions(args: string[], spec: Tool): { rest: string[]; seen: Map<string, string | true> } {
+  const parsed = options(args, spec);
+  return parsed.rest[0] === "--" ? { rest: parsed.rest.slice(1), seen: parsed.seen } : parsed;
+}
+
 function directoryOption(cwd: string, seen: Map<string, string | true>): string {
   for (const name of ["--cwd", "--prefix", "-C", "--dir"]) { const value = seen.get(name); if (typeof value === "string") return path.resolve(cwd, value); }
   return cwd;
@@ -212,7 +218,7 @@ function bun(context: Context, args: string[], cwd: string, chain: string[], dep
   else if (sub === "x") execute(context, rest.slice(1), directory, chain, depth);
   else if (sub === "exec") { if (rest[1]) visitShell(context, rest[1], directory, chain, depth + 1); }
   else if (sub === "run") {
-    const run = options(rest.slice(1), TOOLS.bun);
+    const run = scriptOptions(rest.slice(1), TOOLS.bun);
     const target = run.rest[0];
     // Only a leading `--` separates the script's arguments; later ones belong to the script.
     const forwarded = run.rest.slice(1);
@@ -249,7 +255,7 @@ function packageManager(context: Context, manager: "npm" | "pnpm" | "yarn", args
   if (!sub) { if (manager === "yarn") report(context, "install", text, chain); }
   else if (INSTALLS[manager].includes(sub)) report(context, "install", text, chain);
   else if (["run", "run-script", "rum", "urn"].includes(sub)) {
-    const run = options(rest.slice(1), spec);
+    const run = scriptOptions(rest.slice(1), spec);
     if (run.rest[0]) runScript(context, run.rest[0], scriptArgs(run.rest.slice(1)), directoryOption(directory, run.seen), workspaces || workspaceScoped(run.seen, spec), chain, depth, manager === "npm" ? null : run.rest);
   } else if (["test", "t", "tst", "start", "stop", "restart"].includes(sub)) {
     runScript(context, ["t", "tst"].includes(sub) ? "test" : sub, scriptArgs(rest.slice(1)), directory, workspaces, chain, depth, null);
