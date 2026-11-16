@@ -237,15 +237,19 @@ do not act on this one. It then runs, in order:
    warns on stderr with the three slowest steps and says to move them to CI.
    The warning never changes the exit status.
 
-The commits a ref adds exclude the remote's old tip when this clone has that
-commit, and that named remote's tracking refs (`--remotes=<remote>`), so
+The commits a ref adds are those its new tip reaches that no commit the
+destination already has reaches, as Git itself decides what to send. The gate
+lists the destination's refs once per push with `git ls-remote <url>`, using
+the URL Git is pushing to, and subtracts every advertised commit (branches,
+tags, and host refs such as GitHub's pull refs) that this clone has, so
 unsigned work committed on local `main` cannot ride along on a new branch.
-Tracking refs count only when the remote fetches from exactly the URL being
-pushed to. A push to a URL, which names no remote, to a remote with a separate
-push URL, or over an advertised tip this clone never fetched, scans the whole
-branch instead of subtracting refs that describe another repository: refusing
-a commit already published elsewhere is noise, while letting one through is
-the failure that matters. Binaries are checked per
+Remote-tracking refs are never subtracted: they record a past fetch, possibly
+of another repository after `git remote set-url`, or of the fetch URL when the
+remote pushes elsewhere. A destination with nothing this clone has, such as a
+new or unrelated repository, gets the whole branch scanned: refusing a commit
+already published elsewhere is noise, while letting one through is the
+failure that matters. When the listing fails, only the remote's old tip that
+Git reported is subtracted, when this clone has it. Binaries are checked per
 commit against its parent; a merge counts only paths that differ from every
 parent, so a binary a merged base already carried is not charged to the push.
 
@@ -261,7 +265,7 @@ JSON file that exists while the steps run:
 ```json
 {
   "schemaVersion": 1,
-  "remote": { "name": "origin", "url": "git@github.com:owner/repo.git", "trackingRefs": true },
+  "remote": { "name": "origin", "url": "git@github.com:owner/repo.git", "advertised": 412, "error": null },
   "headOid": "<checked-out HEAD>",
   "worktreeMatchesPush": true,
   "refs": [
@@ -272,8 +276,8 @@ JSON file that exists while the steps run:
       "remoteOid": "<remote's old oid, or zeros for a new ref>",
       "deleted": false,
       "scan": "new-on-remote",
-      "reason": "New on the remote; excludes origin's tracking refs.",
-      "revisions": ["<pushed oid>", "--not", "--remotes=origin"],
+      "reason": "Excludes the 412 commit(s) the destination advertises that this clone has.",
+      "revisions": ["<pushed oid>", "--not", "<boundary oid>"],
       "commits": ["<newest added commit>", "..."],
       "base": "<oid or null>",
       "range": "<base>..<pushed oid>"
@@ -282,17 +286,21 @@ JSON file that exists while the steps run:
 }
 ```
 
-`remote.name` is null for a push to a URL; `remote.trackingRefs` says whether
-that remote's tracking refs were subtracted. `scan` is `since-remote-tip`,
-`new-on-remote`, `whole-branch`, or `deleted`; `reason` explains it.
-`revisions` are the `git rev-list` arguments that select exactly the added
-commits, and `commits` lists them newest first (empty for a deletion, or for a
-push of commits the remote already has). `base` is the remote's old tip when
-this clone has it, else the newest commit the destination already has when
-there is exactly one (a branch that merged the moving base gets that base's
-tip), else null for a whole-branch scan; `range` is `<base>..<localOid>`, or
-just `localOid` when `base` is null, so tools that take a revision range or a
-diff base can use it directly. Deleted refs keep `deleted: true` with no range.
+`remote.name` is null for a push to a URL. `remote.advertised` counts the
+advertised commits this clone has, and is null, with `remote.error` set, when
+the listing failed. `scan` is `since-remote-tip` (the remote had the ref at a
+commit this clone has), `unknown-remote-tip` (it had the ref at a commit this
+clone lacks), `new-on-remote`, or `deleted`; `reason` says what was
+subtracted. `revisions` are `git rev-list` arguments that select exactly the
+added commits (the pushed tip, then `--not` and the subtracted commits that
+bound them), and `commits` lists those commits newest first (empty for a
+deletion, or for a push of commits the destination already has). `base` is the
+remote's old tip when this clone has it, else the newest subtracted commit
+when there is exactly one (a branch that merged the moving base gets that
+base's tip), else null when nothing was subtracted; `range` is
+`<base>..<localOid>`, or just `localOid` when `base` is null, so tools that
+take a revision range or a diff base can use it directly. Deleted refs keep
+`deleted: true` with no range.
 
 The command prints one JSON report: `ok`, `remote`, `refs` (as above with
 `commits` reduced to a count), `guards` (each with `name`, an optional `ref`,
@@ -319,7 +327,8 @@ arguments; npm's own options count anywhere before `--`), recursively, splitting
 `&`, and newlines and following `cd`; through `sh -c` and `bash -c`; through
 `bunx`, `npx`, `bun x`, and `agent-tool run -- <command>`; and through
 `agent-tool run-group <plan>` plans. Workspace filters (`--filter`, `-r`,
-`--workspace`) resolve to every workspace package that declares the script.
+`--workspace`) resolve to every workspace package, from `package.json`
+workspaces or `pnpm-workspace.yaml`, that declares the script.
 Test runs are `bun test`, `jest`, `vitest`, `mocha`, `ava`, `playwright
 test`, `maestro`, `detox`, `node --test`, `pytest`, `python -m pytest`,
 `rspec`, `go test`, `cargo test`, `deno test`, `swift test`, `xcodebuild

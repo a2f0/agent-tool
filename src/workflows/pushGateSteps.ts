@@ -85,8 +85,27 @@ function scripts(directory: string): Record<string, unknown> | null {
  * arguments appended, then `post<name>`. An unknown name runs `fallback`, the
  * executable or file of that name, when the manager does so.
  */
+/** Workspace packages from `package.json` workspaces and from pnpm's `pnpm-workspace.yaml`. */
+function workspaceDirectories(context: Context): string[] {
+  const directories = new Set(packageDirectories(context.root));
+  const file = path.join(context.root, "pnpm-workspace.yaml");
+  if (!existsSync(file)) return [...directories];
+  let patterns: unknown;
+  try { patterns = (Bun.YAML.parse(readFileSync(file, "utf8")) as { packages?: unknown } | null)?.packages; }
+  catch (error) { context.errors.push(`Cannot read pnpm-workspace.yaml: ${(error as Error).message}`); return [...directories]; }
+  const list = (Array.isArray(patterns) ? patterns : []).filter((pattern): pattern is string => typeof pattern === "string");
+  const excluded = list.filter(pattern => pattern.startsWith("!")).map(pattern => new Bun.Glob(pattern.slice(1).replace(/\/$/, "")));
+  for (const pattern of list.filter(pattern => !pattern.startsWith("!"))) {
+    for (const match of new Bun.Glob(`${pattern.replace(/\/$/, "")}/package.json`).scanSync({ cwd: context.root, onlyFiles: true })) {
+      const relative = path.dirname(match);
+      if (!match.split("/").includes("node_modules") && !excluded.some(glob => glob.match(relative))) directories.add(path.join(context.root, relative));
+    }
+  }
+  return [...directories];
+}
+
 function runScript(context: Context, name: string, args: string[], directory: string, workspaces: boolean, chain: string[], depth: number, fallback: string[] | null): void {
-  const directories = workspaces ? packageDirectories(context.root).filter(dir => typeof scripts(dir)?.[name] === "string") : [directory];
+  const directories = workspaces ? workspaceDirectories(context).filter(dir => typeof scripts(dir)?.[name] === "string") : [directory];
   let found = false;
   for (const dir of directories) {
     const table = scripts(dir);

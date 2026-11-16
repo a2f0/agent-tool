@@ -98,6 +98,9 @@ test("steps resolve through package scripts, shell strings, and run-group plans 
   expect(resolveStep(root, ["bun", "run", "deps"]).findings).toEqual([{ kind: "install", runner: "npm ci", chain: ["bun run deps", "package.json scripts.deps: cd packages/api && bun run setup", "packages/api/package.json scripts.setup: npm ci", "npm ci"] }]);
   expect(resolveStep(root, ["bun", "run", "--filter", "*", "test"]).findings.map(finding => finding.runner)).toEqual(["jest"]);
   expect(resolveStep(root, ["pnpm", "-r", "test"]).findings.map(finding => finding.runner)).toEqual(["jest"]);
+  // pnpm's own workspace manifest counts as well.
+  const pnpm = project({ "package.json": { scripts: {} }, "pnpm-workspace.yaml": "packages:\n  - 'apps/*'\n  - '!apps/skip'\n", "apps/web/package.json": { scripts: { test: "vitest" } }, "apps/skip/package.json": { scripts: { test: "jest" } } });
+  expect(resolveStep(pnpm, ["pnpm", "-r", "test"]).findings.map(finding => finding.runner)).toEqual(["vitest"]);
   // npm reads its own options after the script name too.
   expect(resolveStep(root, ["npm", "run", "test", "--workspaces"]).findings.map(finding => finding.runner)).toEqual(["jest"]);
   expect(resolveStep(root, ["npm", "test", "--prefix", "packages/api"]).findings.map(finding => finding.runner)).toEqual(["jest"]);
@@ -162,7 +165,7 @@ test("push-gate check requires the canonical tracked hook, its installation, and
   expect(result.status).toBe(1); expect(JSON.parse(result.stdout).errors[0]).toContain("is not tracked");
 }, 60_000);
 
-test("ranges exclude the remote's tip and tracking refs, and scan the whole branch when they cannot", () => {
+test("ranges exclude what the destination advertises, never other refs, and scan the whole branch when it has nothing", () => {
   const f = fixture({ pushGate: { steps: [captureStep] } });
   const first = f.git(["rev-parse", "HEAD"]);
   f.git(["push", "-q", "origin", "main"]);
@@ -171,38 +174,47 @@ test("ranges exclude the remote's tip and tracking refs, and scan the whole bran
   const work = f.commit("feat: work");
   // A new branch carries the unpushed main commit too; subtracting local main would miss it.
   expect(f.gate([["refs/heads/feat/work", work, "refs/heads/feat/work", zero]]).status).toBe(0);
-  expect(context(f.root)).toMatchObject({ schemaVersion: 1, remote: { name: "origin", url: f.remote }, headOid: work, worktreeMatchesPush: true });
-  expect(context(f.root).refs[0]).toMatchObject({ scan: "new-on-remote", revisions: [work, "--not", "--remotes=origin"], commits: [work, unpushed], base: first, range: `${first}..${work}` });
+  expect(context(f.root)).toMatchObject({ schemaVersion: 1, remote: { name: "origin", url: f.remote, advertised: 1, error: null }, headOid: work, worktreeMatchesPush: true });
+  expect(context(f.root).refs[0]).toMatchObject({ scan: "new-on-remote", revisions: [work, "--not", first], commits: [work, unpushed], base: first, range: `${first}..${work}` });
   f.git(["push", "-q", "origin", "feat/work"]);
   const more = f.commit("feat: more");
   expect(f.gate([["refs/heads/feat/work", more, "refs/heads/feat/work", work]]).status).toBe(0);
-  expect(context(f.root).refs[0]).toMatchObject({ scan: "since-remote-tip", revisions: [more, "--not", work, "--remotes=origin"], commits: [more], base: work, range: `${work}..${more}` });
-  // A tip this clone never fetched cannot be subtracted, and neither can the remote's other refs.
+  expect(context(f.root).refs[0]).toMatchObject({ scan: "since-remote-tip", revisions: [more, "--not", work], commits: [more], base: work, range: `${work}..${more}` });
+  // A tip this clone never fetched cannot be subtracted; the destination's other refs still are.
   expect(f.gate([["refs/heads/feat/work", more, "refs/heads/feat/work", "b".repeat(40)]]).status).toBe(0);
-  expect(context(f.root).refs[0]).toMatchObject({ scan: "whole-branch", revisions: [more], commits: [more, work, unpushed, first], base: null, range: more });
-  // A URL names no remote whose tracking refs describe the destination.
+  expect(context(f.root).refs[0]).toMatchObject({ scan: "unknown-remote-tip", commits: [more], base: work });
+  // A push to a URL is judged by that URL's own refs.
   expect(f.gate([["refs/heads/feat/work", more, "refs/heads/feat/other", zero]], f.remote, f.remote).status).toBe(0);
-  expect(context(f.root)).toMatchObject({ remote: { name: null } });
-  expect(context(f.root).refs[0]).toMatchObject({ scan: "whole-branch", commits: [more, work, unpushed, first] });
-  expect(f.gate([["refs/heads/feat/work", more, "refs/heads/feat/work", work]], f.remote, f.remote).status).toBe(0);
-  expect(context(f.root).refs[0]).toMatchObject({ scan: "since-remote-tip", revisions: [more, "--not", work], commits: [more] });
+  expect(context(f.root)).toMatchObject({ remote: { name: null, url: f.remote, advertised: 2 } });
+  expect(context(f.root).refs[0]).toMatchObject({ scan: "new-on-remote", commits: [more] });
+  // An empty destination has nothing to subtract.
+  const empty = path.join(path.dirname(f.remote), "empty.git"); f.git(["init", "-q", "--bare", empty]);
+  expect(f.gate([["refs/heads/feat/work", more, "refs/heads/feat/work", zero]], empty, empty).status).toBe(0);
+  expect(context(f.root).refs[0]).toMatchObject({ revisions: [more], commits: [more, work, unpushed, first], base: null, range: more });
+  // A listing that fails still subtracts the old tip Git reported, and nothing else.
+  expect(f.gate([["refs/heads/feat/work", more, "refs/heads/feat/work", work]], "origin", path.join(f.root, "missing.git")).status).toBe(0);
+  expect(context(f.root).remote).toMatchObject({ advertised: null, error: expect.any(String) });
+  expect(context(f.root).refs[0]).toMatchObject({ commits: [more], reason: expect.stringContaining("excludes only the remote's old tip") });
 }, 60_000);
 
-test("a remote that pushes elsewhere than it fetches from does not subtract its tracking refs", () => {
+test("stale tracking refs of a remote that now names another repository are not subtracted", () => {
   const f = fixture({ pushGate: { steps: [captureStep] } });
   const first = f.git(["rev-parse", "HEAD"]);
   f.git(["push", "-q", "origin", "main"]);
-  const mirror = path.join(path.dirname(f.remote), "mirror.git"); f.git(["init", "-q", "--bare", mirror]);
-  f.git(["remote", "set-url", "--push", "origin", mirror]);
-  f.git(["switch", "-q", "-c", "feat/elsewhere"]); const work = f.commit("feat: work");
-  // Git passes the push URL; origin/main describes the fetch repository, not this destination.
-  expect(f.gate([["refs/heads/feat/elsewhere", work, "refs/heads/feat/elsewhere", zero]], "origin", mirror).status).toBe(0);
-  expect(context(f.root).remote).toEqual({ name: "origin", url: mirror, trackingRefs: false });
-  expect(context(f.root).refs[0]).toMatchObject({ scan: "whole-branch", revisions: [work], commits: [work, first], reason: expect.stringContaining("push URL is not the one it fetches from") });
-  f.git(["remote", "set-url", "--push", "origin", f.remote]);
-  expect(f.gate([["refs/heads/feat/elsewhere", work, "refs/heads/feat/elsewhere", zero]], "origin", f.remote).status).toBe(0);
-  expect(context(f.root).remote).toEqual({ name: "origin", url: f.remote, trackingRefs: true });
-  expect(context(f.root).refs[0]).toMatchObject({ scan: "new-on-remote", commits: [work] });
+  expect(f.git(["rev-parse", "refs/remotes/origin/main"])).toBe(first);
+  // The new repository has a main of its own that this clone never fetched.
+  const other = path.join(path.dirname(f.remote), "other.git"); f.git(["init", "-q", "--bare", other]);
+  const seed = path.join(path.dirname(f.remote), "seed"); f.git(["init", "-q", "-b", "main", seed], path.dirname(f.remote));
+  f.git(["-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "chore: unrelated"], seed); f.git(["push", "-q", other, "main"], seed);
+  f.git(["remote", "set-url", "origin", other]);
+  f.git(["switch", "-q", "-c", "feat/moved"]); const work = f.commit("feat: work");
+  expect(f.gate([["refs/heads/feat/moved", work, "refs/heads/feat/moved", zero]], "origin", other).status).toBe(0);
+  expect(context(f.root).remote).toEqual({ name: "origin", url: other, advertised: 0, error: null });
+  expect(context(f.root).refs[0]).toMatchObject({ commits: [work, first], base: null });
+  // A separate push URL is judged by the repository Git pushes to as well.
+  f.git(["remote", "set-url", "origin", f.remote]); f.git(["remote", "set-url", "--push", "origin", other]);
+  expect(f.gate([["refs/heads/feat/moved", work, "refs/heads/feat/moved", zero]], "origin", other).status).toBe(0);
+  expect(context(f.root).refs[0]).toMatchObject({ commits: [work, first] });
 }, 60_000);
 
 test("a branch that merged the moving base takes the newest base commit as its base", () => {
@@ -252,8 +264,9 @@ test("binaries already on the remote that a merge brings in are not counted agai
   const merge = f.git(["rev-parse", "HEAD"]);
   const result = f.gate([["refs/heads/feat/merge", merge, "refs/heads/feat/merge", zero]]);
   expect(result.status).toBe(0);
-  // Pushed to a URL, the same merge is scanned with all of its history, which does carry the binary.
-  expect(f.gate([["refs/heads/feat/merge", merge, "refs/heads/feat/merge", zero]], f.remote, f.remote).status).toBe(1);
+  // Pushed to an empty repository, the same merge carries all of its history, binary included.
+  const empty = path.join(path.dirname(f.remote), "empty.git"); f.git(["init", "-q", "--bare", empty]);
+  expect(f.gate([["refs/heads/feat/merge", merge, "refs/heads/feat/merge", zero]], empty, empty).status).toBe(1);
 }, 60_000);
 
 test("the hooks, skills, and permissions guards use the shared drift checks", () => {

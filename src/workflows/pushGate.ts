@@ -43,7 +43,7 @@ fi
 exec "$bun" "$cli" push-gate run --pre-push "$@"
 `;
 
-export type PushScan = "deleted" | "since-remote-tip" | "new-on-remote" | "whole-branch";
+export type PushScan = "deleted" | "since-remote-tip" | "new-on-remote" | "unknown-remote-tip";
 /** A pushed ref with the commits the push adds, as exposed to declared steps. */
 export interface PushedRef extends PushTuple {
   deleted: boolean;
@@ -55,60 +55,76 @@ export interface PushedRef extends PushTuple {
   range: string | null;
 }
 
-/**
- * The push destination as Git names it. `name` is set when the push used a
- * configured remote. `trackingRefs` is true only when that remote fetches from
- * exactly the URL being pushed to, so its tracking refs describe what the
- * destination already has; a separate push URL, or several fetch URLs, do not.
- */
-export function pushDestination(remote: string, url: string): { name: string | null; url: string; trackingRefs: boolean } {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(remote)) return { name: null, url, trackingRefs: false };
-  const fetchUrls = spawnSync("git", ["remote", "get-url", "--all", remote], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: gitEnvironment() });
-  if (fetchUrls.status !== 0) return { name: null, url, trackingRefs: false };
-  const urls = fetchUrls.stdout.trim().split("\n");
-  return { name: remote, url, trackingRefs: urls.length === 1 && urls[0] === url };
+/** The destination as Git names it; `advertised` counts the commits it advertises that this clone has, null when its refs could not be listed. */
+export interface PushDestination { name: string | null; url: string; advertised: number | null; error: string | null }
+
+const fullOid = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+const LIST_TIMEOUT_MS = 60_000;
+function gitWithInput(args: string[], input: string): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync("git", args, { input, encoding: "utf8", env: gitEnvironment(), maxBuffer: 256 * 1024 * 1024 });
+  if (result.error) throw result.error;
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
+
+/**
+ * What the destination already has: every commit its refs point to (branches,
+ * tags, and host refs such as GitHub's pull refs) that also exists in this
+ * clone, from one `git ls-remote` of the URL Git is pushing to. Tracking refs
+ * are not used: they record a past fetch, possibly of another repository after
+ * `git remote set-url`, so subtracting them could skip commits the
+ * destination lacks.
+ */
+export function listDestination(remote: string, url: string, list = true): PushDestination & { commits: string[] } {
+  const configured = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(remote) && spawnSync("git", ["remote", "get-url", remote], { stdio: "ignore", env: gitEnvironment() }).status === 0;
+  const name = configured ? remote : null;
+  if (!list) return { name, url, advertised: null, error: null, commits: [] };
+  assert(!url.startsWith("-"), "The push URL must not start with '-'.");
+  // Never prompt for credentials or wait forever: a failed listing falls back to the old tip Git reported.
+  const listed = spawnSync("git", ["ls-remote", url], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" }, maxBuffer: 256 * 1024 * 1024, timeout: LIST_TIMEOUT_MS, killSignal: "SIGKILL" });
+  if (listed.error || listed.status !== 0) return { name, url, advertised: null, error: (listed.stderr || listed.error?.message || "git ls-remote failed").trim(), commits: [] };
+  const candidates = [...new Set(listed.stdout.split("\n").map(line => line.split("\t", 1)[0]!).filter(oid => fullOid.test(oid)))];
+  if (!candidates.length) return { name, url, advertised: 0, error: null, commits: [] };
+  const checked = gitWithInput(["cat-file", "--batch-check=%(objectname) %(objecttype)"], candidates.map(oid => `${oid}^{commit}`).join("\n") + "\n");
+  assert(checked.status === 0, `Could not inspect the destination's advertised commits: ${checked.stderr.trim()}`);
+  const commits = [...new Set(checked.stdout.split("\n").filter(line => line.endsWith(" commit")).map(line => line.split(" ", 1)[0]!))];
+  return { name, url, advertised: commits.length, error: null, commits };
+}
+
 const isCommit = (value: string) => spawnSync("git", ["cat-file", "-e", `${value}^{commit}`], { stdio: "ignore", env: gitEnvironment() }).status === 0;
 
 /**
- * The commits each pushed ref adds. The remote's old tip is excluded when this
- * clone has it, and so are the tracking refs of a named remote that fetches
- * from the destination. A push to a URL, to a remote whose push URL differs,
- * or over a remote tip this clone never fetched, scans the whole branch instead
- * of subtracting refs that describe another repository: over-scanning is
- * noise, under-scanning lets an unchecked commit through. `base` is the newest
- * commit the destination already has when there is exactly one, else null.
+ * The commits each pushed ref adds: those its new tip reaches that no commit
+ * the destination already has reaches, as Git itself decides what to send.
+ * The remote's old tip counts when this clone has it, even if listing failed.
+ * A destination with nothing this clone has, such as a new or unrelated
+ * repository, gets the whole branch scanned: over-scanning is noise,
+ * under-scanning lets an unchecked commit through. `base` is the remote's old
+ * tip when known, else the newest commit the destination has when there is
+ * exactly one, else null.
  */
-export function pushedRefs(tuples: PushTuple[], remote: string, url: string): PushedRef[] {
-  const destination = pushDestination(remote, url);
-  const named = destination.trackingRefs;
-  const without = destination.name ? `${remote}'s push URL is not the one it fetches from, so its tracking refs do not describe the destination` : "a URL push has no tracking refs to subtract";
+export function pushedRefs(tuples: PushTuple[], destination: { commits: string[]; advertised: number | null; error: string | null }): PushedRef[] {
   return tuples.map(tuple => {
     if (zeroOid(tuple.localOid)) return { ...tuple, deleted: true, scan: "deleted", reason: "A deletion pushes no commits.", revisions: [], commits: [], base: null, range: null };
     assert(isCommit(tuple.localOid), `${tuple.localRef} (${tuple.localOid}) is not a commit; push-gate checks commits only.`);
-    let scan: PushScan, reason: string;
-    const excludes: string[] = [];
-    let base: string | null = null;
-    if (!zeroOid(tuple.remoteOid) && isCommit(tuple.remoteOid)) {
-      scan = "since-remote-tip"; base = git(["rev-parse", `${tuple.remoteOid}^{commit}`]);
-      excludes.push(tuple.remoteOid);
-      if (named) excludes.push(`--remotes=${remote}`);
-      reason = named ? `Excludes the remote's old tip and ${remote}'s tracking refs.` : `Excludes the remote's old tip; ${without}.`;
-    } else if (!zeroOid(tuple.remoteOid)) {
-      scan = "whole-branch"; reason = "The remote's tip is not in this clone, so the whole branch is scanned.";
-    } else if (named) {
-      scan = "new-on-remote"; excludes.push(`--remotes=${remote}`); reason = `New on the remote; excludes ${remote}'s tracking refs.`;
-    } else {
-      scan = "whole-branch"; reason = `New on the remote, and ${without}, so the whole branch is scanned.`;
-    }
-    const revisions = [tuple.localOid, ...(excludes.length ? ["--not", ...excludes] : [])];
-    const listed = git(["rev-list", "--boundary", ...revisions, "--"]).split("\n").filter(Boolean);
-    const commits = listed.filter(line => !line.startsWith("-"));
+    const knownTip = !zeroOid(tuple.remoteOid) && isCommit(tuple.remoteOid);
+    const scan: PushScan = zeroOid(tuple.remoteOid) ? "new-on-remote" : knownTip ? "since-remote-tip" : "unknown-remote-tip";
+    const excluded = [...new Set([...destination.commits, ...(knownTip ? [tuple.remoteOid] : [])])];
+    const listed = gitWithInput(["rev-list", "--boundary", tuple.localOid, "--stdin"], excluded.map(oid => `^${oid}\n`).join(""));
+    assert(listed.status === 0, `Could not list the commits ${tuple.remoteRef} adds: ${listed.stderr.trim()}`);
+    const lines = listed.stdout.split("\n").filter(Boolean);
+    const commits = lines.filter(line => !line.startsWith("-"));
+    const boundary = lines.filter(line => line.startsWith("-")).map(line => line.slice(1));
+    let base = knownTip ? git(["rev-parse", `${tuple.remoteOid}^{commit}`]) : null;
     if (!base) {
-      const boundary = listed.filter(line => line.startsWith("-")).map(line => line.slice(1));
       const independent = boundary.length > 1 ? git(["merge-base", "--independent", ...boundary]).split("\n").filter(Boolean) : boundary;
       base = independent.length === 1 ? independent[0]! : null;
     }
+    const tip = scan === "since-remote-tip" ? "the remote's old tip and " : scan === "unknown-remote-tip" ? "not the remote's old tip, which this clone lacks, but " : "";
+    const reason = destination.error !== null
+      ? `Could not list the destination's refs (${destination.error}); ${knownTip ? "excludes only the remote's old tip" : "scans the whole branch"}.`
+      : `Excludes ${tip}the ${destination.advertised} commit(s) the destination advertises that this clone has.`;
+    // The boundary selects the same commits as the full exclusion list, in a short argument list.
+    const revisions = commits.length ? [tuple.localOid, ...(boundary.length ? ["--not", ...boundary] : [])] : [tuple.localOid, "--not", tuple.localOid];
     return { ...tuple, deleted: false, scan, reason, revisions, commits, base, range: base ? `${base}..${tuple.localOid}` : tuple.localOid };
   });
 }
@@ -129,7 +145,7 @@ function guard(guards: Guard[], name: string, ref: string | undefined, check: ()
 }
 
 /** The built-in trust guards, from the same implementations as `hooks check`, `skills check`, `permissions check`, `branch check --pre-push`, `commits check`, and `checks binaries`. */
-function runGuards(root: string, config: AgentToolConfig, tuples: PushTuple[], remote: string, url: string): { guards: Guard[]; refs: PushedRef[] } {
+function runGuards(root: string, config: AgentToolConfig, tuples: PushTuple[], destination: ReturnType<typeof listDestination>): { guards: Guard[]; refs: PushedRef[] } {
   const guards: Guard[] = [];
   guard(guards, "hooks", undefined, () => { const result = checkHooks(); return { ok: result.ok, details: { changes: result.changes.filter(change => change.status !== "unchanged"), blockers: result.blockers, configure: result.configure } }; });
   const skills = installedSkillHarnesses(root);
@@ -138,7 +154,7 @@ function runGuards(root: string, config: AgentToolConfig, tuples: PushTuple[], r
   if (permissions) guard(guards, "permissions", undefined, () => { const changes = checkPermissions(root, permissions).filter(change => change.status !== "unchanged"); return { ok: !changes.length, details: { harness: permissions, changes } }; });
   guard(guards, "branch", undefined, () => { const branches = pushedBranches(tuples).map(name => ({ name, errors: branchErrors(name, config) })).filter(branch => branch.errors.length); return { ok: !branches.length, details: { branches } }; });
   let refs: PushedRef[] = [];
-  guard(guards, "ranges", undefined, () => { refs = pushedRefs(tuples, remote, url); return { ok: true }; });
+  guard(guards, "ranges", undefined, () => { refs = pushedRefs(tuples, destination); return { ok: true }; });
   for (const ref of refs.filter(item => !item.deleted)) {
     guard(guards, "commits", ref.remoteRef, () => { const findings = commitFindings(ref.commits, config); return { ok: !findings.length, details: { checked: ref.commits.length, findings } }; });
     guard(guards, "binaries", ref.remoteRef, () => { const rejected = rejectedBinaries(binariesAddedByCommits(ref.commits), config); return { ok: !rejected.length, details: { rejected } }; });
@@ -170,8 +186,10 @@ export async function runPushGate(args: string[], root: string): Promise<number>
   const gate = config.pushGate;
   const notes: string[] = [];
   if (!gate) notes.push("agent-tool.json declares no pushGate section; only the built-in guards ran.");
-  const remoteInfo = pushDestination(remote, url);
-  const { guards, refs } = runGuards(root, config, tuples, remote, url);
+  // Deletions alone push nothing, so they need no listing of the destination.
+  const destination = listDestination(remote, url, tuples.some(tuple => !zeroOid(tuple.localOid)));
+  const { commits: _advertised, ...remoteInfo } = destination;
+  const { guards, refs } = runGuards(root, config, tuples, destination);
   const failed = guards.filter(item => !item.ok);
   for (const item of failed) {
     const detail = item.error ?? JSON.stringify(item.details);
