@@ -7,6 +7,7 @@ import { viewCurrentBranchPr } from "../git/currentBranchPr";
 import { assert, clean, currentBranch, flag, git, head, mutateGit, oid, output, read, repository } from "./core";
 import { pullRequest } from "./pr";
 import { assertStrictBaseFreshness } from "../pr/baseFreshness";
+import { baseHealthCommand } from "./baseHealth";
 
 export function repoCommand(args: string[]): number {
   const action = args.shift();
@@ -21,6 +22,7 @@ export function repoCommand(args: string[]): number {
     const fetchedBaseOid = fetch ? resolveFreshBaseRef(baseRepo, baseBranch) : undefined;
     output({ repo: repo.nameWithOwner, defaultBranch: repo.defaultBranchRef.name, branch, headOid: head(), clean: !git(["status", "--porcelain=v1", "--untracked-files=all"]), pr: pr ?? null, baseRepo, baseBranch, liveBaseOid: remoteBranchHead(resolveRepositoryGitUrl(baseRepo), baseBranch), ...(fetch ? { fetchedBaseOid } : {}) }); return 0;
   }
+  if (action === "base-health") return baseHealthCommand(args);
   const apply = flag(args, "--apply");
   const keep = flag(args, "--keep-branch");
   assert(action === "cleanup" && args.length === 2 && /^\d+$/.test(args[0]!), "Usage: repo cleanup <PR-number> <shipped-head> [--apply] [--keep-branch]");

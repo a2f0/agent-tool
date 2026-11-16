@@ -78,8 +78,9 @@ validation suite, and release procedures.
 ## Documentation
 
 - [Shared workflows](docs/workflows.md): branches, commit trust, copied hooks,
-  PR checks/threads, cleanup, CI aggregate gates, release verification, durable
-  validation receipts, and toolchain/protection diagnostics.
+  declared push gates, PR checks/threads, default-branch health, cleanup, CI
+  aggregate gates, release verification, durable validation receipts, and
+  toolchain/protection diagnostics.
 - [CLI reference](docs/reference.md): existing review, version, skill installation,
   command capture, import-graph checks, configuration, and distribution contracts.
 - [Development](docs/development.md): setup, source layout, validation, and release

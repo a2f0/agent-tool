@@ -22,11 +22,31 @@ function resolveDirectory(directory: string): string {
 }
 function within(parent: string, child: string): boolean { const relative = path.relative(parent, child); return !relative || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative)); }
 
+export interface HooksCheck { ok: boolean; applied: false; destination: string; configure?: boolean; changes: { target: string; status: string }[]; blockers: string[] }
+
+/** The read-only `hooks check` result, shared with the push gate's guard. */
+export function checkHooks(): HooksCheck {
+  const plan = planHooks(false);
+  return plan.empty ? plan.report : { ok: plan.ok, applied: false, destination: plan.destination, configure: plan.configure, changes: plan.changes, blockers: plan.blockers };
+}
+
 export function hooksCommand(args: string[]): number {
   const action = args.shift();
   const apply = flag(args, "--apply");
   const adopt = flag(args, "--adopt");
   assert((action === "install" || action === "check") && !args.length && (action === "install" || (!apply && !adopt)), "Usage: hooks install [--apply] [--adopt] | hooks check");
+  const plan = planHooks(adopt);
+  if (plan.empty) { output(plan.report); return 0; }
+  const { common, destination, sources, manifestFile, changes, blockers, configure, ok } = plan;
+  if (action === "check" || !apply) {
+    output({ ok, applied: false, destination, configure, changes, blockers });
+    return action === "check" && !ok || blockers.length ? 1 : 0;
+  }
+  install(plan.root, common, destination, sources, manifestFile, changes, blockers, configure);
+  return 0;
+}
+
+function planHooks(adopt: boolean) {
   const root = realpathSync(git(["rev-parse", "--show-toplevel"]));
   const common = resolveDirectory(git(["rev-parse", "--path-format=absolute", "--git-common-dir"]));
   const worktreeConfig = config(["--local", "--bool", "--get", "extensions.worktreeConfig"]) === "true";
@@ -45,7 +65,7 @@ export function hooksCommand(args: string[]): number {
   // A configured destination inside the checkout must not contain tracked files.
   if (within(root, destination)) assert(!git(["ls-files", "--", path.relative(root, destination)]), "Hook destination contains tracked files.");
   const manifestFile = path.join(destination, manifestName);
-  if (!entries.length && !present(manifestFile)) { output({ ok: true, applied: false, destination, changes: [], blockers: [] }); return 0; }
+  if (!entries.length && !present(manifestFile)) return { empty: true as const, report: { ok: true, applied: false as const, destination, changes: [], blockers: [] } };
   let previous: Manifest = { schemaVersion: 1, files: {} };
   if (present(manifestFile)) {
     assert(lstatSync(manifestFile).isFile(), "Hook ownership manifest must be a regular file.");
@@ -75,10 +95,11 @@ export function hooksCommand(args: string[]): number {
   }
   const configure = destination !== effective;
   const ok = !blockers.length && changes.every(change => change.status === "unchanged") && !configure;
-  if (action === "check" || !apply) {
-    output({ ok, applied: false, destination, configure, changes, blockers });
-    return action === "check" && !ok || blockers.length ? 1 : 0;
-  }
+  return { empty: false as const, root, common, destination, sources, manifestFile, changes, blockers, configure, ok };
+}
+
+type HookSource = { source: string; target: string; executable: boolean; hash: string };
+function install(root: string, common: string, destination: string, sources: HookSource[], manifestFile: string, changes: { target: string; status: string }[], blockers: string[], configure: boolean): void {
   assert(!blockers.length, blockers.join("\n"));
   mkdirSync(destination, { recursive: true });
   const backupDirectory = path.join(destination, `.agent-tool-backup-${randomUUID()}`);
@@ -108,5 +129,5 @@ export function hooksCommand(args: string[]): number {
   if (configure) assert(spawnSync("git", ["config", "--local", "core.hooksPath", destination], { stdio: "inherit" }).status === 0, "Could not configure installed hooks.");
   const after = config(["--type=path", "--get", "core.hooksPath"]);
   assert(resolveDirectory(after ? path.resolve(root, after) : path.join(common, "hooks")) === destination, "Effective hooksPath does not match installation; inspect Git configuration.");
-  output({ ok: true, applied: true, destination, changes, backups }); return 0;
+  output({ ok: true, applied: true, destination, changes, backups });
 }

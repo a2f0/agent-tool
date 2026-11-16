@@ -24,8 +24,9 @@ export function baseFreshness(repo: string, head: string, branch: string, cache 
   return { branch, liveOid, behindBy, behind: behindBy > 0 };
 }
 
+/** Only repositories that set `merge.requireStrictBaseFreshness` stop for a head behind its base. */
 export function behindReason(base: BaseFreshness, head: string): string {
-  return `PR head is ${base.behindBy} commit(s) behind ${base.branch} at ${base.liveOid}; integrate the base, validate, review, and push, then cancel this head's runs with \`agent-tool pr cancel-runs --head ${head}\`.`;
+  return `PR head is ${base.behindBy} commit(s) behind ${base.branch} at ${base.liveOid}, and merge.requireStrictBaseFreshness requires the live base: integrate the base, validate, review, and push, then cancel this head's runs with \`agent-tool pr cancel-runs --head ${head}\`.`;
 }
 
 const ACTIVE = ["queued", "in_progress", "waiting", "requested", "pending"];

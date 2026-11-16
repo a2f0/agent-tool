@@ -65,25 +65,69 @@ export function failedJobLogs(pr: { prNumber: string; repo: string }, expected: 
   return failed;
 }
 
-export function preflight(expectedHead: string, baseBranch: string, baseOid: string): unknown {
-  oid(expectedHead); oid(baseOid); clean();
+/** GitHub computes mergeability after the base moves; wait briefly instead of failing on UNKNOWN. */
+function readyPullRequest(identity: { prNumber: string; repo: string }, attempts = 5, delayMs = 2000): PullRequest {
+  let pr = pullRequest(identity.prNumber, identity.repo);
+  for (let attempt = 1; attempt < attempts && (pr.mergeable === "UNKNOWN" || pr.mergeStateStatus === "UNKNOWN"); attempt++) {
+    Bun.sleepSync(delayMs);
+    pr = pullRequest(identity.prNumber, identity.repo);
+  }
+  return pr;
+}
+
+function notReady(pr: PullRequest, baseBranch: string, strict: boolean): string {
+  const state = `${pr.state}/${pr.mergeable}/${pr.mergeStateStatus}`;
+  if (pr.mergeable === "CONFLICTING" || pr.mergeStateStatus === "DIRTY") return `PR conflicts with ${baseBranch} (${state}); integrate the base, resolve the conflict, validate, review, and push again.`;
+  if (pr.mergeStateStatus === "BEHIND") return strict
+    ? `PR is behind ${baseBranch} (${state}); integrate the base, validate, review, and push again.`
+    : `GitHub still requires an up-to-date branch (${state}) although merge.requireStrictBaseFreshness is false; integrate the base, or turn off the up-to-date requirement in ${baseBranch}'s protection or ruleset.`;
+  if (pr.mergeable === "UNKNOWN" || pr.mergeStateStatus === "UNKNOWN") return `GitHub has not computed mergeability yet (${state}); run preflight again shortly.`;
+  return `PR is not ready to merge (${state}).`;
+}
+
+/**
+ * Read-only merge readiness. `reviewedBase` is the base the review covered,
+ * or null for `pr merge`, which supplies the base it just fetched as
+ * `fetchedLiveBase`. With `merge.requireStrictBaseFreshness` the live base
+ * must equal the reviewed one and the head must contain it. Without it a base
+ * that moved since review is accepted: the reviewed head is still the PR head,
+ * its checks pass, GitHub reports no conflict, and configured package versions
+ * must still be current against the live base, since two merges taking the
+ * same version would leave the second unpublishable.
+ */
+export function preflight(expectedHead: string, baseBranch: string, reviewedBase: string | null, fetchedLiveBase?: string): unknown {
+  oid(expectedHead); if (reviewedBase !== null) oid(reviewedBase); clean();
   assert(head() === expectedHead, "Local HEAD differs from reviewed HEAD.");
+  const config = loadConfig();
+  const strict = config.merge.requireStrictBaseFreshness;
   const identity = resolvePr();
-  const pr = pullRequest(identity.prNumber, identity.repo);
+  const pr = readyPullRequest(identity);
   assert(pr.headRefOid === expectedHead && pr.headRefName === currentBranch(), "PR does not match the current branch and reviewed HEAD.");
-  assert(pr.state === "OPEN" && !pr.isDraft && pr.mergeable === "MERGEABLE" && pr.mergeStateStatus === "CLEAN", `PR is not ready to merge (${pr.state}/${pr.mergeable}/${pr.mergeStateStatus}).`);
+  assert(pr.state === "OPEN" && !pr.isDraft && pr.mergeable === "MERGEABLE" && pr.mergeStateStatus === "CLEAN", notReady(pr, baseBranch, strict));
   const target = resolvePullRequestMergeTarget(identity, baseBranch);
   assert(target.headOid === expectedHead, "PR head changed during preflight.");
-  assert(remoteBranchHead(resolveRepositoryGitUrl(identity.repo), baseBranch) === baseOid, "Live base differs from reviewed base; integrate, validate and review again.");
-  assert(git(["merge-base", expectedHead, baseOid]) === baseOid, "Reviewed HEAD does not include the reviewed base.");
-  const config = loadConfig();
-  if (config.merge.requireStrictBaseFreshness) assertStrictBaseFreshness(identity.repo, baseBranch);
+  let liveBase = fetchedLiveBase ?? remoteBranchHead(resolveRepositoryGitUrl(identity.repo), baseBranch);
+  assert(liveBase, `Could not read the live ${baseBranch} branch of ${identity.repo}.`);
+  const baseOid = reviewedBase ?? liveBase;
+  if (strict) {
+    assert(liveBase === baseOid, "Live base differs from reviewed base; integrate, validate and review again.");
+    assert(git(["merge-base", expectedHead, baseOid]) === baseOid, "Reviewed HEAD does not include the reviewed base.");
+    assertStrictBaseFreshness(identity.repo, baseBranch);
+  } else if (reviewedBase !== null) {
+    assert(git(["merge-base", expectedHead, reviewedBase]) === reviewedBase, "Reviewed HEAD does not include the reviewed base.");
+  }
   const checks = checkSnapshot(identity, expectedHead);
   assert(checks.ok, checks.reason ?? "Checks have not passed.");
   // Explicit version policy opts in; unversioned repositories need no manifest.
-  if (config.versions.packages !== null) assert(planVersions(process.cwd(), baseOid).every(plan => plan.headVersion === plan.targetVersion), "Package versions are stale against the reviewed base.");
+  if (config.versions.packages !== null) {
+    if (!strict && liveBase !== baseOid && !fetchedLiveBase) liveBase = resolveFreshBaseRef(identity.repo, baseBranch);
+    const versionBase = strict ? baseOid : liveBase;
+    assert(planVersions(process.cwd(), versionBase).every(plan => plan.headVersion === plan.targetVersion), strict || versionBase === reviewedBase
+      ? "Package versions are stale against the reviewed base."
+      : `Package versions are stale against the live ${baseBranch} ${versionBase}; another merge took this version. Integrate the base, prepare versions, validate, and review again.`);
+  }
   assert(head() === expectedHead, "Local HEAD changed during preflight.");
-  return { ok: true, repo: identity.repo, pr: pr.number, url: pr.url, headOid: expectedHead, baseBranch, baseOid, checks: checks.checks };
+  return { ok: true, repo: identity.repo, pr: pr.number, url: pr.url, headOid: expectedHead, baseBranch, baseOid, liveBaseOid: liveBase, baseMoved: liveBase !== baseOid, strictBaseFreshness: strict, checks: checks.checks };
 }
 
 /**
@@ -96,7 +140,9 @@ export function mergeReviewedHead(rootDir: string, subject: string | undefined, 
   assert(!!expectedHead && !!baseBranch, "Merge requires a reviewed HEAD and a base branch.");
   const identity = resolvePr();
   const baseOid = resolveFreshBaseRef(identity.repo, baseBranch);
-  try { preflight(expectedHead, baseBranch, baseOid); }
+  // Under the strict policy the fetched base is the one the head must contain; otherwise it is only the live base.
+  const strict = loadConfig(rootDir).merge.requireStrictBaseFreshness;
+  try { preflight(expectedHead, baseBranch, strict ? baseOid : null, baseOid); }
   catch (error) { throw new Error(`Refusing to merge: preflight failed against live ${baseBranch} ${baseOid}: ${(error as Error).message}`); }
   // Bind the merge to the branch that passed preflight, so a retarget in between is refused.
   return squashMerge(rootDir, subject, expectedHead, baseBranch);
@@ -180,9 +226,11 @@ export async function prWorkflowCommand(args: string[]): Promise<number> {
     assert(expected && !args.length, "Usage: pr cancel-runs --head <oid>"); oid(expected);
     const identity = resolvePr(); const pr = pullRequest(identity.prNumber, identity.repo);
     assert(!pr.isCrossRepository, "Cancelling runs supports same-repository PRs only.");
-    // The current head's runs are its only CI; cancel them only once it can no longer merge as is.
+    // The current head's runs are its only CI; cancel them only once it can no longer merge as is,
+    // which happens only under the strict policy: otherwise a head behind its base still merges.
     const base = pr.headRefOid === expected ? baseFreshness(identity.repo, expected, pr.baseRefName) : null;
     assert(!base || base.behind, "This is the PR's current head and it contains its live base; cancelling would leave it without CI.");
+    assert(!base || loadConfig().merge.requireStrictBaseFreshness, "This is the PR's current head; without merge.requireStrictBaseFreshness it merges although its base moved, so cancelling would leave it without CI.");
     const result = cancelRuns(identity.repo, pr.headRefName, expected);
     output({ ...identity, headOid: expected, currentHead: pr.headRefOid, ...(base ? { base } : {}), ...result }); return result.ok ? 0 : 1;
   }
@@ -190,7 +238,10 @@ export async function prWorkflowCommand(args: string[]): Promise<number> {
   const wait = flag(args, "--wait");
   const allowBehind = flag(args, "--allow-behind");
   const expected = option(args, "--head") ?? head();
-  const options = timeoutOptions(args, loadConfig().merge.checksTimeoutSeconds);
+  const { merge } = loadConfig();
+  const options = timeoutOptions(args, merge.checksTimeoutSeconds);
+  // Without the strict policy a head behind its base still merges, so its CI is worth waiting for.
+  const stopBehind = merge.requireStrictBaseFreshness && !allowBehind;
   assert(!args.length, "Usage: pr checks [--wait] [--head <oid>] [--allow-behind] [--timeout seconds] [--interval seconds]"); oid(expected);
   const identity = resolvePr();
   const compared = new Map<string, Map<string, number>>();
@@ -202,8 +253,8 @@ export async function prWorkflowCommand(args: string[]): Promise<number> {
     const branch = pr.baseRefName;
     if (!compared.has(branch)) compared.set(branch, new Map());
     const base = baseFreshness(identity.repo, expected, branch, compared.get(branch));
-    // A head behind its base cannot ship as reviewed, so waiting on its CI only spends runner time.
-    if (base.behind && !allowBehind) return { done: true, value: { ...value, ok: false, waiting: false, behind: true, base, reason: behindReason(base, expected) } };
+    // Under the strict policy a head behind its base cannot ship as reviewed, so waiting on its CI only spends runner time.
+    if (base.behind && stopBehind) return { done: true, value: { ...value, ok: false, waiting: false, behind: true, base, reason: behindReason(base, expected) } };
     return { done: !value.waiting, value: { ...value, behind: base.behind, base } };
   };
   const result = wait ? await poll(inspect, options) : inspect().value;

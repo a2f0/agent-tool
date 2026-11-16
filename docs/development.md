@@ -57,7 +57,7 @@ its layers. A test asserts the real configuration passes.
    `skills/`, `stateMachines/`, `version/`, and `harnesses.ts`.
    Domains may use each other without cycles.
 4. Workflows: the rest of `workflows/`, which compose domains into repository
-   commands such as `branch`, `pr`, `hooks`, and `repo`.
+   commands such as `branch`, `pr`, `hooks`, `push-gate`, and `repo`.
 5. Entry points: `cli.ts` (command dispatch), `index.ts`, `runAgentToolAction.ts`,
    and `doctor.ts`.
 6. Repository scripts in `scripts/`, which may import any `src/` module.

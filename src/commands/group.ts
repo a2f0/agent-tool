@@ -30,9 +30,9 @@ function save(file: string, value: unknown): void {
   writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   renameSync(temporary, file);
 }
-interface Step { label: string; command: string[] }
-export function parseGroup(source: string): { label: string; steps: Step[] } {
-  const plan = JSON.parse(source) as { label: string; steps: Step[] };
+export interface PlanStep { label: string; command: string[] }
+export function parseGroup(source: string): { label: string; steps: PlanStep[] } {
+  const plan = JSON.parse(source) as { label: string; steps: PlanStep[] };
   const label = (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 120 && !/[\x00-\x1f]/.test(value);
   assert(plan && typeof plan === "object" && !Array.isArray(plan) && Object.keys(plan).every(key => ["label", "steps"].includes(key)) && label(plan.label) && Array.isArray(plan.steps) && plan.steps.length > 0, "Invalid run-group plan; expected label and nonempty steps.");
   const labels = new Set<string>();
@@ -109,6 +109,26 @@ function assertNever(value: never): never { throw new Error(`Unhandled run-group
 export async function runGroup(args: string[]): Promise<number> {
   assert(args.length === 1, "Usage: run-group <plan.json>");
   const plan = parseGroup(readFileSync(args[0]!, "utf8"));
+  const result = await executeGroup(plan, (record, report) => output({ ...record, report }));
+  return reraiseGroupSignal(result);
+}
+
+export interface GroupResult { record: GroupRecord; report: string; code: number; signal: NodeJS.Signals | null }
+
+/** Preserve signal termination for calling shells and supervisors, as `run` does. */
+export async function reraiseGroupSignal({ code, signal }: Pick<GroupResult, "code" | "signal">): Promise<number> {
+  if (!signal) return code;
+  process.kill(process.pid, signal);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  return 128 + (constants.signals[signal] ?? 0);
+}
+
+/**
+ * Run a plan's steps and save its report. `publish` runs once the report is
+ * final, while signals still reach the group's handlers (which then ignore
+ * them), so publishing cannot be cut short. The caller re-raises `signal`.
+ */
+export async function executeGroup(plan: { label: string; steps: PlanStep[] }, publish: (record: GroupRecord, report: string) => void): Promise<GroupResult> {
   const before = sourceState();
   const directory = reportsDirectory(); mkdirSync(directory, { recursive: true, mode: 0o700 });
   const id = `${new Date().toISOString().replaceAll(":", "-")}-${randomUUID()}`;
@@ -149,20 +169,13 @@ export async function runGroup(args: string[]): Promise<number> {
     await handleSignals();
     send({ type: "finished", passed: code === 0, endedAt, durationMs }); send(settle);
     save(report, record);
-    output({ ...record, report });
+    publish(record, report);
     // Signals that arrived while publishing reach the handlers, which ignore them now.
     await handleSignals();
   } finally {
     for (const [value, handler] of handlers) process.removeListener(value, handler);
   }
-  const { signal } = interrupt;
-  if (signal) {
-    // Preserve signal termination for calling shells and supervisors, as `run` does.
-    process.kill(process.pid, signal);
-    await new Promise(resolve => setTimeout(resolve, 100));
-    return 128 + (constants.signals[signal] ?? 0);
-  }
-  return code;
+  return { record, report, code, signal: interrupt.signal };
 }
 
 export function listRuns(args: string[]): number {

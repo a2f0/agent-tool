@@ -113,6 +113,14 @@ export function installPermissions(rootDir: string, target: string, apply = fals
   return changes.map(({ relative, status }) => ({ path: relative, status }));
 }
 
+/** The `--harness` a repository's rules were installed for, from its manifest, or null when it has none. */
+export function installedPermissionHarness(rootDir: string): string | null {
+  const root = realpathSync(rootDir);
+  if (!existsSync(destination(root, MANIFEST))) return null;
+  const manifest = readManifest(root);
+  return manifest.claude && !manifest.codex ? "claude" : manifest.codex && !manifest.claude ? "codex" : "all";
+}
+
 /** Read-only CI gate: generated rules are current and recorded as managed. */
 export function checkPermissions(rootDir: string, target: string): PermissionCheck[] {
   const root = realpathSync(rootDir);

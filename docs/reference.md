@@ -113,10 +113,14 @@ For repository workflow commands added alongside these interfaces, see
 | `teardown [--apply]` | Report what the checkout still runs or holds; `--apply` stops recorded processes not started with `--keep` |
 | `review claude\|codex\|opencode [effort] [--base ref]` | Review committed HEAD using a pinned raw-file snapshot |
 | `pr open [title] [--body-file file]` | Open a same-repository PR; body from the file or stdin; branch already pushed |
-| `pr checks [--wait] [--head oid] [--allow-behind] [--timeout seconds] [--interval seconds]` | Report or wait for the PR head's checks; stop when the head falls behind its live base |
+| `pr checks [--wait] [--head oid] [--allow-behind] [--timeout seconds] [--interval seconds]` | Report or wait for the PR head's checks and whether the head is behind its live base; stop for that only under `merge.requireStrictBaseFreshness` |
 | `pr cancel-runs --head <oid>` | Cancel the unfinished GitHub Actions runs of a superseded PR head |
 | `pr logs [--head oid] [--max-bytes N] [--tail-lines N]` | Save each failed GitHub Actions job log of the PR head privately and show a bounded tail |
 | `pr merge <subject-or-empty> <head-oid> <base-branch>` | Run every `pr preflight` gate against the live base, then synchronously squash the reviewed HEAD |
+| `push-gate hook` | Print the canonical `pre-push` body to commit as `scripts/git/hooks/pre-push` |
+| `push-gate run --pre-push <remote> <url>` | The hook's whole body: built-in trust guards, then the declared `pushGate` steps as a recorded run group, with a budget warning |
+| `push-gate check` | Read-only: the tracked hook is canonical and installed, and no declared step runs tests or installs without `allowSlow` |
+| `repo base-health [--branch name] [--limit N]` | Read the default branch's CI from GitHub: `green`, `red`, `pending`, or `no-ci`, with failing jobs, the breaking range, and open repairs |
 | `versions plan\|bump\|check <base-oid>` | Plan, rewrite, or check package versions against an exact base |
 | `versions prepare <base-oid>` | Bump, refresh `bun.lock`, validate, and commit versions; print a JSON receipt |
 | `versions resolve-conflicts` | Resolve only version-field conflicts in configured manifests |
@@ -222,8 +226,12 @@ feature checkout with policy from a trusted source.
   "subject": { "conventional": true, "maxLength": 50 },
   "merge": {
     "requiredChecks": [{ "name": "CI gate", "workflow": "CI" }],
-    "requireStrictBaseFreshness": true,
+    "requireStrictBaseFreshness": false,
     "checksTimeoutSeconds": 1800
+  },
+  "pushGate": {
+    "steps": [{ "label": "lint", "command": ["bun", "run", "lint"] }],
+    "budgetSeconds": 60
   },
   "review": {
     "claudeModel": null,
@@ -252,6 +260,15 @@ The policy is data only: no commitlint binary or JavaScript config runs.
   them before shipping. `checksTimeoutSeconds` (an integer from 0 to 86400,
   default 900) is how long `pr checks --wait` waits when `--timeout` is not
   given; set it above the slowest required job so the plain command suffices.
+  `requireStrictBaseFreshness` (default false) opts back into requiring the
+  live base: `pr checks --wait` then stops once the base moves, and `pr
+  preflight` and `pr merge` require the head to contain the live base and an
+  active strict status ruleset the actor cannot bypass. By default a base that
+  moved since review merges without integration unless GitHub reports a
+  conflict or configured versions are stale against the live base.
+- **`pushGate`**: the steps the `pre-push` hook runs after the built-in trust
+  guards, and the time budget it warns past (`budgetSeconds`, default 120).
+  See [push gates](workflows.md#push-gates).
 - **`review`**: Claude and Codex use their CLI defaults unless a model is set.
   Set `opencodeModel` to a model your account supports. `opencodeVariants`
   replaces the default effort-to-variant map (`xhigh` to `max`); an effort
@@ -535,11 +552,15 @@ reviewer runs with local authentication in the host environment. A verdict
 shows that a review completed, not that its findings are correct.
 
 `pr merge` binds the squash to the reviewed HEAD through GitHub's atomic
-expected-HEAD check. GitHub has no equivalent expected-base check, so the skills
-recheck the base, and repository protection must enforce stricter freshness.
-With `merge.requireStrictBaseFreshness`, `pr merge` refuses unless an active
-repository ruleset that the authenticated actor cannot bypass requires strict
-status checks on the base. Classic branch protection is not inspected. Reviews
+expected-HEAD check. GitHub has no equivalent expected-base check. By default
+that is accepted: a PR whose required checks passed merges after its base moved
+as long as GitHub reports no conflict and configured versions are current
+against the live base, and the shipping skills read the default branch's
+health with `repo base-health` and repair a broken combination there. With
+`merge.requireStrictBaseFreshness`, the head must contain the live base and
+`pr merge` refuses unless an active repository ruleset that the authenticated
+actor cannot bypass requires strict status checks on the base. Classic branch
+protection is not inspected. Reviews
 can resolve fork PR bases; `pr open` supports same-repository branches.
 
 ## Development

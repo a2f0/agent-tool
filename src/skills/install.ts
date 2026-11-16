@@ -84,6 +84,19 @@ export function installSkills(rootDir: string, target: string, apply = false): S
   return pending.map(item => item.change);
 }
 
+/**
+ * The `--harness` a repository's skills were installed for, read from its
+ * ownership manifest, or null when it has none. A manifest that does not
+ * match a single harness's directories is checked as `all`.
+ */
+export function installedSkillHarness(rootDir: string): string | null {
+  const root = realpathSync(rootDir);
+  if (!existsSync(safeDestination(root, MANIFEST))) return null;
+  const directories = new Set(Object.keys(readManifest(root)).map(file => file.split("/", 2).join("/")));
+  const only = (directory: string) => directories.size === 1 && directories.has(directory);
+  return only(".claude/skills") ? "claude" : only(".agents/skills") ? "codex" : only(".opencode/skills") ? "opencode" : "all";
+}
+
 export interface SkillCheck { path: string; status: "missing" | "outdated" | "unmanaged" | "unchanged" }
 
 /** Read-only CI gate: require current bundled bytes and their ownership records. */

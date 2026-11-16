@@ -24,7 +24,7 @@ out of agent sessions where that matters.
 
 | Class | Decision | Commands |
 | --- | --- | --- |
-| `read` | allow | Context, checks, listings, previews, diagnostics, logs, and read-only scans such as `state-machines` |
+| `read` | allow | Context, checks, listings, previews, diagnostics, logs, and read-only scans such as `state-machines`, `push-gate hook\|check`, and `repo base-health` |
 | `local` | allow | `bun install\|update\|remove\|test`, `bun x` for executables classified `local`, `branch create`, `versions`, `images build`, `screenshots build`, `review`, `teardown --apply`, and applied skill or hook installs |
 | `share` | allow | `branch push`, `pr open`, `pr cancel-runs`, `pr threads reply\|resolve`, `repo cleanup --apply` |
 | `release` | ask | `pr merge` and executables classified `release` |
@@ -33,8 +33,9 @@ out of agent sessions where that matters.
 | `exec` | ask | Executables classified `exec`: ones that run whatever file or command they are given |
 
 Legacy action names, such as `openPr` and `bumpVersions`, carry the class of the
-command they alias. `run` and `run-group` execute arbitrary commands, so they
-stay unclassified and keep the harness's default decision; do not add a broad
+command they alias. `run`, `run-group`, and `push-gate run` execute arbitrary
+commands (the last runs a repository's declared push-gate steps), so they stay
+unclassified and keep the harness's default decision; do not add a broad
 `agent-tool *` allow rule, which would include them. `src/permissions/catalog.ts` holds the
 table; a test checks that every entry names a command the CLI accepts.
 

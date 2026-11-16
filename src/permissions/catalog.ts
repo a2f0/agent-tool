@@ -19,7 +19,7 @@ export type Decision = "allow" | "ask";
 export interface CatalogEntry { command: string; class: PermissionClass; applyClass?: PermissionClass }
 
 export const CATALOG: CatalogEntry[] = [
-  ...["--help", "--version", "logs", "runs list", "doctor", "config show", "branch check", "branch status", "commits check", "checks binaries", "repo context", "policy check", "toolchain check", "ci gate", "release plan", "release verify", "pr context", "pr checks", "pr logs", "pr preflight", "pr threads list", "versions plan", "versions check", "dependencies check-terraform-plan", "dependencies diff", "skills list", "skills check", "hooks check", "images list", "graph check", "state-machines", "permissions show", "permissions check", "proc list"]
+  ...["--help", "--version", "logs", "runs list", "doctor", "config show", "branch check", "branch status", "commits check", "checks binaries", "repo context", "policy check", "toolchain check", "ci gate", "release plan", "release verify", "pr context", "pr checks", "pr logs", "pr preflight", "pr threads list", "versions plan", "versions check", "dependencies check-terraform-plan", "dependencies diff", "skills list", "skills check", "hooks check", "push-gate hook", "push-gate check", "repo base-health", "images list", "graph check", "state-machines", "permissions show", "permissions check", "proc list"]
     .map(command => ({ command, class: "read" as const })),
   ...["bun install", "bun update", "bun remove", "bun test", "branch create", "versions bump", "versions prepare", "versions resolve-conflicts", "images build", "screenshots build", "review", "init", "proc stop"]
     .map(command => ({ command, class: "local" as const })),
@@ -38,7 +38,7 @@ export const CATALOG: CatalogEntry[] = [
   ...["bumpVersions", "resolveVersionConflicts", "solicitClaudeCodeReview", "solicitCodexReview", "solicitOpencodeReview"].map(command => ({ command, class: "local" as const })),
   { command: "openPr", class: "share" },
 ];
-// `run`, `run-group` and `proc start` execute arbitrary commands, so they stay unclassified and keep the harness default.
+// `run`, `run-group`, `push-gate run` and `proc start` execute arbitrary commands, so they stay unclassified and keep the harness default.
 // `bun x` runs only executables that `permissions.executables` classifies; project.ts adds those.
 // Package scripts are not classified, so `bun run` keeps the harness default.
 

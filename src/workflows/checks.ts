@@ -30,8 +30,13 @@ export function commitsCommand(args: string[]): number {
   const remote = option(args, "--exclude-remotes");
   assert(!remote || /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(remote), "--exclude-remotes requires a named remote.");
   assert(action === "check" && !!range && !range.startsWith("-") && !args.length, "Usage: commits check --range <revision-range>");
-  const config = loadConfig();
   const commits = git(["rev-list", range, ...(excludes.length || remote ? ["--not", ...excludes, ...(remote ? [`--remotes=${remote}`] : [])] : []), "--"]).split("\n").filter(Boolean);
+  const findings = commitFindings(commits, loadConfig());
+  output({ ok: !findings.length, range, checked: commits.length, findings }); return findings.length ? 1 : 0;
+}
+
+/** Signature, attribution, and subject policy for each listed commit; only failing commits are returned. */
+export function commitFindings(commits: string[], config: AgentToolConfig): { commit: string; errors: string[] }[] {
   const findings: { commit: string; errors: string[] }[] = [];
   for (const commit of commits) {
     const errors: string[] = [];
@@ -48,7 +53,7 @@ export function commitsCommand(args: string[]): number {
     }
     if (errors.length) findings.push({ commit, errors });
   }
-  output({ ok: !findings.length, range, checked: commits.length, findings }); return findings.length ? 1 : 0;
+  return findings;
 }
 
 /** Parse NUL-delimited --numstat; rename records carry an empty path then old/new. */
@@ -79,10 +84,36 @@ export function binariesCommand(args: string[]): number {
     const base = candidates.find(ref => spawnSync("git", ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], { stdio: "ignore" }).status === 0);
     assert(base, "No upstream/base ref is available; pass --range explicitly."); revisions = [`${base}...HEAD`];
   }
-  const files = binaryPaths(git(["diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z", "--diff-filter=ACMR", ...revisions, "--"]));
-  const allowed = loadConfig().binaries.allow.map(pattern => new Bun.Glob(pattern));
-  const rejected = files.filter(file => !allowed.some(pattern => pattern.match(file)));
+  const files = diffBinaries(revisions);
+  const rejected = rejectedBinaries(files, loadConfig());
   output({ ok: !rejected.length, binaries: files, rejected }); return rejected.length ? 1 : 0;
+}
+
+function diffBinaries(revisions: string[]): string[] {
+  return binaryPaths(git(["diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z", "--diff-filter=ACMR", ...revisions, "--"]));
+}
+
+export function rejectedBinaries(files: string[], config: AgentToolConfig): string[] {
+  const allowed = config.binaries.allow.map(pattern => new Bun.Glob(pattern));
+  return files.filter(file => !allowed.some(pattern => pattern.match(file)));
+}
+
+/**
+ * Binary files the listed commits introduce. A commit is compared with its
+ * parent; a merge only reports paths that differ from every parent, the
+ * content the merge itself adds, so files a parent already carried are not
+ * counted twice.
+ */
+export function binariesAddedByCommits(commits: string[]): string[] {
+  const found = new Set<string>();
+  let emptyTree: string | undefined;
+  for (const commit of commits) {
+    const parents = git(["rev-list", "--parents", "-n", "1", commit, "--"]).split(" ").slice(1);
+    if (!parents.length) { emptyTree ??= git(["hash-object", "-t", "tree", "--stdin"]); for (const file of diffBinaries([emptyTree, commit])) found.add(file); continue; }
+    const perParent = parents.map(parent => new Set(diffBinaries([parent, commit])));
+    for (const file of perParent[0]!) if (perParent.every(set => set.has(file))) found.add(file);
+  }
+  return [...found].sort();
 }
 
 export interface GatePolicy { required?: string[]; allowSkipped?: string[]; conditional?: { job: string; source: string; output: string }[] }
