@@ -105,10 +105,12 @@ command, so they can be found and stopped.
    project deploys the merged branch, verify that deployment and documented
    live checks. Report deployment failures
    separately from a successful merge; follow project policy for repairs.
-8. Run `agent-tool repo base-health` again until the runs on the merge commit,
-   or a newer tip, finish (`tip.hasRuns` and not `pending`). A failure there
-   belongs to this session: fix it forward through this workflow before
-   reporting the work done.
+8. Run `agent-tool repo base-health` again until it is no longer `pending` and
+   the merge commit, or a newer tip, has runs (`tip.hasRuns`). When no run
+   starts within about ten minutes, as with path filters or PR-only CI, or the
+   status is `no-ci`, report that and stop waiting. A failure there belongs to
+   this session: fix it forward through this workflow before reporting the
+   work done.
 
 Before the final report, run `agent-tool teardown` in each repository this work
 touched. Stop what the work started (`teardown --apply`, `proc stop`), stop any

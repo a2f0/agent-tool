@@ -225,7 +225,7 @@ do not act on this one. It then runs, in order:
 1. The built-in guards, from the same implementations as the standalone
    commands: `hooks check`; `skills check` and `permissions check` when
    `.agent-tool-skills.json` or `.agent-tool-permissions.json` exists, for
-   the harnesses their manifests record; `branch check --pre-push`; and, for
+   every harness their manifests record; `branch check --pre-push`; and, for
    every pushed ref that is not a deletion, `commits check` and `checks
    binaries` over the commits that push adds. Every guard runs and reports;
    any failure refuses the push before a declared step starts.
@@ -239,11 +239,13 @@ do not act on this one. It then runs, in order:
 
 The commits a ref adds exclude the remote's old tip when this clone has that
 commit, and that named remote's tracking refs (`--remotes=<remote>`), so
-unsigned work committed on local `main` cannot ride along on a new branch. A
-push to a URL, which names no remote, or over an advertised tip this clone
-never fetched, scans the whole branch instead of subtracting some other
-remote's refs: refusing a commit already published elsewhere is noise, while
-letting one through is the failure that matters. Binaries are checked per
+unsigned work committed on local `main` cannot ride along on a new branch.
+Tracking refs count only when the remote fetches from exactly the URL being
+pushed to. A push to a URL, which names no remote, to a remote with a separate
+push URL, or over an advertised tip this clone never fetched, scans the whole
+branch instead of subtracting refs that describe another repository: refusing
+a commit already published elsewhere is noise, while letting one through is
+the failure that matters. Binaries are checked per
 commit against its parent; a merge counts only paths that differ from every
 parent, so a binary a merged base already carried is not charged to the push.
 
@@ -259,7 +261,7 @@ JSON file that exists while the steps run:
 ```json
 {
   "schemaVersion": 1,
-  "remote": { "name": "origin", "url": "git@github.com:owner/repo.git" },
+  "remote": { "name": "origin", "url": "git@github.com:owner/repo.git", "trackingRefs": true },
   "headOid": "<checked-out HEAD>",
   "worktreeMatchesPush": true,
   "refs": [
@@ -280,7 +282,8 @@ JSON file that exists while the steps run:
 }
 ```
 
-`remote.name` is null for a push to a URL. `scan` is `since-remote-tip`,
+`remote.name` is null for a push to a URL; `remote.trackingRefs` says whether
+that remote's tracking refs were subtracted. `scan` is `since-remote-tip`,
 `new-on-remote`, `whole-branch`, or `deleted`; `reason` explains it.
 `revisions` are the `git rev-list` arguments that select exactly the added
 commits, and `commits` lists them newest first (empty for a deletion, or for a
@@ -312,7 +315,7 @@ stderr as `push-gate:` lines.
 A repository with neither a section nor a tracked hook passes with a note that
 it has no gate. Steps are resolved through `bun run`, `npm run`, `pnpm run`,
 and `yarn` package scripts (with their `pre` and `post` scripts and appended
-arguments), recursively, splitting shell strings at `&&`, `||`, `;`, `|`,
+arguments; npm's own options count anywhere before `--`), recursively, splitting shell strings at `&&`, `||`, `;`, `|`,
 `&`, and newlines and following `cd`; through `sh -c` and `bash -c`; through
 `bunx`, `npx`, `bun x`, and `agent-tool run -- <command>`; and through
 `agent-tool run-group <plan>` plans. Workspace filters (`--filter`, `-r`,
@@ -403,7 +406,7 @@ more runs is refused rather than partly cancelled.
 The read-only preflight additionally checks clean local state, exact local/PR
 HEAD and branch, OPEN/non-draft/MERGEABLE/CLEAN state (a conflict,
 `CONFLICTING` or `DIRTY`, says to integrate the base; `UNKNOWN` is reread for
-up to ten seconds while GitHub computes it), no queued/automatic merge, that
+up to eight seconds while GitHub computes it), no queued/automatic merge, that
 the reviewed head contains the reviewed base, passing checks, and explicit
 package version policy. A base that moved since review is acceptable: the
 reviewed head stays bound through `expectedHeadOid`, and when

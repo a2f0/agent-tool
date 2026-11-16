@@ -171,9 +171,25 @@ function bun(context: Context, args: string[], cwd: string, chain: string[], dep
   else runScript(context, sub, rest.slice(1), directory, workspaceScoped(seen, TOOLS.bun), chain, depth, null);
 }
 
+/** npm reads its own options anywhere before `--`, so `npm run check --workspaces` selects workspaces. */
+function npmOptions(args: string[]): { rest: string[]; seen: Map<string, string | true> } {
+  const separator = args.indexOf("--");
+  const before = separator === -1 ? args : args.slice(0, separator);
+  const seen = new Map<string, string | true>(), positional: string[] = [];
+  for (let index = 0; index < before.length; index++) {
+    const value = before[index]!;
+    if (!value.startsWith("-")) { positional.push(value); continue; }
+    const equals = value.indexOf("=");
+    if (equals > 0) seen.set(value.slice(0, equals), value.slice(equals + 1));
+    else if (TOOLS.npm.values.has(value) && index + 1 < before.length) seen.set(value, before[++index]!);
+    else seen.set(value, true);
+  }
+  return { rest: separator === -1 ? positional : [...positional, ...args.slice(separator)], seen };
+}
+
 function packageManager(context: Context, manager: "npm" | "pnpm" | "yarn", args: string[], cwd: string, chain: string[], depth: number, text: string): void {
   const spec = TOOLS[manager];
-  const { rest, seen } = options(args, spec);
+  const { rest, seen } = manager === "npm" ? npmOptions(args) : options(args, spec);
   const directory = directoryOption(cwd, seen);
   const workspaces = workspaceScoped(seen, spec);
   const sub = rest[0];

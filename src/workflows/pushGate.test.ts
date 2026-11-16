@@ -98,6 +98,9 @@ test("steps resolve through package scripts, shell strings, and run-group plans 
   expect(resolveStep(root, ["bun", "run", "deps"]).findings).toEqual([{ kind: "install", runner: "npm ci", chain: ["bun run deps", "package.json scripts.deps: cd packages/api && bun run setup", "packages/api/package.json scripts.setup: npm ci", "npm ci"] }]);
   expect(resolveStep(root, ["bun", "run", "--filter", "*", "test"]).findings.map(finding => finding.runner)).toEqual(["jest"]);
   expect(resolveStep(root, ["pnpm", "-r", "test"]).findings.map(finding => finding.runner)).toEqual(["jest"]);
+  // npm reads its own options after the script name too.
+  expect(resolveStep(root, ["npm", "run", "test", "--workspaces"]).findings.map(finding => finding.runner)).toEqual(["jest"]);
+  expect(resolveStep(root, ["npm", "test", "--prefix", "packages/api"]).findings.map(finding => finding.runner)).toEqual(["jest"]);
   expect(resolveStep(root, ["bun", "run", "loop"])).toEqual({ findings: [], errors: [] });
   expect(resolveStep(root, ["agent-tool", "run-group", "scripts/missing.json"]).errors[0]).toContain("Cannot read run-group plan scripts/missing.json");
 });
@@ -185,6 +188,23 @@ test("ranges exclude the remote's tip and tracking refs, and scan the whole bran
   expect(context(f.root).refs[0]).toMatchObject({ scan: "since-remote-tip", revisions: [more, "--not", work], commits: [more] });
 }, 60_000);
 
+test("a remote that pushes elsewhere than it fetches from does not subtract its tracking refs", () => {
+  const f = fixture({ pushGate: { steps: [captureStep] } });
+  const first = f.git(["rev-parse", "HEAD"]);
+  f.git(["push", "-q", "origin", "main"]);
+  const mirror = path.join(path.dirname(f.remote), "mirror.git"); f.git(["init", "-q", "--bare", mirror]);
+  f.git(["remote", "set-url", "--push", "origin", mirror]);
+  f.git(["switch", "-q", "-c", "feat/elsewhere"]); const work = f.commit("feat: work");
+  // Git passes the push URL; origin/main describes the fetch repository, not this destination.
+  expect(f.gate([["refs/heads/feat/elsewhere", work, "refs/heads/feat/elsewhere", zero]], "origin", mirror).status).toBe(0);
+  expect(context(f.root).remote).toEqual({ name: "origin", url: mirror, trackingRefs: false });
+  expect(context(f.root).refs[0]).toMatchObject({ scan: "whole-branch", revisions: [work], commits: [work, first], reason: expect.stringContaining("push URL is not the one it fetches from") });
+  f.git(["remote", "set-url", "--push", "origin", f.remote]);
+  expect(f.gate([["refs/heads/feat/elsewhere", work, "refs/heads/feat/elsewhere", zero]], "origin", f.remote).status).toBe(0);
+  expect(context(f.root).remote).toEqual({ name: "origin", url: f.remote, trackingRefs: true });
+  expect(context(f.root).refs[0]).toMatchObject({ scan: "new-on-remote", commits: [work] });
+}, 60_000);
+
 test("a branch that merged the moving base takes the newest base commit as its base", () => {
   const f = fixture({ pushGate: { steps: [captureStep] } });
   f.git(["push", "-q", "origin", "main"]);
@@ -247,6 +267,7 @@ test("the hooks, skills, and permissions guards use the shared drift checks", ()
   expect(JSON.parse(result.stdout).guards[0]).toMatchObject({ name: "hooks", ok: false, details: { changes: [{ target: "pre-push", status: "create" }] } });
   expect(f.run(["hooks", "install", "--apply"]).status).toBe(0);
   expect(f.run(["skills", "install", "--harness", "claude", "--apply"]).status).toBe(0);
+  expect(f.run(["skills", "install", "--harness", "opencode", "--apply"]).status).toBe(0);
   expect(f.run(["permissions", "install", "--harness", "codex", "--apply"]).status).toBe(0);
   f.git(["add", "."]); f.git(["commit", "-qm", "chore: install skills"]);
   const installed = f.git(["rev-parse", "HEAD"]);
@@ -260,9 +281,10 @@ test("the hooks, skills, and permissions guards use the shared drift checks", ()
   // Like `skills check`, the guard refuses a locally edited skill outright.
   expect(JSON.parse(result.stdout).guards[1]).toMatchObject({ name: "skills", ok: false, error: expect.stringContaining("Locally edited or unmanaged skill: .claude/skills/ship-pr/SKILL.md") });
   f.git(["checkout", "--", ".claude"]);
-  f.git(["rm", "-q", "--cached", ".claude/skills/reset/SKILL.md"]); rmSync(path.join(f.root, ".claude/skills/reset/SKILL.md"));
+  // Every harness the manifest records is checked, OpenCode's directory included.
+  f.git(["rm", "-q", "--cached", ".opencode/skills/reset/SKILL.md"]); rmSync(path.join(f.root, ".opencode/skills/reset/SKILL.md"));
   result = f.gate([["refs/heads/main", installed, "refs/heads/main", zero]]);
-  expect(JSON.parse(result.stdout).guards[1]).toMatchObject({ name: "skills", ok: false, details: { harness: "claude", changes: [{ path: ".claude/skills/reset/SKILL.md", status: "missing" }] } });
+  expect(JSON.parse(result.stdout).guards[1]).toMatchObject({ name: "skills", ok: false, details: { harnesses: ["claude", "opencode"], changes: [{ path: ".opencode/skills/reset/SKILL.md", status: "missing" }] } });
   writeFileSync(path.join(f.root, ".git/hooks/pre-push"), "#!/bin/sh\nexit 0\n");
   result = f.gate([["refs/heads/main", installed, "refs/heads/main", zero]]);
   expect(JSON.parse(result.stdout).guards[0]).toMatchObject({ name: "hooks", ok: false, details: { blockers: [expect.stringContaining("locally edited")] } });
