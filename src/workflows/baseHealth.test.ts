@@ -53,6 +53,8 @@ test("required checks map to their workflow's run and count as missing when the 
     { name: "verify", workflow: "CI", outcome: "failing", conclusion: "failure", url: checks[1]!.url },
     { name: "deploy", workflow: null, outcome: "missing", conclusion: null, url: null },
   ]);
+  // A passing push run of the configured workflow does not hide a same-named failure from another event on the tip.
+  expect(requiredStates([{ name: "verify", workflow: "Lint" }], [checks[0]!, { name: "verify", status: "completed", conclusion: "failure", url: "https://github.com/o/r/actions/runs/999/job/3" }], runs)[0]).toMatchObject({ outcome: "failing", url: "https://github.com/o/r/actions/runs/999/job/3" });
   // Same-named runs from several apps or events: a failure anywhere fails the check, whatever comes first.
   const duplicates = [
     { name: "build", status: "completed", conclusion: "success", url: "https://ci.example.com/1" },

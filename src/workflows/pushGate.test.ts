@@ -123,7 +123,7 @@ test("known test runners and installs are reported wherever they appear", () => 
   const root = project({ "package.json": { scripts: {} } });
   const runners = [
     ["bun", "test"], ["jest"], ["./node_modules/.bin/vitest", "run"], ["npx", "playwright", "test"], ["maestro", "test", "flows"], ["detox", "test"],
-    ["node", "--test"], ["pytest", "-q"], ["python3", "-m", "pytest"], ["go", "test", "./..."], ["cargo", "test"], ["turbo", "run", "lint", "test:unit"],
+    ["node", "--test"], ["pytest", "-q"], ["python3", "-m", "pytest"], ["go", "test", "./..."], ["go", "-C", "api", "test", "./..."], ["cargo", "test"], ["cargo", "+nightly", "-Z", "unstable-options", "test"], ["turbo", "run", "lint", "test:unit"],
     ["turbo", "test"], ["bunx", "vitest"], ["npx", "vitest@4", "run"], ["npx", "--yes", "--", "vitest", "run"], ["npx", "--call", "vitest run"], ["npm", "exec", "-c", "jest --ci"], ["bun", "x", "--", "jest"], ["bunx", "jest@29", "--ci"], ["bun", "x", "jest"], ["agent-tool", "bun", "test"], ["agent-tool", "run", "--label", "t", "--", "bun", "test"], ["env", "CI=1", "jest"],
   ];
   for (const command of runners) expect({ command, kinds: resolveStep(root, command).findings.map(finding => finding.kind) }).toEqual({ command, kinds: ["test"] });

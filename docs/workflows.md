@@ -505,9 +505,11 @@ otherwise `green`. Each workflow is represented by its latest push run on the
 branch, `onTip` saying whether that run is on the tip: a merge that path
 filters skip neither hides nor clears a failure, and `tip.hasRuns` false says
 the tip's runs have not started or were skipped. A required check absent from
-the tip, such as a PR-only job, is `missing` and decides nothing; when
-several apps or events report the same name, any failure fails it and any
-unfinished run keeps it pending.
+the tip, such as a PR-only job, is `missing` and decides nothing. A required
+check with a `workflow` counts that workflow's runs and every same-named run
+that cannot be attributed to another listed push run (another event or app);
+when several report the name, any failure fails it and any unfinished run
+keeps it pending.
 
 When red, `failingJobs` lists each failing job with its run and job links, and
 a failing required check outside those runs by its own link. `lastGreen` is the

@@ -177,9 +177,22 @@ function turboTasks(args: string[]): string[] {
   return tasks;
 }
 
+/** Global options some runners take before their subcommand: `go -C dir test`, `cargo +nightly -Z flag test`. */
+const RUNNER_VALUES: Record<string, string[]> = { go: ["-C"], cargo: ["-C", "--config", "-Z", "--color"], deno: ["--config", "-c"], swift: ["--package-path"] };
+function subcommand(name: string, args: string[]): string | undefined {
+  const values = RUNNER_VALUES[name] ?? [];
+  for (let index = 0; index < args.length; index++) {
+    const value = args[index]!;
+    if (values.includes(value)) { index++; continue; }
+    if (value.startsWith("-") || (name === "cargo" && value.startsWith("+"))) continue;
+    return value;
+  }
+  return undefined;
+}
+
 function testRunner(name: string, args: string[]): boolean {
   if (["jest", "vitest", "mocha", "ava", "maestro", "detox", "pytest", "rspec"].includes(name)) return true;
-  const first = args.find(arg => !arg.startsWith("-"));
+  const first = subcommand(name, args);
   if (name === "node") return args.some(arg => arg === "--test" || arg.startsWith("--test="));
   if (["playwright", "deno", "go", "swift"].includes(name)) return first === "test";
   if (name === "cargo") return first === "test" || first === "nextest";

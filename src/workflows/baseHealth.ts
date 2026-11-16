@@ -44,10 +44,9 @@ export interface RequiredState { name: string; workflow: string | null; outcome:
 export function requiredStates(required: RequiredCheck[], checkRuns: CheckRun[], runs: WorkflowRun[]): RequiredState[] {
   const workflowOf = (url: string | null) => { const id = url?.match(/\/actions\/runs\/(\d+)\//)?.[1]; return id ? runs.find(run => String(run.id) === id)?.name ?? null : null; };
   return required.map(check => {
-    const named = checkRuns.filter(run => run.name === check.name);
-    // The configured workflow's runs, else runs that cannot be attributed to a listed workflow, which still count.
-    const exact = check.workflow === undefined ? named : named.filter(run => workflowOf(run.url) === check.workflow);
-    const matches = exact.length ? exact : named.filter(run => workflowOf(run.url) === null);
+    // Runs of the configured workflow and runs that cannot be attributed to a listed push run (another event,
+    // another app, a run past the window) both count; only runs known to belong to another workflow are left out.
+    const matches = checkRuns.filter(run => run.name === check.name && (check.workflow === undefined || [check.workflow, null].includes(workflowOf(run.url))));
     if (!matches.length) return { name: check.name, workflow: check.workflow ?? null, outcome: "missing", conclusion: null, url: null };
     // Several apps or events can report the same name: any failure fails it, then any unfinished run keeps it pending.
     const outcomes = matches.map(run => outcome(run.status, run.conclusion));
