@@ -172,7 +172,7 @@ test("with strict base freshness the CI waiter stops once the head falls behind 
   expect(report.reason).toContain(`pr cancel-runs --head ${f.commit}`);
   result = f.run(["pr", "checks", "--allow-behind"]); expect(result.status).toBe(1);
   expect(JSON.parse(result.stdout)).toMatchObject({ waiting: true, behind: true });
-});
+}, 30_000);
 test("by default a head behind its base keeps waiting and passes on green checks, reporting behind", () => {
   const f = githubFixture(); f.save({ checks: [{ name: "test", workflow: "CI", state: "PENDING" }], behindBy: 2 });
   let result = f.run(["pr", "checks", "--wait", "--timeout", "0"]); expect(result.status).toBe(1);
@@ -180,14 +180,14 @@ test("by default a head behind its base keeps waiting and passes on green checks
   f.save({ behindBy: 2 }); result = f.run(["pr", "checks", "--wait"]); expect(result.status).toBe(0);
   const report = JSON.parse(result.stdout);
   expect(report).toMatchObject({ ok: true, behind: true, base: { branch: "main", behindBy: 2, behind: true } }); expect(report.reason).toBeNull();
-});
+}, 30_000);
 test("with strict base freshness green checks on a head behind its base pass only with --allow-behind", () => {
   const f = githubFixture(); strictFreshness(f.root); f.save({ behindBy: 1 });
   expect(f.run(["pr", "checks"]).status).toBe(1);
   expect(f.run(["pr", "checks", "--allow-behind"]).status).toBe(0);
   f.save({ behindBy: 0 }); const result = f.run(["pr", "checks", "--wait"]); expect(result.status).toBe(0);
   expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, behind: false, base: { behindBy: 0 } });
-});
+}, 30_000);
 test("CI waiter refuses a closed PR seen by its base read", () => {
   const f = githubFixture(); f.save({ closeOnView: 2 });
   const result = f.run(["pr", "checks", "--allow-behind"]); expect(result.status).toBe(1);
@@ -240,7 +240,7 @@ test("pr cancel-runs keeps the current head's CI unless that head is behind its 
   strictFreshness(f.root);
   result = f.run(["pr", "cancel-runs", "--head", f.commit]); expect(result.status).toBe(0);
   expect(JSON.parse(result.stdout)).toMatchObject({ base: { behindBy: 3 }, runs: [{ id: 7, outcome: "cancelled" }] });
-});
+}, 30_000);
 test("CI wait timeout prefers --timeout, then the caller's default, then 900 seconds", () => {
   expect(timeoutOptions([])).toEqual({ timeoutMs: 900_000, intervalMs: 10_000 });
   expect(timeoutOptions([], 1800)).toEqual({ timeoutMs: 1_800_000, intervalMs: 10_000 });
@@ -272,7 +272,7 @@ test("preflight checks exact base/HEAD and preserves dirty user edits", () => {
   result = f.run(["pr", "preflight", f.commit, "main", f.commit], { AGENT_TOOL_CONFIG: strict }); expect(result.status).toBe(1); expect(result.stderr).toContain("Live base differs");
   result = f.run(["pr", "preflight", f.commit, "main", "a".repeat(40)]); expect(result.status).toBe(1);
   writeFileSync(path.join(f.root, "user-edit"), "keep"); result = f.run(["pr", "preflight", f.commit, "main", f.commit]); expect(result.status).toBe(1); expect(readFileSync(path.join(f.root, "user-edit"), "utf8")).toBe("keep");
-});
+}, 30_000);
 test("review listing paginates nested comments and resolution rejects foreign threads", () => {
   const f = githubFixture(); const result = f.run(["pr", "threads", "list"]); expect(result.status).toBe(0); const threads = JSON.parse(result.stdout).threads; expect(threads).toHaveLength(1); expect(threads[0].comments.nodes.map((comment: { databaseId: number }) => comment.databaseId)).toEqual([11, 12]);
   const invalid = f.run(["pr", "threads", "resolve", "foreign"]); expect(invalid.status).toBe(1); expect(invalid.stderr).toContain("does not belong");

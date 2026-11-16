@@ -61,6 +61,23 @@ test("the hook explains a missing bun instead of failing on an unknown command",
   expect(result.stderr).toContain("bun is not on PATH and mise cannot provide it");
 }, 60_000);
 
+test("a bun found through mise is on PATH for the declared steps", () => {
+  // Only meaningful where the system PATH itself has no bun.
+  if (spawnSync("sh", ["-c", "command -v bun"], { env: { PATH: "/usr/bin:/bin" } }).status === 0) return;
+  const step = { label: "which", command: ["sh", "-c", 'command -v bun > "$(git rev-parse --git-dir)/bun-path"'] };
+  const f = fixture({ pushGate: { steps: [step] } });
+  const hook = path.join(f.root, ".git/hooks/pre-push"); writeFileSync(hook, PUSH_GATE_HOOK); chmodSync(hook, 0o755);
+  mkdirSync(path.join(f.root, "node_modules/@a2f0"), { recursive: true }); symlinkSync(packageRoot, path.join(f.root, "node_modules/@a2f0/agent-tool"));
+  writeFileSync(path.join(f.root, ".git/info/exclude"), "node_modules\n");
+  const bin = path.join(path.dirname(f.remote), "mise-bin"); mkdirSync(bin);
+  writeFileSync(path.join(bin, "mise"), `#!/bin/sh\n[ "$1" = which ] && [ "$2" = bun ] && echo ${JSON.stringify(process.execPath)}\n`); chmodSync(path.join(bin, "mise"), 0o755);
+  const head = f.git(["rev-parse", "HEAD"]);
+  const result = spawnSync(hook, ["origin", f.remote], { cwd: f.root, env: { ...f.env, PATH: `${bin}:/usr/bin:/bin` }, encoding: "utf8", input: `refs/heads/main ${head} refs/heads/main ${zero}\n` });
+  expect(result.stderr).not.toContain("bun is not on PATH");
+  expect(result.status).toBe(0);
+  expect(readFileSync(path.join(f.root, ".git/bun-path"), "utf8").trim()).toBe(process.execPath);
+}, 60_000);
+
 test("pushGate config takes run-group steps, an allowSlow reason, and a positive budget", () => {
   expect(parseConfig(JSON.stringify({ schemaVersion: 1 })).pushGate).toBeNull();
   expect(parseConfig(JSON.stringify({ schemaVersion: 1, pushGate: null })).pushGate).toBeNull();

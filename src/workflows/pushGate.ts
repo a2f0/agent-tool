@@ -29,7 +29,9 @@ cd "$root"
 if command -v bun >/dev/null 2>&1; then
   bun=$(command -v bun)
 elif command -v mise >/dev/null 2>&1 && bun=$(mise which bun 2>/dev/null) && [ -x "$bun" ]; then
-  :
+  # Declared steps run bun by name too.
+  PATH="\${bun%/*}:$PATH"
+  export PATH
 else
   echo "pre-push: bun is not on PATH and mise cannot provide it. Install the Bun" >&2
   echo "this repository pins (mise install), or put bun on PATH, then push again." >&2
