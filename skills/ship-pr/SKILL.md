@@ -104,7 +104,9 @@ command, so they can be found and stopped.
    exact workflow and tarball, allowing registry propagation time. When the
    project deploys the merged branch, verify that deployment and documented
    live checks. Report deployment failures
-   separately from a successful merge; follow project policy for repairs.
+   separately from a successful merge; follow project policy for repairs. A
+   release that fails because another merge published the same version needs
+   a follow-up version bump through this workflow.
 8. Run `agent-tool repo base-health` again until it is no longer `pending` and
    the merge commit, or a newer tip, has runs (`tip.hasRuns`). When no run
    starts within about ten minutes, as with path filters or PR-only CI, or the

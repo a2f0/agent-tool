@@ -431,7 +431,14 @@ the second cannot publish. Preflight is read-only and never fetches: when the
 moved live base is not in the clone it says to fetch it (`repo context
 --fetch`) and run again, while `pr merge` fetches it itself. Preflight rereads
 the live base after its checks and refuses when another merge landed in the
-meantime, so the versions are never judged against a base already replaced. With
+meantime, so the versions are never judged against a base already replaced.
+GitHub's merge mutation has no expected-base precondition, so seconds remain
+between that read and the merge: two PRs that took the same version can both
+merge inside them. That is an accepted risk of leaving the strict policy off,
+and it is caught after the fact: `release plan` does not publish the
+already-published version, and `release verify` for the second merge commit
+fails, so that PR ships a follow-up version bump. A repository that cannot
+accept the window sets `merge.requireStrictBaseFreshness`. With
 `merge.requireStrictBaseFreshness` the live base must equal the reviewed base
 and configured strict rulesets are checked, as before. Preflight returns the
 checked head/base/PR identifiers with `liveBaseOid`, `baseMoved`, and
