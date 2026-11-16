@@ -45,11 +45,14 @@ export function requiredStates(required: RequiredCheck[], checkRuns: CheckRun[],
   const workflowOf = (url: string | null) => { const id = url?.match(/\/actions\/runs\/(\d+)\//)?.[1]; return id ? runs.find(run => String(run.id) === id)?.name ?? null : null; };
   return required.map(check => {
     const named = checkRuns.filter(run => run.name === check.name);
-    // Prefer the configured workflow's run; a run outside the listed window cannot be attributed and still counts.
-    const match = check.workflow === undefined ? named[0] : named.find(run => workflowOf(run.url) === check.workflow) ?? named.find(run => workflowOf(run.url) === null);
-    return match
-      ? { name: check.name, workflow: check.workflow ?? null, outcome: outcome(match.status, match.conclusion), conclusion: match.conclusion, url: match.url }
-      : { name: check.name, workflow: check.workflow ?? null, outcome: "missing", conclusion: null, url: null };
+    // The configured workflow's runs, else runs that cannot be attributed to a listed workflow, which still count.
+    const exact = check.workflow === undefined ? named : named.filter(run => workflowOf(run.url) === check.workflow);
+    const matches = exact.length ? exact : named.filter(run => workflowOf(run.url) === null);
+    if (!matches.length) return { name: check.name, workflow: check.workflow ?? null, outcome: "missing", conclusion: null, url: null };
+    // Several apps or events can report the same name: any failure fails it, then any unfinished run keeps it pending.
+    const outcomes = matches.map(run => outcome(run.status, run.conclusion));
+    const worst = matches[outcomes.indexOf("failing")] ?? matches[outcomes.indexOf("pending")] ?? matches[0]!;
+    return { name: check.name, workflow: check.workflow ?? null, outcome: outcome(worst.status, worst.conclusion), conclusion: worst.conclusion, url: worst.url };
   });
 }
 
@@ -122,7 +125,7 @@ export function baseHealthCommand(args: string[]): number {
   if (status === "no-ci") notes.push(`No push-triggered workflow ran on ${branch} within the last ${limit} runs; this repository lacks CI on pushes to it.`);
   else if (!tipHasRuns) notes.push(`No push run has started on the tip yet, or path filters skipped it; workflows show their latest run on ${branch}.`);
   const failingRuns = latest.filter(run => outcome(run.status, run.conclusion) === "failing");
-  const failingJobs: FailingJob[] = failingRuns.flatMap(run => json<Job[]>(["api", `repos/${name}/actions/runs/${run.id}/jobs?per_page=100`, "--jq", "[.jobs[] | {id, name, status, conclusion, url: .html_url}]"])
+  const failingJobs: FailingJob[] = failingRuns.flatMap(run => read("gh", ["api", "--paginate", `repos/${name}/actions/runs/${run.id}/jobs?per_page=100`, "--jq", ".jobs[] | {id, name, status, conclusion, url: .html_url}"]).split("\n").filter(Boolean).map(line => JSON.parse(line) as Job)
     .filter(job => outcome(job.status, job.conclusion) === "failing")
     .map(job => ({ workflow: run.name, runId: run.id, runUrl: run.url, headOid: run.headSha, job: job.name, jobId: job.id, url: job.url, conclusion: job.conclusion })));
   // A failing required check outside those runs (another app, or a run beyond the window) is listed by its own link.

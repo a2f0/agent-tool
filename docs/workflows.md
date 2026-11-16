@@ -428,7 +428,9 @@ reviewed head stays bound through `expectedHeadOid`, and when
 the live base, because two merges that take the same version merge cleanly but
 the second cannot publish. Preflight is read-only and never fetches: when the
 moved live base is not in the clone it says to fetch it (`repo context
---fetch`) and run again, while `pr merge` fetches it itself. With
+--fetch`) and run again, while `pr merge` fetches it itself. Preflight rereads
+the live base after its checks and refuses when another merge landed in the
+meantime, so the versions are never judged against a base already replaced. With
 `merge.requireStrictBaseFreshness` the live base must equal the reviewed base
 and configured strict rulesets are checked, as before. Preflight returns the
 checked head/base/PR identifiers with `liveBaseOid`, `baseMoved`, and
@@ -462,8 +464,8 @@ recent push-triggered workflow runs it reads, and also caps the merges listed
 in the breaking range and the merged and open PRs it reads. A report takes a
 bounded number of GitHub calls: the tip, one page of runs, every page of the
 tip's check runs when `merge.requiredChecks` is set (so a failing required
-check is never missed), and, only when red, the failing runs' jobs, one
-comparison, and two PR listings.
+check is never missed), and, only when red, every page of the failing runs'
+jobs, one comparison, and two PR listings.
 
 It prints one JSON report and exits 0 whatever the status:
 
@@ -503,7 +505,9 @@ otherwise `green`. Each workflow is represented by its latest push run on the
 branch, `onTip` saying whether that run is on the tip: a merge that path
 filters skip neither hides nor clears a failure, and `tip.hasRuns` false says
 the tip's runs have not started or were skipped. A required check absent from
-the tip, such as a PR-only job, is `missing` and decides nothing.
+the tip, such as a PR-only job, is `missing` and decides nothing; when
+several apps or events report the same name, any failure fails it and any
+unfinished run keeps it pending.
 
 When red, `failingJobs` lists each failing job with its run and job links, and
 a failing required check outside those runs by its own link. `lastGreen` is the

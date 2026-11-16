@@ -51,6 +51,7 @@ beforeEach(() => {
   git("config", `url.${remote}.insteadOf`, "https://github.com/owner/repo");
   writeFileSync(path.join(tools, "gh"), `#!${process.execPath}
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 const args = process.argv.slice(2);
 const scenario = process.env.PR_SCENARIO;
 const head = process.env.PR_HEAD;
@@ -66,6 +67,8 @@ if (args[0] === "repo" && args[1] === "view") {
   writeFileSync("created.json", JSON.stringify({args, body:readFileSync(0,"utf8")}));
   console.log("https://github.com/owner/repo/pull/12");
 } else if (args[0] === "pr" && args[1] === "checks") {
+  // move-during-checks lands another merge on the base while preflight reads checks.
+  if (scenario === "move-during-checks") execFileSync("git", ["--git-dir", process.env.PR_REMOTE, "update-ref", "refs/heads/production", process.env.PR_MOVE_TO]);
   reply([{name:"build", workflow:"CI", state:scenario === "failed-ci" ? "FAILURE" : "SUCCESS"}]);
 } else if (args[0] === "pr" && args[1] === "view") {
   const fields = args[args.indexOf("--json") + 1] ?? "";
@@ -108,7 +111,7 @@ if (args[0] === "repo" && args[1] === "view") {
 
 afterEach(() => rmSync(temporary, { recursive: true, force: true }));
 
-function invoke(scenario: string, args: string[], body = "", config?: string, cwd = fixture) {
+function invoke(scenario: string, args: string[], body = "", config?: string, cwd = fixture, extra: NodeJS.ProcessEnv = {}) {
   return spawnSync(process.execPath, [entry, ...args], {
     cwd,
     env: {
@@ -117,6 +120,7 @@ function invoke(scenario: string, args: string[], body = "", config?: string, cw
       AGENT_TOOL_CONFIG: config,
       PR_SCENARIO: scenario,
       PR_HEAD: head,
+      ...extra,
     },
     input: body,
     encoding: "utf8",
@@ -212,6 +216,24 @@ describe("PR CLI flows ported from a2f0.net", () => {
       const preflight = invoke("merged", ["pr", "preflight", head, "production", base], "", config);
       expect(preflight.status).toBe(1);
       expect(preflight.stderr).toContain(`Package versions are stale against the live production ${taken}`);
+    }, 60_000);
+
+    test("a merge that takes the version while preflight reads checks stops the merge", () => {
+      const commit = (message: string) => { git("add", "."); git("-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-qm", message); return git("rev-parse", "HEAD"); };
+      const remote = path.join(temporary, "remote.git");
+      const manifest = (version: string, extra: Record<string, string> = {}) => writeFileSync(path.join(fixture, "package.json"), JSON.stringify({ name: "example", version, ...extra }));
+      manifest("1.0.0"); const base = commit("feat: add package");
+      git("push", "-q", remote, `${base}:refs/heads/production`);
+      git("switch", "-q", "-c", "other"); manifest("1.0.1", { description: "another change" }); const taken = commit("feat: another change");
+      git("push", "-q", remote, "other");
+      git("switch", "-q", "feature"); manifest("1.0.1"); writeFileSync(path.join(fixture, "change.txt"), "change\n"); head = commit("feat: example change");
+      git("push", "-q", remote, "feature");
+      const config = path.join(temporary, "versions.json");
+      writeFileSync(config, JSON.stringify({ schemaVersion: 1, merge: { requiredChecks: [{ name: "build", workflow: "CI" }] }, versions: { packages: ["."], lockfile: null } }));
+      const result = invoke("move-during-checks", ["pr", "merge", "", head, "production"], "", config, fixture, { PR_REMOTE: remote, PR_MOVE_TO: taken });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`The live production moved from ${base} to ${taken} during preflight; run it again`);
+      expect(existsSync(path.join(fixture, "mutation.json"))).toBe(false);
     }, 60_000);
 
     test("read-only preflight never fetches a moved base it needs for versions; it says to fetch", () => {

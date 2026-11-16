@@ -53,6 +53,14 @@ test("required checks map to their workflow's run and count as missing when the 
     { name: "verify", workflow: "CI", outcome: "failing", conclusion: "failure", url: checks[1]!.url },
     { name: "deploy", workflow: null, outcome: "missing", conclusion: null, url: null },
   ]);
+  // Same-named runs from several apps or events: a failure anywhere fails the check, whatever comes first.
+  const duplicates = [
+    { name: "build", status: "completed", conclusion: "success", url: "https://ci.example.com/1" },
+    { name: "build", status: "completed", conclusion: "failure", url: "https://ci.example.com/2" },
+    { name: "lint", status: "completed", conclusion: "success", url: "https://ci.example.com/3" },
+    { name: "lint", status: "in_progress", conclusion: null, url: "https://ci.example.com/4" },
+  ];
+  expect(requiredStates([{ name: "build" }, { name: "lint" }], duplicates, runs).map(state => [state.outcome, state.url])).toEqual([["failing", "https://ci.example.com/2"], ["pending", "https://ci.example.com/4"]]);
 });
 
 test("the breaking range names each merge's PR, and open PRs citing a failing run are repairs", () => {
@@ -95,7 +103,7 @@ if (a[0] === "repo") say({ nameWithOwner: "o/r", defaultBranchRef: { name: "main
 else if (a[0] === "api" && path.startsWith("repos/o/r/branches/")) say({ sha: s.tip });
 else if (a[0] === "api" && path.startsWith("repos/o/r/actions/runs?")) say(s.runs);
 else if (a[0] === "api" && a[1] === "--paginate" && /check-runs/.test(a[2])) for (const check of s.checkRuns ?? []) say(check);
-else if (a[0] === "api" && /actions\\/runs\\/\\d+\\/jobs/.test(path)) say(s.jobs[path.match(/runs\\/(\\d+)\\/jobs/)[1]] ?? []);
+else if (a[0] === "api" && a[1] === "--paginate" && /actions\\/runs\\/\\d+\\/jobs/.test(a[2])) for (const job of s.jobs[a[2].match(/runs\\/(\\d+)\\/jobs/)[1]] ?? []) say(job);
 else if (a[0] === "api" && path.includes("/compare/")) say({ commits: s.compare ?? [] });
 else if (a[0] === "pr" && a.includes("merged")) say(s.merged ?? []);
 else if (a[0] === "pr" && a.includes("open")) say(s.open ?? []);

@@ -126,6 +126,11 @@ export function preflight(expectedHead: string, baseBranch: string, reviewedBase
     assert(planVersions(process.cwd(), versionBase).every(plan => plan.headVersion === plan.targetVersion), strict || versionBase === reviewedBase
       ? "Package versions are stale against the reviewed base."
       : `Package versions are stale against the live ${baseBranch} ${versionBase}; another merge took this version. Integrate the base, prepare versions, validate, and review again.`);
+    // A merge that landed while checks were read may have taken the same version; check against it instead.
+    if (!strict) {
+      const settled = remoteBranchHead(resolveRepositoryGitUrl(identity.repo), baseBranch);
+      assert(settled === liveBase, `The live ${baseBranch} moved from ${liveBase} to ${settled || "nothing"} during preflight; run it again so package versions are checked against the new base.`);
+    }
   }
   assert(head() === expectedHead, "Local HEAD changed during preflight.");
   return { ok: true, repo: identity.repo, pr: pr.number, url: pr.url, headOid: expectedHead, baseBranch, baseOid, liveBaseOid: liveBase, baseMoved: liveBase !== baseOid, strictBaseFreshness: strict, checks: checks.checks };
