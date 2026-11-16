@@ -112,10 +112,13 @@ export function baseHealthCommand(args: string[]): number {
   const runs = json<WorkflowRun[]>(["api", `repos/${name}/actions/runs?branch=${encodeURIComponent(branch)}&event=push&per_page=${limit}`, "--jq", "[.workflow_runs[] | {id, workflowId: .workflow_id, name, headSha: .head_sha, status, conclusion, url: .html_url, createdAt: .created_at}]"]);
   assert(Array.isArray(runs), "Could not list workflow runs.");
   const required = loadConfig().merge.requiredChecks;
-  // Every page, one check run per line, so a failing required check is never past the first page.
-  const checkRuns: CheckRun[] = required.length
-    ? read("gh", ["api", "--paginate", `repos/${name}/commits/${tip}/check-runs?per_page=100`, "--jq", ".check_runs[] | {name, status, conclusion, url: .html_url}"]).split("\n").filter(Boolean).map(line => JSON.parse(line) as CheckRun)
-    : [];
+  // Every page, one entry per line, so a failing required check is never past the first page. Required
+  // checks are check runs or, for external CI, commit status contexts; the combined status keeps each context's latest.
+  const lines = (args: string[]) => read("gh", args).split("\n").filter(Boolean).map(line => JSON.parse(line) as CheckRun);
+  const checkRuns: CheckRun[] = required.length ? [
+    ...lines(["api", "--paginate", `repos/${name}/commits/${tip}/check-runs?per_page=100`, "--jq", ".check_runs[] | {name, status, conclusion, url: .html_url}"]),
+    ...lines(["api", "--paginate", `repos/${name}/commits/${tip}/status?per_page=100`, "--jq", '.statuses[] | {name: .context, status: (if .state == "pending" then "in_progress" else "completed" end), conclusion: (if .state == "success" then "success" elif .state == "pending" then null else .state end), url: .target_url}']),
+  ] : [];
   const latest = latestRuns(runs);
   const requiredChecks = requiredStates(required, checkRuns, runs);
   const workflows = latest.map(run => ({ name: run.name, runId: run.id, url: run.url, headOid: run.headSha, onTip: run.headSha === tip, status: run.status, conclusion: run.conclusion, outcome: outcome(run.status, run.conclusion) }));

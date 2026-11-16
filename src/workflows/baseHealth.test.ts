@@ -103,6 +103,7 @@ if (a[0] === "repo") say({ nameWithOwner: "o/r", defaultBranchRef: { name: "main
 else if (a[0] === "api" && path.startsWith("repos/o/r/branches/")) say({ sha: s.tip });
 else if (a[0] === "api" && path.startsWith("repos/o/r/actions/runs?")) say(s.runs);
 else if (a[0] === "api" && a[1] === "--paginate" && /check-runs/.test(a[2])) for (const check of s.checkRuns ?? []) say(check);
+else if (a[0] === "api" && a[1] === "--paginate" && /\\/status\\?/.test(a[2])) for (const status of s.statuses ?? []) say(status);
 else if (a[0] === "api" && a[1] === "--paginate" && /actions\\/runs\\/\\d+\\/jobs/.test(a[2])) for (const job of s.jobs[a[2].match(/runs\\/(\\d+)\\/jobs/)[1]] ?? []) say(job);
 else if (a[0] === "api" && path.includes("/compare/")) say({ commits: s.compare ?? [] });
 else if (a[0] === "pr" && a.includes("merged")) say(s.merged ?? []);
@@ -176,6 +177,16 @@ test("a failing required check outside the listed runs is still cited, and open 
   const report = JSON.parse(f.health().stdout);
   expect(report).toMatchObject({ status: "red", failingJobs: [{ workflow: null, runId: null, job: "deploy", jobId: null, url: "https://github.com/o/r/actions/runs/7770000001/job/8880000001" }] });
   expect(report.openRepairs).toEqual([{ number: 4, title: "fix: deploy", url: "u4", references: ["7770000001"] }]);
+}, 60_000);
+
+test("a required commit status from external CI counts like a check run", () => {
+  const base = { tip, runs: [run(2, 1, "CI", tip, "success", "2026-11-02T00:00:00Z")], jobs: {}, open: [] };
+  let f = githubFixture({ ...base, statuses: [{ name: "ci/external", status: "completed", conclusion: "failure", url: "https://ci.example.com/build/9" }] }, { merge: { requiredChecks: [{ name: "ci/external" }] } });
+  let report = JSON.parse(f.health().stdout);
+  expect(report).toMatchObject({ status: "red", requiredChecks: [{ name: "ci/external", outcome: "failing", conclusion: "failure", url: "https://ci.example.com/build/9" }], failingJobs: [{ job: "ci/external", url: "https://ci.example.com/build/9" }] });
+  expect(f.calls().some(call => call.includes("repos/o/r/commits/" + tip + "/status?per_page=100"))).toBe(true);
+  f = githubFixture({ ...base, statuses: [{ name: "ci/external", status: "in_progress", conclusion: null, url: "u" }] }, { merge: { requiredChecks: [{ name: "ci/external" }] } });
+  expect(JSON.parse(f.health().stdout)).toMatchObject({ status: "pending", requiredChecks: [{ outcome: "pending" }] });
 }, 60_000);
 
 test("a failure without a green run in the window says how to widen it, and options are validated", () => {
