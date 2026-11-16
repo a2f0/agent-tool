@@ -298,10 +298,14 @@ function visitShell(context: Context, script: string, cwd: string, chain: string
   let directory = cwd;
   // A `cd` inside parentheses ends with its subshell.
   const outer: string[] = [];
-  for (const item of parseShell(script)) {
+  const items = parseShell(script);
+  for (const [index, item] of items.entries()) {
+    if (item === "&") continue;
     if (item === "(") { outer.push(directory); continue; }
     if (item === ")") { directory = outer.pop() ?? directory; continue; }
     const words = item;
+    // A backgrounded `cd dir &` runs in its own process and moves nothing after it.
+    if (words[0] === "cd" && items[index + 1] === "&") continue;
     while (words.length && KEYWORDS.has(words[0]!)) words.shift();
     if (!words.length || words[0] === "for" || words[0] === "case" || /\(\)$/.test(words[0]!)) continue;
     if (words[0] === "cd") { if (words[1] && words[1] !== "-" && !words[1].startsWith("$")) directory = path.resolve(directory, words[1]); continue; }
@@ -313,9 +317,9 @@ export function splitShell(script: string): string[][] {
   return parseShell(script).filter((item): item is string[] => Array.isArray(item));
 }
 
-/** Simple commands in order, with `(` and `)` marking where a subshell starts and ends. */
-function parseShell(script: string): (string[] | "(" | ")")[] {
-  const commands: (string[] | "(" | ")")[] = [];
+/** Simple commands in order, with `(` and `)` marking where a subshell starts and ends and `&` following a backgrounded command. */
+function parseShell(script: string): (string[] | "(" | ")" | "&")[] {
+  const commands: (string[] | "(" | ")" | "&")[] = [];
   let words: string[] = [];
   let word = "";
   let quoted = false;
@@ -343,6 +347,7 @@ function parseShell(script: string): (string[] | "(" | ")")[] {
       endCommand();
       if (char === "(" || char === ")") commands.push(char);
       else if ((char === "&" || char === "|") && script[index + 1] === char) index++;
+      else if (char === "&") commands.push("&");
     } else if (char === " " || char === "\t") endWord();
     else word += char;
   }

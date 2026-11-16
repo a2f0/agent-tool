@@ -94,7 +94,7 @@ const say = value => console.log(JSON.stringify(value)), path = a[1] ?? "";
 if (a[0] === "repo") say({ nameWithOwner: "o/r", defaultBranchRef: { name: "main" }, url: "https://github.com/o/r", sshUrl: "git@github.com:o/r.git" });
 else if (a[0] === "api" && path.startsWith("repos/o/r/branches/")) say({ sha: s.tip });
 else if (a[0] === "api" && path.startsWith("repos/o/r/actions/runs?")) say(s.runs);
-else if (a[0] === "api" && /check-runs/.test(path)) say(s.checkRuns ?? []);
+else if (a[0] === "api" && a[1] === "--paginate" && /check-runs/.test(a[2])) for (const check of s.checkRuns ?? []) say(check);
 else if (a[0] === "api" && /actions\\/runs\\/\\d+\\/jobs/.test(path)) say(s.jobs[path.match(/runs\\/(\\d+)\\/jobs/)[1]] ?? []);
 else if (a[0] === "api" && path.includes("/compare/")) say({ commits: s.compare ?? [] });
 else if (a[0] === "pr" && a.includes("merged")) say(s.merged ?? []);

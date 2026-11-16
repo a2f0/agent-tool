@@ -139,6 +139,7 @@ test("a cd inside a subshell does not move the commands after it", () => {
   const root = project({ "package.json": { scripts: { test: "vitest run" } }, "packages/api/package.json": { scripts: { lint: "eslint .", test: "jest" } } });
   expect(resolveStep(root, ["sh", "-c", "(cd packages/api && bun run lint) && bun run test"]).findings.map(finding => finding.runner)).toEqual(["vitest run"]);
   expect(resolveStep(root, ["sh", "-c", "(cd packages/api && bun run test) && bun run lint"]).findings.map(finding => finding.runner)).toEqual(["jest"]);
+  expect(resolveStep(root, ["sh", "-c", "cd packages/api & bun run test"]).findings.map(finding => finding.runner)).toEqual(["vitest run"]);
 });
 
 test("push URLs lose their credentials before they are reported", () => {

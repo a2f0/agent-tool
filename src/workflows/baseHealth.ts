@@ -1,5 +1,5 @@
 import { loadConfig, type RequiredCheck } from "../config";
-import { assert, json, nativeBranch, option, output, repository } from "./core";
+import { assert, json, nativeBranch, option, output, read, repository } from "./core";
 
 /** The health of a branch's tip: one of four closed states. */
 export type BaseHealthStatus = "green" | "red" | "pending" | "no-ci";
@@ -109,7 +109,10 @@ export function baseHealthCommand(args: string[]): number {
   const runs = json<WorkflowRun[]>(["api", `repos/${name}/actions/runs?branch=${encodeURIComponent(branch)}&event=push&per_page=${limit}`, "--jq", "[.workflow_runs[] | {id, workflowId: .workflow_id, name, headSha: .head_sha, status, conclusion, url: .html_url, createdAt: .created_at}]"]);
   assert(Array.isArray(runs), "Could not list workflow runs.");
   const required = loadConfig().merge.requiredChecks;
-  const checkRuns = required.length ? json<CheckRun[]>(["api", `repos/${name}/commits/${tip}/check-runs?per_page=100`, "--jq", "[.check_runs[] | {name, status, conclusion, url: .html_url}]"]) : [];
+  // Every page, one check run per line, so a failing required check is never past the first page.
+  const checkRuns: CheckRun[] = required.length
+    ? read("gh", ["api", "--paginate", `repos/${name}/commits/${tip}/check-runs?per_page=100`, "--jq", ".check_runs[] | {name, status, conclusion, url: .html_url}"]).split("\n").filter(Boolean).map(line => JSON.parse(line) as CheckRun)
+    : [];
   const latest = latestRuns(runs);
   const requiredChecks = requiredStates(required, checkRuns, runs);
   const workflows = latest.map(run => ({ name: run.name, runId: run.id, url: run.url, headOid: run.headSha, onTip: run.headSha === tip, status: run.status, conclusion: run.conclusion, outcome: outcome(run.status, run.conclusion) }));

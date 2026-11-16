@@ -459,10 +459,11 @@ branch together, so shipping starts by reading its CI. `repo base-health` reads
 GitHub only and runs nothing locally. `--branch` defaults to the repository's
 default branch; `--limit` (1–100, default 30) is how many of the branch's most
 recent push-triggered workflow runs it reads, and also caps the merges listed
-in the breaking range and the merged and open PRs it reads. Each call is one
-page, so a report takes a bounded number of GitHub calls: the tip, the runs,
-the tip's check runs when `merge.requiredChecks` is set, and, only when red,
-the failing runs' jobs, one comparison, and two PR listings.
+in the breaking range and the merged and open PRs it reads. A report takes a
+bounded number of GitHub calls: the tip, one page of runs, every page of the
+tip's check runs when `merge.requiredChecks` is set (so a failing required
+check is never missed), and, only when red, the failing runs' jobs, one
+comparison, and two PR listings.
 
 It prints one JSON report and exits 0 whatever the status:
 
