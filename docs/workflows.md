@@ -117,7 +117,8 @@ titles always use the full subject policy. These explicit checks do not execute
 commitlint configuration; keep any additional project commitlint rules locally.
 
 Binary checks use Git's binary numstat classification and NUL-delimited names,
-including rename destinations. Deleted files are excluded. `--all` checks the
+including rename destinations and type changes (a symlink replaced by a
+binary file). Deleted files are excluded. `--all` checks the
 entire index; `--staged` checks its delta. The default `--from-upstream` finds
 upstream, then `origin/$GITHUB_BASE_REF`, `origin/main`, or local `main`, and
 compares the merge base to HEAD. Pass `--range` in CI or hooks when the exact

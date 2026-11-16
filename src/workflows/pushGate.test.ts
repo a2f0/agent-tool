@@ -291,6 +291,18 @@ test("guards refuse untrusted commits and binaries before any declared step runs
   expect(existsSync(path.join(f.root, ".git/step-ran"))).toBe(true);
 }, 60_000);
 
+test("a symlink replaced by a binary file is checked like any added binary", () => {
+  const f = fixture({ pushGate: {} });
+  f.git(["push", "-q", "origin", "main"]);
+  symlinkSync("tracked", path.join(f.root, "icon.png")); f.git(["add", "icon.png"]); f.git(["commit", "-qm", "chore: link"]);
+  f.git(["push", "-q", "origin", "main"]);
+  rmSync(path.join(f.root, "icon.png")); const binary = f.commit("chore: replace the link", "icon.png", Buffer.from([0, 1, 2]));
+  const result = f.gate([["refs/heads/main", binary, "refs/heads/main", f.git(["rev-parse", "HEAD^"])]]);
+  expect(result.status).toBe(1);
+  expect(JSON.parse(result.stdout).guards.find((item: { name: string }) => item.name === "binaries")).toMatchObject({ ok: false, details: { rejected: ["icon.png"] } });
+  expect(f.run(["checks", "binaries", "--range", "HEAD^..HEAD"]).status).toBe(1);
+}, 60_000);
+
 test("binaries already on the remote that a merge brings in are not counted against the push", () => {
   const f = fixture({ pushGate: {} });
   f.git(["push", "-q", "origin", "main"]);

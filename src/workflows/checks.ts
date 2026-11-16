@@ -90,7 +90,7 @@ export function binariesCommand(args: string[]): number {
 }
 
 function diffBinaries(revisions: string[]): string[] {
-  return binaryPaths(git(["diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z", "--diff-filter=ACMR", ...revisions, "--"]));
+  return binaryPaths(git(["diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z", "--diff-filter=ACMRT", ...revisions, "--"]));
 }
 
 export function rejectedBinaries(files: string[], config: AgentToolConfig): string[] {
