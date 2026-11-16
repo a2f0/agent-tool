@@ -51,6 +51,7 @@ beforeEach(() => {
   git("config", `url.${remote}.insteadOf`, "https://github.com/owner/repo");
   writeFileSync(path.join(tools, "gh"), `#!${process.execPath}
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 const args = process.argv.slice(2);
 const scenario = process.env.PR_SCENARIO;
 const head = process.env.PR_HEAD;
@@ -66,13 +67,15 @@ if (args[0] === "repo" && args[1] === "view") {
   writeFileSync("created.json", JSON.stringify({args, body:readFileSync(0,"utf8")}));
   console.log("https://github.com/owner/repo/pull/12");
 } else if (args[0] === "pr" && args[1] === "checks") {
+  // move-during-checks lands another merge on the base while preflight reads checks.
+  if (scenario === "move-during-checks") execFileSync("git", ["--git-dir", process.env.PR_REMOTE, "update-ref", "refs/heads/production", process.env.PR_MOVE_TO]);
   reply([{name:"build", workflow:"CI", state:scenario === "failed-ci" ? "FAILURE" : "SUCCESS"}]);
 } else if (args[0] === "pr" && args[1] === "view") {
   const fields = args[args.indexOf("--json") + 1] ?? "";
   if (fields === "headRefOid,statusCheckRollup") {
     reply({headRefOid:head, statusCheckRollup:[{}]});
   } else if (fields.startsWith("number,url,state")) {
-    reply({number:12, url:"https://github.com/owner/repo/pull/12", state:"OPEN", title:"feat: example", headRefName:"feature", headRefOid:head, baseRefName:"production", baseRefOid:head, isDraft:false, mergeable:"MERGEABLE", mergeStateStatus:scenario === "blocked" ? "BLOCKED" : "CLEAN", isCrossRepository:false, mergeCommit:null});
+    reply({number:12, url:"https://github.com/owner/repo/pull/12", state:"OPEN", title:"feat: example", headRefName:"feature", headRefOid:head, baseRefName:"production", baseRefOid:head, isDraft:false, mergeable:scenario === "conflicting" ? "CONFLICTING" : "MERGEABLE", mergeStateStatus:scenario === "blocked" ? "BLOCKED" : scenario === "conflicting" ? "DIRTY" : "CLEAN", isCrossRepository:false, mergeCommit:null});
   } else if (args.includes("headRefOid")) {
     reply({headRefOid:scenario === "head-drift" ? "b".repeat(40) : head});
   } else if (args.includes("state")) {
@@ -108,7 +111,7 @@ if (args[0] === "repo" && args[1] === "view") {
 
 afterEach(() => rmSync(temporary, { recursive: true, force: true }));
 
-function invoke(scenario: string, args: string[], body = "", config?: string, cwd = fixture) {
+function invoke(scenario: string, args: string[], body = "", config?: string, cwd = fixture, extra: NodeJS.ProcessEnv = {}) {
   return spawnSync(process.execPath, [entry, ...args], {
     cwd,
     env: {
@@ -117,6 +120,7 @@ function invoke(scenario: string, args: string[], body = "", config?: string, cw
       AGENT_TOOL_CONFIG: config,
       PR_SCENARIO: scenario,
       PR_HEAD: head,
+      ...extra,
     },
     input: body,
     encoding: "utf8",
@@ -162,14 +166,100 @@ describe("PR CLI flows ported from a2f0.net", () => {
 
   // pr merge used to send the mutation whether or not a preflight had run or passed.
   describe("runs every preflight gate itself before merging", () => {
-    test("refuses a head that lacks the live base", () => {
+    test("with strict base freshness refuses a head that lacks the live base", () => {
       const moved = git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "feat: newer base");
       git("push", "-q", path.join(temporary, "remote.git"), `${moved}:refs/heads/production`);
-      const result = invoke("merged", ["pr", "merge", "", head, "production"]);
+      const config = path.join(temporary, "strict.json");
+      writeFileSync(config, JSON.stringify({ schemaVersion: 1, merge: { requiredChecks: [{ name: "build", workflow: "CI" }], requireStrictBaseFreshness: true } }));
+      const result = invoke("merged", ["pr", "merge", "", head, "production"], "", config);
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(`Refusing to merge: preflight failed against live production ${moved}: Reviewed HEAD does not include the reviewed base.`);
       expect(existsSync(path.join(fixture, "mutation.json"))).toBe(false);
     });
+
+    test("by default merges the reviewed head although the base moved, when GitHub reports no conflict", () => {
+      const moved = git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "feat: newer base");
+      git("push", "-q", path.join(temporary, "remote.git"), `${moved}:refs/heads/production`);
+      const result = invoke("merged", ["pr", "merge", "", head, "production"]);
+      expect(result.status).toBe(0);
+      expect(JSON.parse(readFileSync(path.join(fixture, "mutation.json"), "utf8"))).toContain(`expectedHeadOid=${head}`);
+    });
+
+    test("refuses a PR that conflicts with its base and says to integrate", () => {
+      const result = invoke("conflicting", ["pr", "merge", "", head, "production"]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("PR conflicts with production (OPEN/CONFLICTING/DIRTY); integrate the base, resolve the conflict, validate, review, and push again.");
+      expect(existsSync(path.join(fixture, "mutation.json"))).toBe(false);
+    });
+
+    test("refuses a moved base that already took the reviewed version, since its publish would fail", () => {
+      const commit = (message: string) => { git("add", "."); git("-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-qm", message); return git("rev-parse", "HEAD"); };
+      const remote = path.join(temporary, "remote.git");
+      const manifest = (version: string, extra: Record<string, string> = {}) => writeFileSync(path.join(fixture, "package.json"), JSON.stringify({ name: "example", version, ...extra }));
+      manifest("1.0.0"); const base = commit("feat: add package");
+      git("push", "-q", remote, `${base}:refs/heads/production`);
+      git("switch", "-q", "-c", "other");
+      manifest("1.0.1", { description: "another change" }); const taken = commit("feat: another change");
+      git("switch", "-q", "feature");
+      manifest("1.0.1"); writeFileSync(path.join(fixture, "change.txt"), "change\n"); head = commit("feat: example change");
+      git("push", "-q", remote, "feature");
+      const config = path.join(temporary, "versions.json");
+      writeFileSync(config, JSON.stringify({ schemaVersion: 1, merge: { requiredChecks: [{ name: "build", workflow: "CI" }] }, versions: { packages: ["."], lockfile: null } }));
+      // Before the base moves, the reviewed version is current.
+      expect(invoke("merged", ["pr", "merge", "", head, "production"], "", config).status).toBe(0);
+      rmSync(path.join(fixture, "mutation.json"));
+      git("push", "-q", remote, `${taken}:refs/heads/production`);
+      const result = invoke("merged", ["pr", "merge", "", head, "production"], "", config);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`Package versions are stale against the live production ${taken}; another merge took this version.`);
+      expect(existsSync(path.join(fixture, "mutation.json"))).toBe(false);
+      const preflight = invoke("merged", ["pr", "preflight", head, "production", base], "", config);
+      expect(preflight.status).toBe(1);
+      expect(preflight.stderr).toContain(`Package versions are stale against the live production ${taken}`);
+    }, 60_000);
+
+    test("a merge that takes the version while preflight reads checks stops the merge", () => {
+      const commit = (message: string) => { git("add", "."); git("-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-qm", message); return git("rev-parse", "HEAD"); };
+      const remote = path.join(temporary, "remote.git");
+      const manifest = (version: string, extra: Record<string, string> = {}) => writeFileSync(path.join(fixture, "package.json"), JSON.stringify({ name: "example", version, ...extra }));
+      manifest("1.0.0"); const base = commit("feat: add package");
+      git("push", "-q", remote, `${base}:refs/heads/production`);
+      git("switch", "-q", "-c", "other"); manifest("1.0.1", { description: "another change" }); const taken = commit("feat: another change");
+      git("push", "-q", remote, "other");
+      git("switch", "-q", "feature"); manifest("1.0.1"); writeFileSync(path.join(fixture, "change.txt"), "change\n"); head = commit("feat: example change");
+      git("push", "-q", remote, "feature");
+      const config = path.join(temporary, "versions.json");
+      writeFileSync(config, JSON.stringify({ schemaVersion: 1, merge: { requiredChecks: [{ name: "build", workflow: "CI" }] }, versions: { packages: ["."], lockfile: null } }));
+      const result = invoke("move-during-checks", ["pr", "merge", "", head, "production"], "", config, fixture, { PR_REMOTE: remote, PR_MOVE_TO: taken });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`The live production moved from ${base} to ${taken} during preflight; run it again`);
+      expect(existsSync(path.join(fixture, "mutation.json"))).toBe(false);
+    }, 60_000);
+
+    test("read-only preflight never fetches a moved base it needs for versions; it says to fetch", () => {
+      const commit = (message: string) => { git("add", "."); git("-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-qm", message); return git("rev-parse", "HEAD"); };
+      const remote = path.join(temporary, "remote.git");
+      writeFileSync(path.join(fixture, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" })); const base = commit("feat: add package");
+      git("push", "-q", remote, `${base}:refs/heads/production`);
+      writeFileSync(path.join(fixture, "package.json"), JSON.stringify({ name: "example", version: "1.0.1" })); writeFileSync(path.join(fixture, "change.txt"), "change\n"); head = commit("feat: example change");
+      git("push", "-q", remote, "feature");
+      // Another clone moves the base; this clone never sees the commit.
+      const other = path.join(temporary, "other");
+      execFileSync("git", ["clone", "-q", "--branch", "production", remote, other]);
+      execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "chore: elsewhere"], { cwd: other });
+      execFileSync("git", ["push", "-q", "origin", "production"], { cwd: other });
+      const moved = execFileSync("git", ["rev-parse", "HEAD"], { cwd: other, encoding: "utf8" }).trim();
+      const config = path.join(temporary, "versions.json");
+      writeFileSync(config, JSON.stringify({ schemaVersion: 1, merge: { requiredChecks: [{ name: "build", workflow: "CI" }] }, versions: { packages: ["."], lockfile: null } }));
+      const result = invoke("merged", ["pr", "preflight", head, "production", base], "", config);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`The live production ${moved} moved since review and is not in this clone; fetch it with \`agent-tool repo context --fetch\``);
+      expect(spawnSync("git", ["cat-file", "-e", moved], { cwd: fixture }).status).not.toBe(0);
+      git("fetch", "-q", remote, "production");
+      const fetched = invoke("merged", ["pr", "preflight", head, "production", base], "", config);
+      expect(fetched.stderr).toBe(""); expect(fetched.status).toBe(0);
+      expect(JSON.parse(fetched.stdout)).toMatchObject({ baseOid: base, liveBaseOid: moved, baseMoved: true });
+    }, 60_000);
 
     test("merges only into the branch that passed preflight", () => {
       const result = invoke("retarget-late", ["pr", "merge", "", head, "production"]);

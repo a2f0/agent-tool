@@ -84,6 +84,20 @@ export function installSkills(rootDir: string, target: string, apply = false): S
   return pending.map(item => item.change);
 }
 
+const DIRECTORY_HARNESSES: Record<string, string> = { ".claude/skills": "claude", ".agents/skills": "codex", ".opencode/skills": "opencode" };
+
+/**
+ * Each `--harness` whose directory a repository's ownership manifest records,
+ * or null without a manifest, so a check covers every installed directory,
+ * OpenCode's included. An unrecognized directory adds `all`.
+ */
+export function installedSkillHarnesses(rootDir: string): string[] | null {
+  const root = realpathSync(rootDir);
+  if (!existsSync(safeDestination(root, MANIFEST))) return null;
+  const directories = new Set(Object.keys(readManifest(root)).map(file => file.split("/", 2).join("/")));
+  return [...new Set([...directories].map(directory => DIRECTORY_HARNESSES[directory] ?? "all"))].sort();
+}
+
 export interface SkillCheck { path: string; status: "missing" | "outdated" | "unmanaged" | "unchanged" }
 
 /** Read-only CI gate: require current bundled bytes and their ownership records. */

@@ -15,6 +15,24 @@ export function branchErrors(name: string, config: AgentToolConfig): string[] {
   return errors;
 }
 
+/** One line of Git's pre-push stdin: `<local ref> <local oid> <remote ref> <remote oid>`. */
+export interface PushTuple { localRef: string; localOid: string; remoteRef: string; remoteOid: string }
+const fullOid = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
+export const zeroOid = (value: string) => /^0+$/.test(value);
+
+export function parsePrePushInput(source: string): PushTuple[] {
+  return source.split("\n").filter(line => line.trim()).map(line => {
+    const fields = line.trim().split(/\s+/);
+    assert(fields.length === 4 && fullOid.test(fields[1]!) && fullOid.test(fields[3]!), "Malformed Git pre-push input.");
+    return { localRef: fields[0]!, localOid: fields[1]!, remoteRef: fields[2]!, remoteOid: fields[3]! };
+  });
+}
+
+/** Branch names a push creates or updates; deletions and tags are skipped. */
+export function pushedBranches(tuples: PushTuple[]): string[] {
+  return tuples.flatMap(tuple => zeroOid(tuple.localOid) || !tuple.remoteRef.startsWith("refs/heads/") ? [] : [tuple.remoteRef.slice("refs/heads/".length)]);
+}
+
 export function remoteUrl(remote: string, push = false): string {
   assert(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(remote), "Expected a named Git remote.");
   const urls = git(["remote", "get-url", ...(push ? ["--push"] : []), "--all", remote]).split("\n");
@@ -29,11 +47,7 @@ export function branchCommand(args: string[]): number {
     const prePush = flag(args, "--pre-push");
     assert(!prePush || !args.length, "--pre-push reads destination refs from stdin and accepts no names.");
     assert(!args.some(arg => arg.startsWith("-")), "Usage: branch check [name...]");
-    const names = prePush ? readFileSync(0, "utf8").split("\n").filter(line => line.trim()).flatMap(line => {
-      const fields = line.trim().split(/\s+/);
-      assert(fields.length === 4 && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(fields[1]!) && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(fields[3]!), "Malformed Git pre-push input.");
-      return /^0+$/.test(fields[1]!) || !fields[2]!.startsWith("refs/heads/") ? [] : [fields[2]!.slice("refs/heads/".length)];
-    }) : args.length ? args : [currentBranch()];
+    const names = prePush ? pushedBranches(parsePrePushInput(readFileSync(0, "utf8"))) : args.length ? args : [currentBranch()];
     const results = names.map(name => ({ name, errors: branchErrors(name, config) }));
     const ok = results.every(result => !result.errors.length);
     output({ ok, branches: results }); return ok ? 0 : 1;

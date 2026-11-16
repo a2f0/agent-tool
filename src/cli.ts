@@ -24,6 +24,7 @@ import { runGroup, listRuns } from "./commands/group";
 import { branchCommand } from "./workflows/branch";
 import { commitsCommand, binariesCommand, gateCommand } from "./workflows/checks";
 import { hooksCommand } from "./workflows/hooks";
+import { pushGateCommand } from "./workflows/pushGate";
 import { repoCommand, policyCommand, toolchainCommand } from "./workflows/repository";
 import { mergeReviewedHead, prWorkflowCommand } from "./workflows/pr";
 import { releaseCommand } from "./release/commands";
@@ -47,7 +48,10 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   commits check --message-file <file>    Commit-msg attribution and subject policy
   checks binaries [--staged|--all|--range range|--from-upstream]
   hooks install [--apply] [--adopt] | check
+  push-gate hook | check                 Canonical pre-push body; static check of the declared gate
+  push-gate run --pre-push <remote> <url>  Built-in guards, then pushGate steps (the pre-push body)
   repo context [--fetch] | cleanup <PR> <shipped-head> [--apply] [--keep-branch]
+  repo base-health [--branch name] [--limit N]  CI health of the default branch's tip (GitHub only)
   policy check | toolchain check
   ci gate <needs.json|-> [--policy policy.json]
   release plan <package.json> [--github-output] [--allow-private-source]
@@ -201,6 +205,8 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
     output({ applied: apply, changes: installSkills(process.cwd(), target, apply) }); return 0;
   }
   if (command === "bun") return bunCommand(args);
+  // The hook body needs no checkout, and `run` must resolve the root before clearing Git's hook environment.
+  if (command === "push-gate") return pushGateCommand(args);
   if (command === "permissions") {
     const action = args.shift();
     usage(action === "show" || action === "install" || action === "check", "Usage: agent-tool permissions <show|install|check> [--harness <all|claude|codex>] [--apply]");

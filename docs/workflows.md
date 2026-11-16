@@ -117,7 +117,8 @@ titles always use the full subject policy. These explicit checks do not execute
 commitlint configuration; keep any additional project commitlint rules locally.
 
 Binary checks use Git's binary numstat classification and NUL-delimited names,
-including rename destinations. Deleted files are excluded. `--all` checks the
+including rename destinations and type changes (a symlink replaced by a
+binary file). Deleted files are excluded. `--all` checks the
 entire index; `--staged` checks its delta. The default `--from-upstream` finds
 upstream, then `origin/$GITHUB_BASE_REF`, `origin/main`, or local `main`, and
 compares the merge base to HEAD. Pass `--range` in CI or hooks when the exact
@@ -164,13 +165,211 @@ shared global directory. Linked worktrees share the default installation;
 relative custom paths require installation in each worktree. Source/destination
 overlap and tracked destination files are rejected, and the effective Git hook
 path is checked before success. Run documented dependency setup before hooks
-installation. Keep hook self-comparison checks when the project requires copied
-hooks to refuse stale sources; the installer does not rewrite hook bodies.
+installation. The installer does not rewrite hook bodies. A push gate's `hooks
+check` guard refuses a stale installed copy, which replaces the `cmp -s "$0"`
+self-comparison hand-written hooks carried.
+
+## Push gates
+
+A push gate is the repository's `pre-push` hook, declared rather than written:
+the hook body is one canonical file, and what it runs is data in
+`agent-tool.json`. Pushing runs trust guards and quick static analysis only;
+CI runs the tests and builds and is the authority. A CI failure is fixed with a
+follow-up commit on the same branch.
+
+```json
+{
+  "schemaVersion": 1,
+  "hooks": {
+    "files": [{ "source": "scripts/git/hooks/pre-push", "target": "pre-push", "executable": true }]
+  },
+  "pushGate": {
+    "steps": [
+      { "label": "lint", "command": ["bun", "run", "lint"] },
+      { "label": "typecheck", "command": ["bun", "run", "typecheck"] },
+      { "label": "models", "command": ["bun", "run", "check:models"], "allowSlow": "no CI job runs the model checks yet" }
+    ],
+    "budgetSeconds": 60
+  }
+}
+```
+
+- `steps` take run-group's step shape: a unique `label` of 1–120 characters
+  and a nonempty `command` argv, run without a shell from the repository root.
+  `allowSlow` is an optional, nonempty reason that lets `push-gate check`
+  accept a step that runs tests or installs dependencies, so each exception is
+  visible in review. Absent `steps` means none.
+- `budgetSeconds` is a positive integer, default 120.
+- Without a `pushGate` section the repository declares no gate.
+
+```sh
+agent-tool push-gate hook > scripts/git/hooks/pre-push
+agent-tool hooks install --apply
+agent-tool push-gate check
+```
+
+`push-gate hook` prints the one canonical hook body. Commit it byte for byte as
+`scripts/git/hooks/pre-push`, keep it in `hooks.files` so `hooks install
+--apply` copies it, and regenerate it when an agent-tool release changes it
+(`push-gate check` says so). The body finds the repository root, takes `bun`
+from `PATH` or else from `mise which bun` (GUI Git clients start hooks without
+mise's shims), and otherwise explains what to install and exits 1. It then
+runs `exec "$bun" "$root/node_modules/@a2f0/agent-tool/src/index.ts" push-gate
+run --pre-push "$@"`, passing Git's stdin through.
+
+`push-gate run --pre-push <remote> <url>` reads Git's four-field stdin once,
+refuses a terminal stdin, and unsets Git's local environment variables
+(`git rev-parse --local-env-vars`, such as `GIT_DIR` and `GIT_INDEX_FILE`)
+after resolving the repository root, so steps that build fixture repositories
+do not act on this one. It then runs, in order:
+
+1. The built-in guards, from the same implementations as the standalone
+   commands: `hooks check`; `skills check` and `permissions check` when
+   `.agent-tool-skills.json` or `.agent-tool-permissions.json` exists, for
+   every harness their manifests record; `branch check --pre-push`; and, for
+   every pushed ref that is not a deletion, `commits check` and `checks
+   binaries` over the commits that push adds. Every guard runs and reports;
+   any failure refuses the push before a declared step starts.
+2. The declared `steps`, through the run-group runner with the label
+   `push-gate`, so every push leaves a source-bound report with per-step
+   durations in `agent-tool runs list`. A failing step refuses the push with
+   that step's exit status. A push that only deletes refs skips the steps.
+3. A budget check: when the whole gate took longer than `budgetSeconds`, it
+   warns on stderr with the three slowest steps and says to move them to CI.
+   The warning never changes the exit status.
+
+The commits a ref adds are those its new tip reaches that no commit the
+destination already has reaches, as Git itself decides what to send. The gate
+lists the destination's refs once per push with `git ls-remote <url>`, using
+the URL Git is pushing to, and subtracts every advertised commit (branches,
+tags, and host refs such as GitHub's pull refs) that this clone has, so
+unsigned work committed on local `main` cannot ride along on a new branch.
+Remote-tracking refs are never subtracted: they record a past fetch, possibly
+of another repository after `git remote set-url`, or of the fetch URL when the
+remote pushes elsewhere. A destination with nothing this clone has, such as a
+new or unrelated repository, gets the whole branch scanned: refusing a commit
+already published elsewhere is noise, while letting one through is the
+failure that matters. When the listing fails, only the remote's old tip that
+Git reported is subtracted, when this clone has it. Binaries are checked per
+commit against its parent; a merge counts only paths that differ from every
+parent, so a binary a merged base already carried is not charged to the push.
+
+Steps check the working tree. CI is the authority, so the gate does not refuse
+a push whose pushed commit is not the checked-out HEAD, or whose tree has
+uncommitted or untracked changes; it warns that the steps checked something
+other than what the push sends, and records it under `worktree`.
+
+Steps that need the push itself, such as a per-commit message linter or a
+changed-path classifier, read `AGENT_TOOL_PUSH_GATE`, the path of a private
+JSON file that exists while the steps run:
+
+```json
+{
+  "schemaVersion": 1,
+  "remote": { "name": "origin", "url": "git@github.com:owner/repo.git", "advertised": 412, "error": null },
+  "headOid": "<checked-out HEAD>",
+  "worktreeMatchesPush": true,
+  "refs": [
+    {
+      "localRef": "refs/heads/feat/x",
+      "localOid": "<pushed oid>",
+      "remoteRef": "refs/heads/feat/x",
+      "remoteOid": "<remote's old oid, or zeros for a new ref>",
+      "deleted": false,
+      "scan": "new-on-remote",
+      "reason": "Excludes the 412 commit(s) the destination advertises that this clone has.",
+      "revisions": ["<pushed oid>", "--not", "<boundary oid>"],
+      "commits": ["<newest added commit>", "..."],
+      "base": "<oid or null>",
+      "range": "<base>..<pushed oid>"
+    }
+  ]
+}
+```
+
+`remote.name` is null for a push to a URL, and `remote.url` replaces any
+credentials the URL carries with `***`, as the printed report does.
+`remote.advertised` counts the
+advertised commits this clone has, and is null, with `remote.error` set, when
+the listing failed. `scan` is `since-remote-tip` (the remote had the ref at a
+commit this clone has), `unknown-remote-tip` (it had the ref at a commit this
+clone lacks), `new-on-remote`, or `deleted`; `reason` says what was
+subtracted. `revisions` are `git rev-list` arguments that select exactly the
+added commits (the pushed tip, then `--not` and the subtracted commits that
+bound them), and `commits` lists those commits newest first (empty for a
+deletion, or for a push of commits the destination already has). `base` is the
+remote's old tip when this clone has it, else the newest subtracted commit
+when there is exactly one (a branch that merged the moving base gets that
+base's tip), else null when nothing was subtracted; `range` is
+`<base>..<localOid>`, or just `localOid` when `base` is null, so tools that
+take a revision range or a diff base can use it directly. Deleted refs keep
+`deleted: true` with no range.
+
+The command prints one JSON report: `ok`, `remote`, `refs` (as above with
+`commits` reduced to a count), `guards` (each with `name`, an optional `ref`,
+`ok`, `durationMs`, and `details` or `error` when it failed), `steps` (null
+when none ran, else the run-group `report` path, `status`, `durationMs`,
+`error`, and each step's `label`, `status`, `durationMs`, and `log`),
+`worktree`, `budget` (`seconds`, `elapsedMs`, `exceeded`, and the `slowest`
+steps), `notes`, and `warnings`. Failures and warnings are also written to
+stderr as `push-gate:` lines.
+
+`push-gate check` is read-only, for CI and workspace audits. It fails when:
+
+- `scripts/git/hooks/pre-push` is tracked but there is no `pushGate` section,
+  or the section exists but the hook is not tracked;
+- the tracked hook is not byte-identical to `push-gate hook`'s output;
+- `hooks.files` does not install it as an executable `pre-push`;
+- a step resolves to a test run or a dependency install and has no
+  `allowSlow`, or names a run-group plan that cannot be read.
+
+A repository with neither a section nor a tracked hook passes with a note that
+it has no gate. Steps are resolved through `bun run`, `npm run`, `pnpm run`,
+and `yarn` package scripts (with their `pre` and `post` scripts and appended
+arguments, from the nearest `package.json` at or above the directory; npm's
+own options count anywhere before `--`), recursively, splitting shell strings at `&&`, `||`, `;`, `|`,
+`&`, and newlines and following `cd` (which ends with its subshell); through `sh -c` and `bash -c`; through
+`bunx`, `npx`, `bun x`, and `exec` (a version selector such as `vitest@4`
+is ignored, and a `--call` string is split like a script), and `agent-tool
+[--repo <dir>] run -- <command>`; and through
+`agent-tool run-group <plan>` plans. Workspace filters (`--filter`, `-r`,
+`--workspace`) resolve to every workspace package, from `package.json`
+workspaces or `pnpm-workspace.yaml`, that declares the script.
+Test runs are `bun test`, `jest`, `vitest`, `mocha`, `ava`, `playwright
+test`, `maestro`, `detox`, `node --test`, `pytest`, `python -m pytest`,
+`rspec`, `go test`, `cargo test`, `deno test`, `swift test`, `xcodebuild
+test`, Gradle `test` tasks, and `turbo` or `turbo run` with a task named
+`test*`. Installs are `bun install|add|update|remove`, `npm
+install|ci|update`, `pnpm install|add|update`, `yarn` alone or `yarn
+install|add|up`, `agent-tool bun install`, and `pod`, `bundle`, or `pip
+install`. Executables and script files are leaves: their contents are not
+inspected. The report is:
+
+```json
+{
+  "ok": false,
+  "hook": { "path": "scripts/git/hooks/pre-push", "tracked": true, "canonical": true, "installed": true },
+  "pushGate": { "declared": true, "budgetSeconds": 60 },
+  "steps": [
+    {
+      "label": "check", "command": ["bun", "run", "check"], "allowSlow": null, "ok": false,
+      "findings": [{ "kind": "test", "runner": "vitest run", "chain": ["bun run check", "package.json scripts.check: bun run lint && bun run test", "package.json scripts.test: vitest run", "vitest run"] }],
+      "errors": []
+    }
+  ],
+  "errors": ["Step 'check' runs a test run (vitest run): bun run check -> ... -> vitest run. Move it to CI, or give the step an allowSlow reason."],
+  "notes": []
+}
+```
+
+`canonical` is null when no hook is tracked. Findings of a step with
+`allowSlow` are still listed, with that step's `ok` true.
 
 ## PR context, CI, and feedback
 
 ```sh
 agent-tool repo context
+agent-tool repo base-health
 agent-tool pr context
 agent-tool pr checks --wait --head <reviewed-head> --timeout 900 --interval 10
 agent-tool pr cancel-runs --head <superseded-head>
@@ -201,29 +400,54 @@ so a hung call ends it instead of keeping it running forever.
 
 Every observation also compares the head with the live tip of the PR's base
 branch through GitHub's compare API, asking again only after the base moves,
-and reports it as `base` (`branch`, `liveOid`, `behindBy`, `behind`). The base
-branch is reread each time, so a retargeted PR is compared with its new base. A head
-that lacks the live base cannot ship as reviewed, so waiting stops at once with
-`behind: true`, `ok: false`, and exit status 1, whatever the checks show:
-integrate the base, validate, review, and push the new head instead of spending
-runner time on the old one. `--allow-behind` keeps waiting and passes on green
-checks, still reporting `behind`.
+and reports it as `behind` and `base` (`branch`, `liveOid`, `behindBy`,
+`behind`). The base branch is reread each time, so a retargeted PR is compared
+with its new base. A moved base is reported, not acted on: the wait continues
+on the head's checks and passes when they are green. Integrate the base only
+when GitHub reports a conflict, when `versions check` fails against the live
+base, or when the repository opts in with `merge.requireStrictBaseFreshness`.
+Under that policy a head that lacks the live base cannot ship as reviewed, so
+waiting stops at once with `behind: true`, `ok: false`, a `reason`, and exit
+status 1, whatever the checks show; `--allow-behind` then keeps waiting and
+passes on green checks, still reporting `behind`.
 
 `pr cancel-runs --head <oid>` cancels the queued and in-progress GitHub Actions
 runs of that commit on the PR's branch, reporting each as `cancelled`,
 `finished` (it completed first), or `failed` (exit status 1). It cancels the
-PR's current head only while that head is behind its live base, so an
-up-to-date head never loses its CI. Same-repository PRs only; a commit with
-1,000 or more runs is refused rather than partly cancelled.
+PR's current head only under `merge.requireStrictBaseFreshness` and only while
+that head is behind its live base; otherwise the current head can still merge,
+so it never loses its CI. Same-repository PRs only; a commit with 1,000 or
+more runs is refused rather than partly cancelled.
 The read-only preflight additionally checks clean local state, exact local/PR
-HEAD and branch, OPEN/non-draft/MERGEABLE/CLEAN state, no queued/automatic merge,
-unchanged live base, base ancestry, configured strict rulesets, and explicit
-package version policy. It returns the checked head/base/PR identifiers.
-`pr merge` runs the same preflight itself before sending the merge, against
-the base branch it fetches at that moment, so a skipped, failed, or stale
-preflight never leads to a merge. Merge still uses the existing atomic
-expected-HEAD mutation; no read-only check can make GitHub's base comparison
-atomic. Neither preflight nor merge gates on unresolved review threads: declined findings stay unresolved by policy, so read them with
+HEAD and branch, OPEN/non-draft/MERGEABLE/CLEAN state (a conflict,
+`CONFLICTING` or `DIRTY`, says to integrate the base; `UNKNOWN` is reread for
+up to eight seconds while GitHub computes it), no queued/automatic merge, that
+the reviewed head contains the reviewed base, passing checks, and explicit
+package version policy. A base that moved since review is acceptable: the
+reviewed head stays bound through `expectedHeadOid`, and when
+`versions.packages` is configured the versions must still be current against
+the live base, because two merges that take the same version merge cleanly but
+the second cannot publish. Preflight is read-only and never fetches: when the
+moved live base is not in the clone it says to fetch it (`repo context
+--fetch`) and run again, while `pr merge` fetches it itself. Preflight rereads
+the live base after its checks and refuses when another merge landed in the
+meantime, so the versions are never judged against a base already replaced.
+GitHub's merge mutation has no expected-base precondition, so seconds remain
+between that read and the merge: two PRs that took the same version can both
+merge inside them. That is an accepted risk of leaving the strict policy off,
+and it is caught after the fact: `release plan` does not publish the
+already-published version, and `release verify` for the second merge commit
+fails, so that PR ships a follow-up version bump. A repository that cannot
+accept the window sets `merge.requireStrictBaseFreshness`. With
+`merge.requireStrictBaseFreshness` the live base must equal the reviewed base
+and configured strict rulesets are checked, as before. Preflight returns the
+checked head/base/PR identifiers with `liveBaseOid`, `baseMoved`, and
+`strictBaseFreshness`. `pr merge` runs the same preflight itself before
+sending the merge, against the base branch it fetches at that moment, so a
+skipped, failed, or stale preflight never leads to a merge; under the strict
+policy the head must contain that fetched base. Merge still uses the existing
+atomic expected-HEAD mutation; no read-only check can make GitHub's base
+comparison atomic, and without the strict policy none is needed. Neither preflight nor merge gates on unresolved review threads: declined findings stay unresolved by policy, so read them with
 `pr threads list`.
 
 Thread listing paginates both threads and comments. Replies use the original
@@ -231,6 +455,80 @@ review comment's REST `/replies` route after verifying its PR membership;
 without `--body-file`, body text comes from stdin. Resolution verifies thread
 membership and is idempotent. The command cannot judge whether a finding was
 addressed; resolve only fully addressed findings under repository review policy.
+
+## Default-branch health
+
+```sh
+agent-tool repo base-health
+agent-tool repo base-health --branch release --limit 50
+agent-tool --repo checkouts/project repo base-health
+```
+
+With base freshness opt-in, two PRs that each passed CI can break the default
+branch together, so shipping starts by reading its CI. `repo base-health` reads
+GitHub only and runs nothing locally. `--branch` defaults to the repository's
+default branch; `--limit` (1–100, default 30) is how many of the branch's most
+recent push-triggered workflow runs it reads, and also caps the merges listed
+in the breaking range and the merged and open PRs it reads. A report takes a
+bounded number of GitHub calls: the tip, one page of runs, every page of the
+tip's check runs and commit statuses when `merge.requiredChecks` is set (so a
+failing required check, including an external CI status, is never missed), and, only when red, every page of the failing runs'
+jobs, one comparison, and two PR listings.
+
+It prints one JSON report and exits 0 whatever the status:
+
+```json
+{
+  "repo": "owner/repo",
+  "branch": "main",
+  "status": "red",
+  "tip": { "oid": "<live tip>", "hasRuns": true },
+  "inProgress": false,
+  "workflows": [
+    { "name": "CI", "runId": 300, "url": "...", "headOid": "<tip>", "onTip": true, "status": "completed", "conclusion": "failure", "outcome": "failing" }
+  ],
+  "requiredChecks": [
+    { "name": "verify", "workflow": "CI", "outcome": "failing", "conclusion": "failure", "url": "..." }
+  ],
+  "failingJobs": [
+    { "workflow": "CI", "runId": 300, "runUrl": "...", "headOid": "<tip>", "job": "verify", "jobId": 31, "url": "...", "conclusion": "failure" }
+  ],
+  "lastGreen": { "oid": "<last commit where the failing workflows passed>", "workflows": ["CI"] },
+  "breakingRange": {
+    "from": "<lastGreen.oid>", "to": "<tip>", "truncated": false,
+    "merges": [{ "oid": "<commit>", "subject": "feat: two (#8)", "pr": { "number": 8, "title": "feat: two", "url": "...", "headOid": "<PR head>" } }]
+  },
+  "openRepairs": [{ "number": 9, "title": "fix: repair verify", "url": "...", "references": ["300"] }],
+  "limit": 30,
+  "notes": []
+}
+```
+
+`status` is closed: `red` when any workflow's latest run or any required check
+on the tip failed (any conclusion other than success, skipped, or neutral,
+including cancelled and timed out); otherwise `no-ci` when no push-triggered
+workflow ran on the branch within the window, so the repository lacks CI on
+pushes to it; otherwise `pending` while a run or required check is unfinished;
+otherwise `green`. Each workflow is represented by its latest push run on the
+branch, `onTip` saying whether that run is on the tip: a merge that path
+filters skip neither hides nor clears a failure, and `tip.hasRuns` false says
+the tip's runs have not started or were skipped. A required check absent from
+the tip, such as a PR-only job, is `missing` and decides nothing. A required
+check with a `workflow` counts that workflow's runs and every same-named run
+that cannot be attributed to another listed push run (another event or app);
+when several report the name, any failure fails it and any unfinished run
+keeps it pending.
+
+When red, `failingJobs` lists each failing job with its run and job links, and
+a failing required check outside those runs by its own link. `lastGreen` is the
+oldest of the failing workflows' last passing runs in the window, so
+`breakingRange` covers every one of them: each commit from there to the tip,
+oldest first and at most `--limit`, with the PR that merged it, matched by
+merge commit or else by its `(#123)` or merge-commit subject. Without a
+passing run in the window both are null and a note says to raise `--limit`.
+`openRepairs` lists open PRs whose title or body cites a failing run or job id,
+so a second session finds a repair already under way; a repair PR names the
+failing run in its body for that reason.
 
 ## Checkout cleanup
 

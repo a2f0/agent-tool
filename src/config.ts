@@ -11,6 +11,10 @@ export interface RequiredCheck {
   workflow?: string;
 }
 
+/** A declared push-gate step: run-group's step shape plus a visible reason when it may be slow. */
+export interface PushGateStep { label: string; command: string[]; allowSlow?: string }
+export interface PushGateConfig { steps: PushGateStep[]; budgetSeconds: number }
+
 export interface AgentToolConfig extends WorkflowConfig {
   schemaVersion: 1;
   subject: { conventional: boolean; maxLength: number; types: string[]; lowercaseInitial: boolean; rejectTerminalPeriod: boolean; ignoreGenerated: boolean };
@@ -22,6 +26,8 @@ export interface AgentToolConfig extends WorkflowConfig {
   screenshots: ScreenshotsConfig;
   graph: GraphConfig;
   permissions: { executables: Record<string, PermissionClass> };
+  /** Null when the repository declares no push gate. */
+  pushGate: PushGateConfig | null;
 }
 
 export const DEFAULT_CONFIG: AgentToolConfig = {
@@ -43,7 +49,34 @@ export const DEFAULT_CONFIG: AgentToolConfig = {
   screenshots: structuredClone(SCREENSHOTS_DEFAULTS),
   graph: structuredClone(GRAPH_DEFAULTS),
   permissions: { executables: {} },
+  pushGate: null,
 };
+
+export const PUSH_GATE_BUDGET_SECONDS = 120;
+
+/** Same step rules as run-group plans, plus an optional non-empty `allowSlow` reason. */
+function parsePushGate(value: unknown): PushGateConfig {
+  const input = object(value, "pushGate");
+  keys(input, ["steps", "budgetSeconds"], "pushGate");
+  const invalid = (setting: string): never => { throw new Error(`Invalid config setting 'pushGate.${setting}'.`); };
+  const budgetSeconds = input.budgetSeconds ?? PUSH_GATE_BUDGET_SECONDS;
+  if (!Number.isSafeInteger(budgetSeconds) || (budgetSeconds as number) < 1 || (budgetSeconds as number) > 86400) invalid("budgetSeconds");
+  const steps = input.steps ?? [];
+  if (!Array.isArray(steps)) invalid("steps");
+  const label = (text: unknown) => typeof text === "string" && text.length > 0 && text.length <= 120 && !/[\x00-\x1f]/.test(text);
+  const labels = new Set<string>();
+  const parsed = (steps as unknown[]).map(step => {
+    const entry = object(step, "pushGate.steps entry");
+    keys(entry, ["label", "command", "allowSlow"], "pushGate.steps entry");
+    const { command, allowSlow } = entry;
+    if (!label(entry.label) || labels.has(entry.label as string)) invalid("steps");
+    if (!Array.isArray(command) || !command.length || !command.every(arg => typeof arg === "string" && !arg.includes("\0")) || !command[0]) invalid("steps");
+    if (allowSlow !== undefined && (typeof allowSlow !== "string" || !allowSlow.trim() || /[\x00-\x1f]/.test(allowSlow))) invalid("steps");
+    labels.add(entry.label as string);
+    return { label: entry.label as string, command: [...command as string[]], ...(allowSlow === undefined ? {} : { allowSlow: allowSlow as string }) };
+  });
+  return { steps: parsed, budgetSeconds: budgetSeconds as number };
+}
 
 function object(value: unknown, name: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -77,6 +110,7 @@ export function parseConfig(source: string): AgentToolConfig {
   if (input.images !== undefined) result.images = parseImages(input.images);
   if (input.screenshots !== undefined) result.screenshots = parseScreenshots(input.screenshots);
   if (input.graph !== undefined) result.graph = parseGraph(input.graph);
+  if (input.pushGate !== undefined && input.pushGate !== null) result.pushGate = parsePushGate(input.pushGate);
   if (input.branch !== undefined && !Object.hasOwn(input.branch as object, "enforce")) result.branch.enforce = true;
   const invalid = (setting: string): never => { throw new Error(`Invalid config setting '${setting}'.`); };
   if (typeof result.subject.conventional !== "boolean") invalid("subject.conventional");
