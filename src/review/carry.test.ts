@@ -150,6 +150,13 @@ test("a configured merge driver never runs, and a merge that relied on one needs
   expect(existsSync(marker)).toBe(false);
   expect([code, report.ok]).toEqual([1, false]);
   expect(report.steps).toMatchObject([{ kind: "base-merge", ok: false, reason: "resolves conflicts outside the versioned manifests by hand: README.md." }]);
+  // A driver in inherited command-line configuration, which outranks GIT_CONFIG_COUNT, is disabled too.
+  git(rootDir, ["config", "--unset", "merge.custom.driver"]);
+  for (const inherited of [{ GIT_CONFIG_PARAMETERS: `'merge.custom.driver'='touch ${marker}' 'merge.renormalize'='true'` }, { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "merge.custom.driver", GIT_CONFIG_VALUE_0: `touch ${marker}` }] as Record<string, string>[]) {
+    const result = fixture.run(["review", "carry", reviewed, head(fixture), "--base", "main"], rootDir, inherited);
+    expect(existsSync(marker)).toBe(false);
+    expect(JSON.parse(result.stdout).steps).toMatchObject([{ kind: "base-merge", ok: false }]);
+  }
 }, 60_000);
 
 test("a merge of a branch the base does not contain needs a new review", () => {

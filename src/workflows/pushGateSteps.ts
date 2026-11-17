@@ -320,8 +320,9 @@ function turboConfigs(context: Context, args: string[], cwd: string): TurboConfi
     if (file && load(file) && !load(file)!.extends) { roots.push(file); break; }
     if (current === context.root || !current.startsWith(`${context.root}${path.sep}`)) break;
   }
-  const files = new Set([...roots, ...workspaceDirectories(context).flatMap(directory => turboFile(directory) ?? [])]);
-  return [...files].flatMap(file => load(file) ?? []);
+  // The repository root is a workspace directory too, but its turbo.json is the default root configuration.
+  const packages = workspaceDirectories(context).filter(directory => directory !== context.root).flatMap(directory => turboFile(directory) ?? []);
+  return [...new Set([...roots, ...packages])].flatMap(file => load(file) ?? []);
 }
 
 /**

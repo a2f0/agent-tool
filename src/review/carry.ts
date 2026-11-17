@@ -99,7 +99,7 @@ export function carryReviewCommand(root: string, args: string[]): number {
 function baseMerge(root: string, git: Git, commit: string, ours: string, theirs: string, base: { ref: string; oid: string }): CarryStep {
   const step = (ok: boolean, paths: string[], reason: string | null): CarryStep => ({ commit, kind: "base-merge", ok, paths, reason });
   if (!git.succeeds(["merge-base", "--is-ancestor", theirs, base.oid])) return step(false, [], `merges ${theirs}, which ${base.ref} (${base.oid}) does not contain.`);
-  const merged = spawnSync("git", ["merge-tree", "--write-tree", "-z", "--no-messages", ours, theirs], { cwd: root, env: inertMergeEnvironment(root, git.env), encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+  const merged = spawnSync("git", [...inertMergeOptions(root, git.env), "merge-tree", "--write-tree", "-z", "--no-messages", ours, theirs], { cwd: root, env: git.env, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
   if (merged.status !== 0 && merged.status !== 1) throw new Error(`git merge-tree failed: ${merged.stderr.trim()}`);
   const [tree, ...entries] = merged.stdout.split("\0").filter(Boolean);
   // Conflict entries are `<mode> <object> <stage>\t<path>`, one per stage present.
@@ -131,24 +131,23 @@ function baseMerge(root: string, git: Git, commit: string, ours: string, theirs:
 }
 
 /**
- * Keep `git merge-tree` from running programs the repository's configuration
- * names, so this read-only check executes no repository code: every custom
- * merge driver becomes the shell's `false`, so its paths conflict instead, and
- * renormalization, which would run clean filters, is off. A merge that relied
- * on such a driver then needs a new review.
+ * `git -c` options that keep `git merge-tree` from running programs any
+ * configuration names, so this read-only check executes no repository code:
+ * every custom merge driver becomes the shell's `false`, so its paths conflict
+ * instead, and renormalization, which would run clean filters, is off. Options
+ * on the command line come last, after the repository's files and any
+ * inherited `GIT_CONFIG_PARAMETERS` or `GIT_CONFIG_COUNT`, so they win. A merge
+ * that relied on a driver then needs a new review.
  */
-function inertMergeEnvironment(root: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function inertMergeOptions(root: string, env: NodeJS.ProcessEnv): string[] {
   const listed = spawnSync("git", ["config", "-z", "--get-regexp", "^merge\\..+\\.driver$"], { cwd: root, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   // Exit 1 means no driver is configured.
   if (listed.status !== 0 && listed.status !== 1) throw new Error(`git config failed: ${listed.stderr.trim()}`);
   const drivers = listed.status === 0 ? listed.stdout.split("\0").filter(Boolean).map(entry => entry.split("\n", 1)[0]!) : [];
-  const result: NodeJS.ProcessEnv = { ...env };
-  let count = Number(result.GIT_CONFIG_COUNT ?? "0");
-  for (const [key, value] of [...drivers.map(driver => [driver, "false"] as const), ["merge.renormalize", "false"] as const]) {
-    result[`GIT_CONFIG_KEY_${count}`] = key; result[`GIT_CONFIG_VALUE_${count}`] = value; count++;
-  }
-  result.GIT_CONFIG_COUNT = String(count);
-  return result;
+  // `-c` splits at the first `=`, so a driver whose name holds one cannot be overridden.
+  const unsafe = drivers.filter(driver => driver.includes("="));
+  if (unsafe.length) throw new Error(`cannot disable the merge driver ${unsafe.join(", ")}`);
+  return [...drivers.flatMap(driver => ["-c", `${driver}=false`]), "-c", "merge.renormalize=false"];
 }
 
 const deepEqual = (left: unknown, right: unknown) => Bun.deepEquals(left, right, true);

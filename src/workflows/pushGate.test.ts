@@ -223,8 +223,10 @@ test("turbo tasks are builds or test runs through what they depend on in turbo.j
   const legacy = project({ "package.json": { scripts: {} }, "turbo.json": { pipeline: { lint: { dependsOn: ["build"] } } } });
   expect(resolveStep(legacy, ["turbo", "run", "lint"]).findings.map(finding => finding.chain.at(-1))).toEqual(["turbo.json pipeline.lint.dependsOn: build"]);
   // `--root-turbo-json` replaces the root configuration.
-  const custom = project({ "package.json": { scripts: {} }, "turbo.json": { tasks: {} }, "ci/turbo.json": { tasks: { lint: { dependsOn: ["build"] } } } });
+  const custom = project({ "package.json": { scripts: {} }, "turbo.json": { tasks: { check: { dependsOn: ["build"] } } }, "ci/turbo.json": { tasks: { lint: { dependsOn: ["build"] }, check: {} } } });
   expect(resolveStep(custom, ["turbo", "run", "lint", "--root-turbo-json", "ci/turbo.json"]).findings.map(finding => finding.chain.at(-1))).toEqual(["ci/turbo.json tasks.lint.dependsOn: build"]);
+  expect(resolveStep(custom, ["turbo", "run", "check", "--root-turbo-json", "ci/turbo.json"])).toEqual({ findings: [], errors: [] });
+  expect(resolveStep(custom, ["turbo", "run", "check"]).findings.map(finding => finding.chain.at(-1))).toEqual(["turbo.json tasks.check.dependsOn: build"]);
   expect(resolveStep(custom, ["turbo", "run", "lint", "--root-turbo-json=ci/missing.json"]).errors).toEqual(["Cannot read ci/missing.json (--root-turbo-json): no such file."]);
   const broken = project({ "package.json": { scripts: {} }, "turbo.json": "{ tasks: " });
   expect(resolveStep(broken, ["turbo", "run", "lint"]).errors).toEqual([expect.stringContaining("Cannot read turbo.json")]);
