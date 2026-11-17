@@ -79,7 +79,10 @@ bun run agent:run --label compiled-smoke -- bun scripts/testing/smoke.ts dist/ag
 Tests run as isolated files across two worker processes with `--parallel=2`,
 since most of their time goes to spawning the CLI against disposable
 repositories. CPU-count concurrency can oversubscribe subprocesses on shared
-hosts and turn the unchanged five-second test limits into scheduling failures.
+hosts and turn the five-second default test limit into scheduling failures.
+A test that spawns Git, Bun, or the CLI states its own timeout after its body
+(`}, 30_000);`), sized to its work, since under a heavily loaded host even a
+few spawns outlast the default; pure tests keep it.
 The bounded command retains the complete test scope and every assertion; plain
 `bun test` still runs the same suite serially. Keep each test file independent
 of the others, with its own temporary directories and stubs.

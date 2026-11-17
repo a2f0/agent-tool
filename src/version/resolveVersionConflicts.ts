@@ -26,16 +26,18 @@ function stage(rootDir: string, index: 1 | 2 | 3, file: string): string {
   return git(rootDir, ["show", `:${index}:${file}`]);
 }
 
+function mergeIgnoringVersion(rootDir: string, file: string): string | null {
+  return mergeManifestIgnoringVersion(rootDir, stage(rootDir, 1, file), stage(rootDir, 2, file), stage(rootDir, 3, file));
+}
+
 /**
  * Three-way merge a manifest with every side's version set to one version, so
  * a version-only conflict merges cleanly: the branch's when it is a deliberate
  * major or minor release over the incoming base, which `bumpVersions` keeps,
  * and the base's otherwise. Null when anything besides the version still
- * conflicts.
+ * conflicts. `review carry` repeats it to check a recorded resolution.
  */
-function mergeIgnoringVersion(rootDir: string, file: string): string | null {
-  const ours = stage(rootDir, 2, file);
-  const theirs = stage(rootDir, 3, file);
+export function mergeManifestIgnoringVersion(rootDir: string, mergeBase: string, ours: string, theirs: string): string | null {
   const oursVersion = readVersion(ours);
   const theirsVersion = readVersion(theirs);
   const version = isReleaseBump(oursVersion, theirsVersion)
@@ -45,7 +47,7 @@ function mergeIgnoringVersion(rootDir: string, file: string): string | null {
   try {
     const inputs = {
       ours: withVersion(ours, version),
-      base: withVersion(stage(rootDir, 1, file), version),
+      base: withVersion(mergeBase, version),
       theirs: withVersion(theirs, version),
     };
     const paths = Object.entries(inputs).map(([name, source]) => {

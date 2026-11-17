@@ -63,6 +63,7 @@ function changedFiles(
   rootDir: string,
   mergeBase: string,
   packageDir: string,
+  head: string,
 ): string[] {
   return git(rootDir, [
     "diff",
@@ -70,7 +71,7 @@ function changedFiles(
     "--no-renames",
     "-z",
     mergeBase,
-    "HEAD",
+    head,
     "--",
     packageDir,
   ])
@@ -87,9 +88,10 @@ function packageChanged(
   mergeBase: string,
   packageDir: string,
   headManifest: string,
+  head: string,
 ): boolean {
   const manifest = manifestPath(packageDir);
-  const changed = changedFiles(rootDir, mergeBase, packageDir);
+  const changed = changedFiles(rootDir, mergeBase, packageDir, head);
   if (changed.some((file) => file !== manifest)) {
     return true;
   }
@@ -125,44 +127,46 @@ function bundledPackageChanged(
   rootDir: string,
   mergeBase: string,
   packageDir: string,
+  head: string,
 ): boolean {
   const manifest = manifestPath(packageDir);
-  const changed = changedFiles(rootDir, mergeBase, packageDir);
+  const changed = changedFiles(rootDir, mergeBase, packageDir, head);
   if (changed.some((file) => file !== manifest)) return true;
   if (!changed.includes(manifest)) return false;
   return (
     withoutVersion(showFile(rootDir, mergeBase, manifest)) !==
-    withoutVersion(showFile(rootDir, "HEAD", manifest))
+    withoutVersion(showFile(rootDir, head, manifest))
   );
 }
 
 /**
- * The version each package should carry at HEAD to merge onto `baseCommit`:
- * one patch past the base when the branch changes the package or a package it
- * bundles, the base's own version when it does not, and a deliberate major or
- * minor bump left alone.
+ * The version each package should carry at `head` (HEAD by default) to merge
+ * onto `baseCommit`: one patch past the base when the branch changes the
+ * package or a package it bundles, the base's own version when it does not,
+ * and a deliberate major or minor bump left alone.
  */
 export function planVersions(
   rootDir: string,
   baseOid: string | undefined,
+  head = "HEAD",
 ): VersionPlan[] {
   const baseCommit = resolveBaseCommit(rootDir, baseOid);
-  const mergeBase = git(rootDir, ["merge-base", baseCommit, "HEAD"]).trim();
-  const bundles = bundledPackages(rootDir);
+  const mergeBase = git(rootDir, ["merge-base", baseCommit, head]).trim();
+  const bundles = bundledPackages(rootDir, head);
   const bundledChanges = new Map<string, boolean>();
   const bundledChanged = (packageDir: string): boolean => {
     let result = bundledChanges.get(packageDir);
     if (result === undefined) {
-      result = bundledPackageChanged(rootDir, mergeBase, packageDir);
+      result = bundledPackageChanged(rootDir, mergeBase, packageDir, head);
       bundledChanges.set(packageDir, result);
     }
     return result;
   };
   const plans: VersionPlan[] = [];
-  for (const packageDir of workspacePackages(rootDir)) {
+  for (const packageDir of workspacePackages(rootDir, head)) {
     const manifest = manifestPath(packageDir);
     const baseManifest = showFile(rootDir, baseCommit, manifest);
-    const headManifest = showFile(rootDir, "HEAD", manifest);
+    const headManifest = showFile(rootDir, head, manifest);
     if (headManifest === null) {
       continue;
     }
@@ -177,7 +181,7 @@ export function planVersions(
     if (isReleaseBump(headVersion, baseVersion)) {
       targetVersion = headVersion;
     } else if (
-      packageChanged(rootDir, mergeBase, packageDir, headManifest) ||
+      packageChanged(rootDir, mergeBase, packageDir, headManifest, head) ||
       (bundles.get(packageDir) ?? []).some(bundledChanged)
     ) {
       targetVersion = bumpPatch(baseVersion);

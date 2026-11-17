@@ -75,7 +75,7 @@ test("starts, lists and stops a recorded process group, including its children",
   expect(members.filter(alive)).toEqual([]);
   expect(records(root)).toEqual([]);
   expect(agentTool(root, "proc", "stop", "deadbeef").status).toBe(1);
-});
+}, 30_000);
 
 test("stop reaches a descendant that left the group, ignores SIGTERM and outlived its parent", async () => {
   const root = repository();
@@ -218,7 +218,7 @@ test("a command that cannot start is reported at once and not recorded", () => {
   const killed = agentTool(root, "proc", "start", "--", "sh", "-c", "kill -TERM $$");
   expect(killed.status).toBe(143);
   expect(killed.json).toMatchObject({ exited: null, signal: "SIGTERM" });
-});
+}, 20_000);
 
 test("teardown fails on recorded leftovers and untracked listeners, and --apply stops only what it recorded", async () => {
   const root = repository();
@@ -269,7 +269,7 @@ test("a record whose pid now names another process is dropped without signalling
   expect(result.json.stopped).toEqual([]);
   expect(alive(victim.pid!)).toBe(true);
   expect(records(root)).toEqual([]);
-});
+}, 20_000);
 
 test("a leaderless group counts only members it can prove are its own", async () => {
   const root = repository();
@@ -333,7 +333,7 @@ test("a process that cannot be recorded is stopped", async () => {
   expect(result.stderr).toContain("Could not record the process");
   await sleep(300);
   if (existsSync(marker)) expect(alive(Number(require("node:fs").readFileSync(marker, "utf8")))).toBe(false);
-});
+}, 20_000);
 
 test("teardown lists added worktrees", () => {
   const root = repository();

@@ -197,8 +197,8 @@ follow-up commit on the same branch.
 - `steps` take run-group's step shape: a unique `label` of 1–120 characters
   and a nonempty `command` argv, run without a shell from the repository root.
   `allowSlow` is an optional, nonempty reason that lets `push-gate check`
-  accept a step that runs tests or installs dependencies, so each exception is
-  visible in review. Absent `steps` means none.
+  accept a step that runs tests, builds, or installs dependencies, so each
+  exception is visible in review. Absent `steps` means none.
 - `budgetSeconds` is a positive integer, default 120.
 - Without a `pushGate` section the repository declares no gate.
 
@@ -320,8 +320,9 @@ stderr as `push-gate:` lines.
   or the section exists but the hook is not tracked;
 - the tracked hook is not byte-identical to `push-gate hook`'s output;
 - `hooks.files` does not install it as an executable `pre-push`;
-- a step resolves to a test run or a dependency install and has no
-  `allowSlow`, or names a run-group plan that cannot be read.
+- a step resolves to a test run, a build, or a dependency install and has no
+  `allowSlow`, or names a run-group plan or turbo configuration that cannot be
+  read.
 
 A repository with neither a section nor a tracked hook passes with a note that
 it has no gate. Steps are resolved through `bun run`, `npm run`, `pnpm run`,
@@ -339,7 +340,27 @@ Test runs are `bun test`, `jest`, `vitest`, `mocha`, `ava`, `playwright
 test`, `maestro`, `detox`, `node --test`, `pytest`, `python -m pytest`,
 `rspec`, `go test`, `cargo test`, `deno test`, `swift test`, `xcodebuild
 test`, Gradle `test` tasks, and `turbo` or `turbo run` with a task named
-`test*`. Installs are `bun install|add|update|remove`, `npm
+`test*`. Builds are bundlers and framework builds (`vite build`, `bun build`,
+`next build`, `astro build`, `webpack` other than `serve`, `info`, or
+`configtest`, `rollup`, `tsup`, `esbuild` with `--bundle`, `--outfile`, or
+`--outdir`, `electrobun build`, and `expo export` or `expo run:<platform>`);
+`turbo` or `turbo run` with a task named `build*`; native builds (`cargo
+build|run`, `swift build`, `go build`, `xcodebuild` without `-list`,
+`-showBuildSettings`, or another listing option and with an action other
+than `clean`, and Gradle `assemble*`, `build`, `bundle*`, or `install*`
+tasks); and image builds (`docker build`, `docker image|builder|compose
+build`, `docker buildx build|bake`, and `docker-compose build`). Static checks
+are not builds: `tsc` (with `--noEmit` or `-b`), `cargo check|clippy|fmt`,
+`swift-format`, `swiftlint`, `ktlint`, `detekt`, linters, formatters, `knip`,
+and dependency-cruiser. A turbo task also counts as a test run or build when it
+depends, through `dependsOn` in the root `turbo.json` (or `turbo.jsonc`, or
+turbo 1's `pipeline`) or a workspace package's own, on a task named `test*` or
+`build*`, unless the command passes `--only`; the chain then ends with the
+`dependsOn` entries that led there. The package scripts turbo runs are not
+followed. A command that both builds and tests, such as `cargo test`, is
+reported once, as a test run. Option values are never read as subcommands or
+tasks, so `gradlew -x test lint` runs no tests and `cargo --config build.x
+check` builds nothing. Installs are `bun install|add|update|remove`, `npm
 install|ci|update`, `pnpm install|add|update`, `yarn` alone or `yarn
 install|add|up`, `agent-tool bun install`, and `pod`, `bundle`, or `pip
 install`. Executables and script files are leaves: their contents are not
@@ -362,8 +383,10 @@ inspected. The report is:
 }
 ```
 
-`canonical` is null when no hook is tracked. Findings of a step with
-`allowSlow` are still listed, with that step's `ok` true.
+`canonical` is null when no hook is tracked. Each finding's `kind` is `test`,
+`build`, or `install`, `runner` is the command that does it, and `chain` is
+how the step reached it. Findings of a step with `allowSlow` are still listed,
+with that step's `ok` true.
 
 ## PR context, CI, and feedback
 
@@ -713,8 +736,12 @@ report containing the per-step receipts. Failure
 stops subsequent steps, and source changes invalidate a zero-exit command.
 Reports are atomically updated under the common Git directory's
 `agent-tool/runs/`, persist across branch cleanup, and are not committed.
-Ignored dependencies/build outputs are excluded from source fingerprints. Dirty
-submodules are refused because a parent Git diff cannot fingerprint their contents.
+Ignored dependencies/build outputs are excluded from source fingerprints. An
+untracked nested Git repository, which Git lists as one `dir/` entry, is
+fingerprinted the same way from its own root: its HEAD commit (or `unborn`),
+its changes against HEAD, its staged changes, and its own nonignored untracked
+files, so a commit or edit inside it changes the fingerprint. Dirty submodules
+are refused because a parent Git diff cannot fingerprint their contents.
 Applications must retain richer artifact/test-plan completeness checks; a
 process exit alone does not establish that every expected task ran. Reports
 and private logs have no automatic pruning; remove inspected local artifacts

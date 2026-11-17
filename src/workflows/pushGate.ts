@@ -259,7 +259,9 @@ export interface PushGateCheck {
   notes: string[];
 }
 
-/** Read-only: the tracked hook is the canonical body, hooks.files installs it, and no step runs tests or installs unless it says why. */
+const FINDING_TEXT: Record<StepFinding["kind"], string> = { test: "a test run", build: "a build", install: "a dependency install" };
+
+/** Read-only: the tracked hook is the canonical body, hooks.files installs it, and no step runs tests, builds, or installs unless it says why. */
 export function checkPushGate(root: string, config: AgentToolConfig): PushGateCheck {
   const errors: string[] = [], notes: string[] = [];
   const tracked = spawnSync("git", ["ls-files", "--error-unmatch", "--", PRE_PUSH_SOURCE], { cwd: root, stdio: "ignore", env: gitEnvironment() }).status === 0;
@@ -278,7 +280,7 @@ export function checkPushGate(root: string, config: AgentToolConfig): PushGateCh
   const steps = (gate?.steps ?? []).map(step => {
     const { findings, errors: stepErrors } = resolveStep(root, step.command);
     const ok = !stepErrors.length && (!findings.length || !!step.allowSlow);
-    for (const finding of step.allowSlow ? [] : findings) errors.push(`Step '${step.label}' runs ${finding.kind === "test" ? "a test run" : "a dependency install"} (${finding.runner}): ${finding.chain.join(" -> ")}. Move it to CI, or give the step an allowSlow reason.`);
+    for (const finding of step.allowSlow ? [] : findings) errors.push(`Step '${step.label}' runs ${FINDING_TEXT[finding.kind]} (${finding.runner}): ${finding.chain.join(" -> ")}. Move it to CI, or give the step an allowSlow reason.`);
     for (const error of stepErrors) errors.push(`Step '${step.label}': ${error}`);
     return { label: step.label, command: step.command, allowSlow: step.allowSlow ?? null, ok, findings, errors: stepErrors };
   });

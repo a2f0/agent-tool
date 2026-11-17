@@ -132,6 +132,48 @@ for (const [phase, gitCalls, steps] of [["after a step", 2, ["passed", "pending"
   }, 30_000);
 }
 
+test("an untracked nested repository is fingerprinted from its own HEAD, changes, and untracked files", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "group-nested-"));
+  try {
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", AGENT_TOOL_CONFIG: "" };
+    const git = (cwd: string, args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", ...args], { cwd, env, encoding: "utf8" }).trim();
+    git(root, ["init", "-q", "-b", "main"]); writeFileSync(path.join(root, "tracked"), "x\n"); git(root, ["add", "."]); git(root, ["commit", "-qm", "chore: initialize"]);
+    const suite = path.join(root, "suite"); mkdirSync(suite);
+    git(suite, ["init", "-q", "-b", "main"]); writeFileSync(path.join(suite, "case.txt"), "one\n"); git(suite, ["add", "."]); git(suite, ["commit", "-qm", "chore: suite"]);
+    expect(git(root, ["ls-files", "--others", "--exclude-standard"])).toBe("suite/");
+    const source = `import { sourceState } from ${JSON.stringify(path.join(import.meta.dir, "group.ts"))};
+try { console.log(JSON.stringify(sourceState())); } catch (error) { console.log(JSON.stringify({ error: error.message })); }`;
+    const state = () => JSON.parse(spawnSync(process.execPath, ["-e", source], { cwd: root, env, encoding: "utf8", timeout: 15000 }).stdout) as { fingerprint?: string; error?: string };
+    const first = state();
+    expect(first.error).toBeUndefined();
+    expect(state().fingerprint).toBe(first.fingerprint!);
+    const seen = new Set([first.fingerprint]);
+    const changes: [string, () => void][] = [
+      ["an edit", () => writeFileSync(path.join(suite, "case.txt"), "two\n")],
+      ["a second edit to the same file", () => writeFileSync(path.join(suite, "case.txt"), "three\n")],
+      ["a staged edit", () => git(suite, ["add", "case.txt"])],
+      ["an untracked file", () => writeFileSync(path.join(suite, "new.txt"), "new\n")],
+      ["a commit", () => git(suite, ["commit", "-qam", "chore: more"])],
+      ["a repository without commits", () => { const empty = path.join(suite, "empty"); mkdirSync(empty); git(empty, ["init", "-q"]); writeFileSync(path.join(empty, "draft.txt"), "draft\n"); }],
+      ["an edit inside it", () => writeFileSync(path.join(suite, "empty", "draft.txt"), "edited\n")],
+    ];
+    for (const [label, change] of changes) {
+      change();
+      const { fingerprint, error } = state();
+      expect({ label, error, changed: !seen.has(fingerprint) }).toEqual({ label, error: undefined, changed: true });
+      seen.add(fingerprint);
+    }
+    // A run-group step that changes the nested repository invalidates the group.
+    const plan = path.join(root, ".git", "plan.json");
+    writeFileSync(plan, JSON.stringify({ label: "verify", steps: [{ label: "touch", command: ["sh", "-c", "echo later >> suite/case.txt"] }] }));
+    const result = spawnSync(process.execPath, [path.resolve(import.meta.dir, "../index.ts"), "run-group", plan], { cwd: root, env, encoding: "utf8", timeout: 15000 });
+    expect(result.status).toBe(1);
+    const record = JSON.parse(result.stdout);
+    expect(record.error).toBe("Source state changed during validation; results do not establish the current checkout.");
+    for (const step of record.steps) if (step.receipt) rmSync(path.dirname(step.receipt.log), { recursive: true, force: true });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}, 60_000);
+
 test("a report that cannot be saved removes the group's signal listeners", () => {
   const root = mkdtempSync(path.join(tmpdir(), "group-tests-"));
   try {

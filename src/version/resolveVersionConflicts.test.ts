@@ -45,7 +45,7 @@ describe("resolveVersionConflicts", () => {
     expect(read(rootDir, FRONTEND)).toBe(
       manifest("frontend", "0.7.104", '\n  "license": "MIT",'),
     );
-  });
+  }, 20_000);
 
   test("keeps the branch's deliberate minor release", () => {
     const rootDir = repository();
@@ -63,7 +63,7 @@ describe("resolveVersionConflicts", () => {
     );
     git(rootDir, ["commit", "-q", "--no-edit"]);
     expect(checkVersions(rootDir, mainOid(rootDir))).toBe(0);
-  });
+  }, 20_000);
 
   test("touches nothing when another file conflicts", () => {
     const rootDir = repository();
@@ -82,7 +82,7 @@ describe("resolveVersionConflicts", () => {
     expect(git(rootDir, ["diff", "--name-only", "--diff-filter=U"])).toContain(
       FRONTEND,
     );
-  });
+  }, 20_000);
 
   test("refuses a manifest that conflicts beyond its version", () => {
     const rootDir = repository();
@@ -98,9 +98,9 @@ describe("resolveVersionConflicts", () => {
     expect(mergeMain(rootDir)).not.toBe(0);
 
     expect(resolveVersionConflicts(rootDir)).toBe(1);
-  });
+  }, 20_000);
 
   test("requires a merge in progress", () => {
     expect(resolveVersionConflicts(repository())).toBe(1);
-  });
+  }, 20_000);
 });

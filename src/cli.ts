@@ -8,6 +8,7 @@ import { checkGraph } from "./graph/check";
 import { stateMachinesCommand } from "./stateMachines/command";
 import { buildScreenshots, describeScreenshots } from "./screenshots/build";
 import { review } from "./harnesses";
+import { carryReviewCommand } from "./review/carry";
 import { runAgentToolAction } from "./runAgentToolAction";
 import { BUNDLED_SKILLS } from "./skills/bundled";
 import { checkSkills, installSkills } from "./skills/install";
@@ -48,7 +49,7 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   commits check --message-file <file>    Commit-msg attribution and subject policy
   checks binaries [--staged|--all|--range range|--from-upstream]
   hooks install [--apply] [--adopt] | check
-  push-gate hook | check                 Canonical pre-push body; static check of the declared gate
+  push-gate hook | check                 Canonical pre-push body; static check: no tests, builds, or installs
   push-gate run --pre-push <remote> <url>  Built-in guards, then pushGate steps (the pre-push body)
   repo context [--fetch] | cleanup <PR> <shipped-head> [--apply] [--keep-branch]
   repo base-health [--branch name] [--limit N]  CI health of the default branch's tip (GitHub only)
@@ -58,6 +59,7 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   release verify <package> <version> <merge-oid> --workflow name [--timeout seconds]
   logs <file> [--max-bytes N] [--tail-lines N]  Bounded local log tail
   review <claude|codex|opencode> [effort] [--base <local-ref>]
+  review carry <reviewed-head> <new-head> [--base <ref>]  Whether a clean review covers a base-merge and versions-only head
   pr open [title] [--body-file file]    Body from the file or stdin; branch already pushed
   pr merge <subject-or-empty> <head-oid> <base-branch>
   pr context | checks [--wait] [--head oid] [--allow-behind] [--timeout seconds]
@@ -237,6 +239,7 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
   if (command === "run-group") return runGroup(args);
   if (command === "runs") return listRuns(args);
   if (command === "checks") { usage(args.shift() === "binaries", "Usage: checks binaries [--staged|--all|--range range|--from-upstream]"); return binariesCommand(args); }
+  if (command === "review" && args[0] === "carry") return carryReviewCommand(root, args.slice(1));
   if (command === "review") {
     const name = args.shift(); usage(!!name, "Usage: agent-tool review <claude|codex|opencode> [effort] [--base ref]");
     let effort: string | undefined, base: string | undefined;

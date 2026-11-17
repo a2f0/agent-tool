@@ -49,7 +49,7 @@ describe("bumpVersions", () => {
     );
     expect(read(root, FRONTEND)).toBe(manifest("frontend", "0.7.101"));
     expect(read(root, BACKEND)).toBe(manifest("backend", "0.2.0"));
-  });
+  }, 20_000);
 
   test("root-only tooling changes do not bump unrelated packages", () => {
     const root = repository();
@@ -58,7 +58,7 @@ describe("bumpVersions", () => {
     expect(checkVersions(root, mainOid(root))).toBe(0);
     expect(bumpVersions(root, mainOid(root))).toBe(0);
     expect(stdout).toEqual([]);
-  });
+  }, 20_000);
 
   test("new packages keep their initial versions", () => {
     const root = repository();
@@ -67,7 +67,7 @@ describe("bumpVersions", () => {
     expect(checkVersions(root, mainOid(root))).toBe(0);
     expect(bumpVersions(root, mainOid(root))).toBe(0);
     expect(stdout).toEqual([]);
-  });
+  }, 20_000);
 
   test("an unversioned workspace stops before any manifest is rewritten", () => {
     const root = repository();
@@ -87,7 +87,7 @@ describe("bumpVersions", () => {
     );
     expect(read(root, FRONTEND)).toBe(manifest("frontend", "0.7.101"));
     expect(stdout).toEqual([]);
-  });
+  }, 20_000);
 
   test("an existing workspace may initialize its previously absent version", () => {
     const root = repository();
@@ -101,7 +101,7 @@ describe("bumpVersions", () => {
     commitAll(root, "chore: initialize version");
     expect(checkVersions(root, base)).toBe(0);
     expect(bumpVersions(root, base)).toBe(0);
-  });
+  }, 20_000);
 
   test("patch-bumps only the packages the branch changes", () => {
     const rootDir = repository();
@@ -117,7 +117,7 @@ describe("bumpVersions", () => {
     expect(read(rootDir, BACKEND)).toBe(manifest("backend", "0.2.0"));
     commitAll(rootDir, "chore: bump package versions");
     expect(checkVersions(rootDir, base)).toBe(0);
-  });
+  }, 20_000);
 
   test("is a no-op once the branch carries the bump", () => {
     const rootDir = repository();
@@ -127,7 +127,7 @@ describe("bumpVersions", () => {
 
     expect(bumpVersions(rootDir, mainOid(rootDir))).toBe(0);
     expect(stdout).toEqual([]);
-  });
+  }, 20_000);
 
   test("re-bumps past a base that took the same version first", () => {
     const rootDir = repository();
@@ -148,7 +148,7 @@ describe("bumpVersions", () => {
     });
     bumpVersions(rootDir, base);
     expect(read(rootDir, FRONTEND)).toBe(manifest("frontend", "0.7.103"));
-  });
+  }, 20_000);
 
   test("returns a version-only change to the base version", () => {
     const rootDir = repository();
@@ -157,7 +157,7 @@ describe("bumpVersions", () => {
 
     bumpVersions(rootDir, mainOid(rootDir));
     expect(read(rootDir, FRONTEND)).toBe(manifest("frontend", "0.7.101"));
-  });
+  }, 20_000);
 
   test("counts manifest edits beyond the version as a change", () => {
     const rootDir = repository();
@@ -172,7 +172,7 @@ describe("bumpVersions", () => {
     expect(read(rootDir, FRONTEND)).toBe(
       manifest("frontend", "0.7.102", '\n  "license": "MIT",'),
     );
-  });
+  }, 20_000);
 
   test("keeps a deliberate minor release", () => {
     const rootDir = repository();
@@ -181,7 +181,7 @@ describe("bumpVersions", () => {
     commitAll(rootDir, "feat: release frontend 0.8");
 
     expect(checkVersions(rootDir, mainOid(rootDir))).toBe(0);
-  });
+  }, 20_000);
 
   test("refuses to overwrite uncommitted manifest edits", () => {
     const rootDir = repository();
@@ -192,7 +192,7 @@ describe("bumpVersions", () => {
     expect(() => bumpVersions(rootDir, mainOid(rootDir))).toThrow(
       "uncommitted changes",
     );
-  });
+  }, 20_000);
 
   test("refuses to drop staged manifest edits", () => {
     const rootDir = repository();
@@ -205,10 +205,10 @@ describe("bumpVersions", () => {
     expect(() => bumpVersions(rootDir, mainOid(rootDir))).toThrow(
       "uncommitted changes",
     );
-  });
+  }, 20_000);
 
   test("requires a full base OID", () => {
     const rootDir = repository();
     expect(() => bumpVersions(rootDir, "main")).toThrow("full Git OID");
-  });
+  }, 20_000);
 });

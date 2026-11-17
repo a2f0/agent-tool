@@ -51,7 +51,7 @@ describe("prepareVersions CLI", () => {
     expect(read(rootDir, BACKEND)).toBe(manifest("backend", "0.2.0"));
     expect(git(rootDir, ["status", "--porcelain"])).toBe("");
     expect(fixture.check(base).code).toBe(0);
-  });
+  }, 30_000);
 
   test("a repeat preserves the reviewed commit without another bump", () => {
     const fixture = versionPreparationFixture();
@@ -70,7 +70,7 @@ describe("prepareVersions CLI", () => {
       versions: [],
     });
     expect(fixture.lockVersion("packages/windowing")).toBe("0.7.102");
-  });
+  }, 30_000);
 
   test("recomputes past a competing base bump after integrating main", () => {
     const fixture = versionPreparationFixture();
@@ -91,7 +91,7 @@ describe("prepareVersions CLI", () => {
     ]);
     expect(fixture.lockVersion("packages/windowing")).toBe("0.7.103");
     expect(fixture.check(base).code).toBe(0);
-  });
+  }, 30_000);
 
   test("prepares a version-only conflict after the merge helper resolves it", () => {
     const fixture = versionPreparationFixture();
@@ -109,7 +109,7 @@ describe("prepareVersions CLI", () => {
     expect(fixture.prepare(base).code).toBe(0);
     expect(fixture.lockVersion("packages/windowing")).toBe("0.7.104");
     expect(fixture.check(base).code).toBe(0);
-  });
+  }, 30_000);
 
   test("refreshes a stale lockfile for a deliberate release and a new package", () => {
     const fixture = versionPreparationFixture();
@@ -128,7 +128,7 @@ describe("prepareVersions CLI", () => {
     expect(fixture.lockVersion("packages/windowing")).toBe("0.8.0");
     expect(fixture.lockVersion("packages/new")).toBe("1.2.3");
     expect(fixture.lintPaths()).toEqual(["bun.lock"]);
-  });
+  }, 30_000);
 
   test("refuses to resolve a third-party package added by hand", () => {
     const fixture = versionPreparationFixture();
@@ -140,7 +140,7 @@ describe("prepareVersions CLI", () => {
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("bun.lock does not record packages/new: left-pad@1.3.0");
     expect(git(rootDir, ["rev-parse", "HEAD"])).toBe(head);
-  });
+  }, 30_000);
 
   test("refuses a re-sourced, peer, or catalog declaration the lockfile does not record", () => {
     const fixture = versionPreparationFixture();
@@ -159,7 +159,7 @@ describe("prepareVersions CLI", () => {
     expect(result.stderr).toContain("catalog: left-pad@1.3.0");
     expect(result.stderr).toContain('overrides: nested@1.0.0@{"child":"2.0.0"}');
     expect(result.stderr).toMatch(/packages\/windowing: react@\^19\.0\.0/);
-  });
+  }, 30_000);
 
   for (const committed of [false, true]) test(`refuses a ${committed ? "committed" : "prepared"} bump that would send a version-pinned workspace reference to the registry`, () => {
     const fixture = versionPreparationFixture();
@@ -180,7 +180,7 @@ describe("prepareVersions CLI", () => {
     expect(result.code).toBe(1);
     expect(result.stderr).toContain(`The version bump leaves .: ${frontend.name}@${frontend.version} unsatisfied by the workspace`);
     expect(git(rootDir, ["rev-parse", "HEAD"])).toBe(head);
-  });
+  }, 30_000);
 
   test("root-only changes produce no version commit", () => {
     const fixture = versionPreparationFixture();
@@ -194,7 +194,7 @@ describe("prepareVersions CLI", () => {
       versions: [],
     });
     expect(fixture.lintPaths()).toEqual([]);
-  });
+  }, 30_000);
 
   test("lockfile refresh disables install lifecycle scripts", () => {
     const fixture = versionPreparationFixture();
@@ -213,7 +213,7 @@ describe("prepareVersions CLI", () => {
     expect(result.code).toBe(0);
     expect(read(rootDir, "README.md")).toBe("demo\n");
     expect(git(rootDir, ["status", "--porcelain"])).toBe("");
-  });
+  }, 30_000);
 
   test("a null lockfile policy commits only manifests and never runs Bun", () => {
     const fixture = versionPreparationFixture();
@@ -237,7 +237,7 @@ describe("prepareVersions CLI", () => {
     } finally {
       rmSync(tools, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   test("rejects a commit message outside the subject policy before changing anything", () => {
     const fixture = versionPreparationFixture();
@@ -250,7 +250,7 @@ describe("prepareVersions CLI", () => {
     expect(result.stderr).toContain("conventional type");
     expect(git(rootDir, ["rev-parse", "HEAD"])).toBe(head);
     expect(git(rootDir, ["status", "--porcelain"])).toBe("");
-  });
+  }, 30_000);
 
   test("versions the root package, which bun.lock records without a version", () => {
     const fixture = versionPreparationFixture();
@@ -281,5 +281,5 @@ describe("prepareVersions CLI", () => {
     expect(read(rootDir, FRONTEND)).toBe(manifest("frontend", "0.7.101"));
     expect(git(rootDir, ["status", "--porcelain"])).toBe("");
     expect(fixture.check(base).code).toBe(0);
-  });
+  }, 30_000);
 });

@@ -155,6 +155,77 @@ test("known test runners and installs are reported wherever they appear", () => 
   }
 });
 
+test("bundlers, framework, native, and image builds are reported, and static checks are not", () => {
+  const root = project({ "package.json": { scripts: { build: "vite build", check: "tsc --noEmit && bun run build" } } });
+  const builds = [
+    ["vite", "build"], ["bunx", "--bun", "vite", "build", "--mode", "production"], ["vite", "--mode", "staging", "build"], ["bun", "build", "src/index.ts", "--outdir", "dist"], ["bun", "--cwd", "packages/api", "build", "--compile", "src/index.ts"],
+    ["next", "build"], ["astro", "build"], ["astro", "--root", "site", "build"], ["webpack"], ["webpack", "--config", "webpack.prod.js"], ["webpack", "build", "--mode", "production"], ["webpack-cli", "bundle"],
+    ["rollup", "-c"], ["tsup"], ["npx", "tsup", "src/index.ts", "--dts"], ["esbuild", "src/app.ts", "--bundle"], ["esbuild", "src/app.ts", "--outfile=dist/app.js"], ["esbuild", "src/a.ts", "--outdir", "dist"],
+    ["electrobun", "build", "--env=stable"], ["expo", "export", "--platform", "web"], ["npx", "expo", "export:embed"], ["expo", "run:ios"],
+    ["turbo", "run", "build"], ["turbo", "build"], ["turbo", "run", "web#build"], ["bunx", "turbo", "run", "lint", "build:web", "--filter", "web"],
+    ["cargo", "build", "--profile", "release"], ["cargo", "b"], ["cargo", "run", "-p", "xtask", "--", "lint"], ["cargo", "+nightly", "-Z", "unstable-options", "build"], ["cargo", "r", "--release"],
+    ["swift", "build", "-c", "release"], ["swift", "--package-path", "Tools", "build"], ["go", "build", "./..."], ["go", "-C", "api", "build", "-o", "bin/api"],
+    ["xcodebuild", "-scheme", "App", "build"], ["xcodebuild", "-scheme", "App", "-destination", "generic/platform=iOS"], ["xcodebuild", "-workspace", "App.xcworkspace", "-scheme", "App", "archive"], ["xcodebuild", "build-for-testing", "-scheme", "App"], ["xcodebuild", "clean", "build", "CODE_SIGNING_ALLOWED=NO"],
+    ["./gradlew", "assembleDebug"], ["gradlew", ":app:bundleRelease"], ["gradle", "build"], ["./gradlew", "installDebug"], ["./gradlew", "-p", "android", "app:assembleRelease"], ["./gradlew", "-x", "lint", "buildNeeded"],
+    ["docker", "build", "-t", "app", "."], ["docker", "buildx", "build", "--platform", "linux/amd64", "."], ["docker", "--context", "remote", "buildx", "--builder", "ci", "build", "."], ["docker", "image", "build", "."], ["docker", "builder", "build", "."], ["docker", "buildx", "bake"], ["docker", "compose", "-f", "compose.yml", "build"], ["docker-compose", "build", "api"],
+    ["sh", "-c", "cd android && ./gradlew assembleRelease"], ["bun", "run", "build"],
+  ];
+  for (const command of builds) expect({ command, kinds: resolveStep(root, command).findings.map(finding => finding.kind) }).toEqual({ command, kinds: ["build"] });
+  expect(resolveStep(root, ["bun", "run", "check"]).findings).toEqual([{ kind: "build", runner: "vite build", chain: ["bun run check", "package.json scripts.check: tsc --noEmit && bun run build", "package.json scripts.build: vite build", "vite build"] }]);
+  // A command that builds in order to test is reported once, as a test.
+  for (const command of [["cargo", "test"], ["xcodebuild", "-scheme", "App", "build", "test"], ["./gradlew", "assembleDebug", "testDebugUnitTest"], ["turbo", "run", "build", "test"]]) {
+    expect({ command, kinds: resolveStep(root, command).findings.map(finding => finding.kind) }).toEqual({ command, kinds: ["test"] });
+  }
+  const checks = [
+    ["tsc", "--noEmit"], ["tsc", "-b"], ["tsc", "--build", "tsconfig.tools.json"], ["bunx", "tsc", "--noEmit", "-p", "tsconfig.build.json"],
+    ["cargo", "check"], ["cargo", "clippy", "--", "-D", "warnings"], ["cargo", "fmt", "--check"], ["cargo", "--config", "build.rustflags=[]", "check"],
+    ["swift-format", "lint", "-r", "Sources"], ["swiftlint", "lint", "--strict"], ["swift", "package", "describe"], ["ktlint"], ["detekt"], ["./gradlew", "ktlintCheck", "detekt", "lint"], ["./gradlew", "-x", "build", "lint"], ["./gradlew", "-p", "build", "ktlintCheck"], ["./gradlew", "buildEnvironment"],
+    ["biome", "check", "."], ["eslint", "."], ["prettier", "--check", "."], ["knip", "--production"], ["depcruise", "src"], ["go", "vet", "./..."], ["go", "-C", "build", "vet"], ["npm", "--prefix", "build", "run", "lint"],
+    ["vite"], ["vite", "preview"], ["vite", "--config", "build.config.ts"], ["next", "lint"], ["astro", "check"], ["expo", "lint"], ["webpack", "serve"], ["webpack", "--config", "build/webpack.js", "configtest"], ["esbuild", "src/app.ts"],
+    ["xcodebuild", "-list"], ["xcodebuild", "-showBuildSettings", "-scheme", "App"], ["xcodebuild", "-scheme", "build", "-showBuildSettings"], ["xcodebuild", "clean"], ["xcodebuild", "-resolvePackageDependencies"],
+    ["docker", "compose", "up"], ["docker", "--config", "build", "ps"], ["docker", "run", "--rm", "app", "build"], ["docker", "buildx", "ls"],
+    ["turbo", "run", "lint", "--filter", "build-tools"], ["turbo", "prune", "build"], ["turbo", "run", "lint", "--", "build"],
+  ];
+  for (const command of checks) expect({ command, findings: resolveStep(root, command).findings }).toEqual({ command, findings: [] });
+  // Option values are skipped for test runners too: a scheme or an excluded task named test runs no tests.
+  for (const command of [["xcodebuild", "-scheme", "test", "-showBuildSettings"], ["./gradlew", "-x", "test", "lint"]]) expect({ command, findings: resolveStep(root, command).findings }).toEqual({ command, findings: [] });
+});
+
+test("turbo tasks are builds or test runs through what they depend on in turbo.json", () => {
+  const root = project({
+    "package.json": { workspaces: ["packages/*"], scripts: { types: "turbo run typecheck" } },
+    "turbo.json": `{
+      // turbo reads comments and trailing commas.
+      "tasks": {
+        "build": { "dependsOn": ["^build"] },
+        "check": { "dependsOn": ["^check"] },
+        "typecheck": { "dependsOn": ["^build"] },
+        "ci": { "dependsOn": ["lint", "codegen"] },
+        "codegen": { "dependsOn": ["$TURBO_EXTENDS$", "web#build"] },
+        "e2e": { "dependsOn": ["^build", "test:unit"] },
+        "lint": {},
+      },
+    }`,
+    "packages/web/package.json": { name: "web" },
+    "packages/web/turbo.json": { extends: ["//"], tasks: { lint: { dependsOn: ["^build"] } } },
+  });
+  const findings = (command: string[]) => resolveStep(root, command);
+  expect(findings(["turbo", "run", "check"])).toEqual({ findings: [], errors: [] });
+  expect(findings(["bun", "run", "types"]).findings).toEqual([{ kind: "build", runner: "turbo run typecheck", chain: ["bun run types", "package.json scripts.types: turbo run typecheck", "turbo run typecheck", "turbo.json tasks.typecheck.dependsOn: ^build"] }]);
+  // A package's own turbo.json counts as well.
+  expect(findings(["turbo", "run", "ci"]).findings).toEqual([{ kind: "build", runner: "turbo run ci", chain: ["turbo run ci", "turbo.json tasks.ci.dependsOn: lint", "packages/web/turbo.json tasks.lint.dependsOn: ^build"] }]);
+  expect(findings(["turbo", "codegen"]).findings.map(finding => finding.chain.at(-1))).toEqual(["turbo.json tasks.codegen.dependsOn: web#build"]);
+  // A test anywhere in the graph outranks a build.
+  expect(findings(["turbo", "run", "e2e"]).findings).toEqual([{ kind: "test", runner: "turbo run e2e", chain: ["turbo run e2e", "turbo.json tasks.e2e.dependsOn: test:unit"] }]);
+  // `--only` runs just the named tasks.
+  expect(findings(["turbo", "run", "typecheck", "--only"]).findings).toEqual([]);
+  // turbo 1 named the section `pipeline`.
+  const legacy = project({ "package.json": { scripts: {} }, "turbo.json": { pipeline: { lint: { dependsOn: ["build"] } } } });
+  expect(resolveStep(legacy, ["turbo", "run", "lint"]).findings.map(finding => finding.chain.at(-1))).toEqual(["turbo.json pipeline.lint.dependsOn: build"]);
+  const broken = project({ "package.json": { scripts: {} }, "turbo.json": "{ tasks: " });
+  expect(resolveStep(broken, ["turbo", "run", "lint"]).errors).toEqual([expect.stringContaining("Cannot read turbo.json")]);
+});
+
 test("a cd inside a subshell does not move the commands after it", () => {
   const root = project({ "package.json": { scripts: { test: "vitest run" } }, "packages/api/package.json": { scripts: { lint: "eslint .", test: "jest" } } });
   expect(resolveStep(root, ["sh", "-c", "(cd packages/api && bun run lint) && bun run test"]).findings.map(finding => finding.runner)).toEqual(["vitest run"]);
@@ -213,6 +284,11 @@ test("push-gate check requires the canonical tracked hook, its installation, and
   result = f.run(["push-gate", "check"]);
   expect(result.status).toBe(0);
   expect(JSON.parse(result.stdout).steps[0]).toMatchObject({ ok: true, allowSlow: "no CI job runs these yet", findings: [{ kind: "test", runner: "bun test" }] });
+  writeFileSync(path.join(f.root, "package.json"), JSON.stringify({ scripts: { build: "vite build" } }));
+  f.writeConfig({ hooks, pushGate: { steps: [{ label: "bundle", command: ["bun", "run", "build"] }] } });
+  result = f.run(["push-gate", "check"]);
+  expect(result.status).toBe(1);
+  expect(JSON.parse(result.stdout).errors).toEqual(["Step 'bundle' runs a build (vite build): bun run build -> package.json scripts.build: vite build -> vite build. Move it to CI, or give the step an allowSlow reason."]);
   f.git(["rm", "-q", "--cached", "scripts/git/hooks/pre-push"]);
   result = f.run(["push-gate", "check"]);
   expect(result.status).toBe(1); expect(JSON.parse(result.stdout).errors[0]).toContain("is not tracked");
