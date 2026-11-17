@@ -1,0 +1,297 @@
+import { afterEach, expect, test } from "bun:test";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { loopTransition, runningLoop, sessionProcesses, stuckLoops, type LoopFacts, type LoopState } from "./loops";
+import { analyzeScript, parseScript, shellScript, wordsInOrder, type WaitLoop } from "./shell";
+import type { ProcessRow } from "./table";
+
+const cli = path.resolve(import.meta.dir, "../index.ts");
+const temporary: string[] = [];
+const groups: number[] = [];
+const children: ChildProcess[] = [];
+
+function kill(pid: number, group: boolean) { try { process.kill(group ? -pid : pid, "SIGKILL"); } catch { /* Already gone. */ } }
+afterEach(() => {
+  for (const child of children.splice(0)) if (child.pid) kill(child.pid, true);
+  for (const pid of groups.splice(0)) kill(pid, true);
+  for (const file of temporary.splice(0)) rmSync(file, { recursive: true, force: true });
+});
+
+function directory(prefix: string): string {
+  const created = realpathSync(mkdtempSync(path.join(tmpdir(), prefix)));
+  temporary.push(created);
+  return created;
+}
+
+function repository(): string {
+  const root = directory("agent-tool-loops-test-");
+  for (const args of [["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]]) spawnSync("git", args, { cwd: root });
+  return root;
+}
+
+// Running, not a zombie.
+const alive = (pid: number) => { const stat = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim(); return stat !== "" && !stat.startsWith("Z"); };
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+async function until(condition: () => boolean, ms: number) {
+  for (const deadline = performance.now() + ms; !condition() && performance.now() < deadline;) await sleep(100);
+  return condition();
+}
+
+const loopOf = (script: string): WaitLoop => analyzeScript(script)!.loops[0]!;
+const row = (pid: number, ppid: number, command: string): ProcessRow => ({ pid, ppid, pgid: pid, uid: 501, started: "Tue Nov 17 10:00:00 2026", command });
+
+test("reads the script of a -c shell from its ps command line", () => {
+  expect(shellScript("/bin/zsh -c source snap.sh && eval 'until x; do sleep 1; done'")).toEqual({ shell: "zsh", script: "source snap.sh && eval 'until x; do sleep 1; done'" });
+  expect(shellScript("bash -lc until pgrep -f x; do sleep 1; done")).toEqual({ shell: "bash", script: "until pgrep -f x; do sleep 1; done" });
+  expect(shellScript("zsh -c -l echo hi")).toEqual({ shell: "zsh", script: "echo hi" });
+  expect(shellScript("bash --noprofile -o pipefail -c true")).toEqual({ shell: "bash", script: "true" });
+  for (const command of ["-zsh", "/bin/bash script.sh", "bash -l", "node -c x", "sleep 15"]) expect(shellScript(command)).toBeUndefined();
+});
+
+test("finds a wait loop inside a harness's eval wrapper and reads its condition", () => {
+  // Claude Code's form: a snapshot preamble, then the command quoted for eval.
+  const wrapped = `source /tmp/snapshot.sh 2>/dev/null || true && \\builtin setopt NO_EXTENDED_GLOB 2>/dev/null || true && { \\builtin unalias -- 'which'; } >/dev/null 2>&1 || true && eval 'until ! pgrep -f "release verify @a2f0/agent-tool 0.1.64" >/dev/null && ! pgrep -f "seq 1 20" >/dev/null; do sleep 15; done; tail -60 '"'"'/tmp/task output'"'"'' < /dev/null && pwd -P >| /tmp/claude-1-cwd`;
+  const analysis = analyzeScript(wrapped, "zsh")!;
+  expect(analysis.loops).toHaveLength(1);
+  const [loop] = analysis.loops;
+  expect(loop).toMatchObject({
+    keyword: "until",
+    script: `until ! pgrep -f "release verify @a2f0/agent-tool 0.1.64" >/dev/null && ! pgrep -f "seq 1 20" >/dev/null; do sleep 15; done; tail -60 '/tmp/task output'`,
+    pure: true,
+    commands: ["pgrep -f release verify @a2f0/agent-tool 0.1.64", "pgrep -f seq 1 20", "sleep 15"],
+  });
+  expect(loop!.condition).toEqual({
+    operators: ["&&"],
+    atoms: [
+      { negated: true, text: "pgrep -f release verify @a2f0/agent-tool 0.1.64", check: { kind: "pgrep", pattern: "release verify @a2f0/agent-tool 0.1.64" } },
+      { negated: true, text: "pgrep -f seq 1 20", check: { kind: "pgrep", pattern: "seq 1 20" } },
+    ],
+  });
+  expect(analysis.counts.get("sleep 15")).toBe(1);
+});
+
+test("judges only checks whose outcome can be read from the script", () => {
+  const checks = (condition: string) => loopOf(`until ${condition}; do sleep 5; done`).condition?.atoms.map(atom => atom.check.kind);
+  expect(checks(`! pgrep -f "[r]elease verify" >/dev/null 2>&1`)).toEqual(["pgrep"]);
+  expect(checks(`grep -q '^exit ' "" 2>/dev/null`)).toEqual(["missing-file"]);
+  expect(checks(`[ -s '' ]`)).toEqual(["missing-file"]);
+  expect(checks(`test -f ""`)).toEqual(["missing-file"]);
+  // A variable's value, a real file, another pgrep form, or a redirection into a file is not judged.
+  expect(checks(`grep -q '^exit ' "$f"`)).toEqual(["other"]);
+  expect(checks(`grep -q '^exit=' /tmp/review.txt`)).toEqual(["other"]);
+  expect(checks(`! pgrep -f "verify $version"`)).toEqual(["other"]);
+  expect(checks(`! pgrep -af verify`)).toEqual(["other"]);
+  expect(checks(`! pgrep -f verify >/tmp/out`)).toEqual(["other"]);
+  expect(checks(`! LC_ALL=C pgrep -f verify`)).toEqual(["other"]);
+  // A pipeline or a sequence in the condition is not read at all.
+  expect(checks(`pgrep -f x | grep -q .`)).toBeUndefined();
+  expect(checks(`true; ! pgrep -f x`)).toBeUndefined();
+  // Only a body that does nothing but sleep is pure.
+  expect(loopOf("while pgrep -f x; do sleep 1; done").pure).toBe(true);
+  expect(loopOf("while pgrep -f x; do date; sleep 1; done").pure).toBe(false);
+  expect(loopOf("while pgrep -f x; do sleep $n; done").pure).toBe(false);
+  // Loops without a sleep are not wait loops; for loops end on their own.
+  expect(analyzeScript("while read line; do echo $line; done")!.loops).toEqual([]);
+  expect(analyzeScript("for i in $(seq 1 20); do sleep 1; done")!.loops).toEqual([]);
+  // Grammar the reader does not follow leaves the script unknown.
+  expect(analyzeScript("cat <<EOF\nuntil x; do sleep 1; done\nEOF")).toBeUndefined();
+  expect(analyzeScript("case $x in a) sleep 1;; esac")).toBeUndefined();
+  expect(analyzeScript("until ! pgrep -f x &>/dev/null; do sleep 1; done", "sh")).toBeUndefined();
+  expect(analyzeScript("until ! pgrep -f x &>/dev/null; do sleep 1; done", "bash")!.loops).toHaveLength(1);
+  expect(parseScript("$(".repeat(100_000))).toBeUndefined();
+  // An unreadable script still shows a wait loop by its words, to be reported as waiting.
+  expect(wordsInOrder("cat <<EOF\nuntil x; do sleep 1; done\nEOF", ["until|while", "do", "sleep", "done"])).toBe(true);
+  expect(wordsInOrder("until x; do sleepy; done", ["until|while", "do", "sleep", "done"])).toBe(false);
+});
+
+test("proves which loop a shell is running from its children", () => {
+  const analysis = analyzeScript("until ! pgrep -f x >/dev/null; do sleep 5; done; echo done")!;
+  const child = (command: string) => row(99, 1, command);
+  expect(runningLoop(analysis, [child("sleep 5")])?.keyword).toBe("until");
+  expect(runningLoop(analysis, [child("pgrep -f x")])?.keyword).toBe("until");
+  expect(runningLoop(analysis, [])).toBeUndefined();
+  expect(runningLoop(analysis, [child("sleep 5"), child("tail -f log")])).toBeUndefined();
+  // The same command before the loop could be what runs now.
+  expect(runningLoop(analyzeScript("sleep 5; until ! pgrep -f x; do sleep 5; done")!, [child("sleep 5")])).toBeUndefined();
+  // Nested loops: the innermost one whose commands the children run.
+  const nested = analyzeScript("while pgrep -f a; do until [ -f '' ]; do sleep 1; done; sleep 2; done")!;
+  expect(runningLoop(nested, [child("sleep 1")])?.keyword).toBe("until");
+  expect(runningLoop(nested, [child("sleep 2")])?.keyword).toBe("while");
+});
+
+test("a loop is stuck only while its condition is settled by loops that cannot finish either", () => {
+  const facts = (ancestorsVisible: boolean | undefined, matches: Record<string, number[] | undefined>, lineage: Record<number, number[]> = {}): LoopFacts => ({
+    ancestorsVisible,
+    matches: new Map(Object.entries(matches).map(([pattern, pids]) => [pattern, pids && new Set(pids)])),
+    ancestors: new Map(Object.entries(lineage).map(([pid, above]) => [Number(pid), new Set([Number(pid), ...above])])),
+  });
+  const waits = (pattern: string) => loopOf(`until ! pgrep -f "${pattern}" >/dev/null; do sleep 15; done`);
+  // procps pgrep reports the loop's own shell, so a lone self-matching loop never ends.
+  expect(stuckLoops(new Map([[10, waits("p")]]), facts(true, { p: [10] }))).toEqual(new Map([[10, `pgrep -f "p" always finds this loop's own shell (10)`]]));
+  // macOS and BSD pgrep leave out the shell that runs it: alone it would finish, but two loops on
+  // one pattern each wait for the other.
+  expect(stuckLoops(new Map([[10, waits("p")]]), facts(false, { p: [10] }, { 10: [1] })).size).toBe(0);
+  const pair = stuckLoops(new Map([[10, waits("p")], [11, loopOf(`while pgrep -f "p"; do sleep 10; done`)]]), facts(false, { p: [10, 11] }, { 10: [1], 11: [1] }));
+  expect([...pair.keys()]).toEqual([10, 11]);
+  expect(pair.get(10)).toBe(`pgrep -f "p" always finds wait loop 11, which cannot finish either`);
+  // A pattern that also matches a process that will end is still settled by the loop itself on
+  // Linux, but not where pgrep cannot see it.
+  expect(stuckLoops(new Map([[10, waits("p")]]), facts(true, { p: [10, 500] })).size).toBe(1);
+  expect(stuckLoops(new Map([[10, waits("p")]]), facts(false, { p: [10, 500] }, { 10: [1] })).size).toBe(0);
+  // A pattern matching only other processes waits for them.
+  expect(stuckLoops(new Map([[10, waits("[p]")]]), facts(true, { "[p]": [500] })).size).toBe(0);
+  // A loop whose partner waits on a real process is not stuck: the partner can finish first.
+  const chain = new Map([[10, waits("a")], [11, waits("b")]]);
+  expect(stuckLoops(chain, facts(false, { a: [11], b: [500] }, { 10: [1], 11: [1] })).size).toBe(0);
+  // `&&` needs one settled side to keep `until` waiting; `||` needs both.
+  const both = (operator: string) => loopOf(`until ! pgrep -f a ${operator} ! pgrep -f b; do sleep 5; done`);
+  expect(stuckLoops(new Map([[10, both("&&")]]), facts(true, { a: [10], b: [] })).size).toBe(1);
+  expect(stuckLoops(new Map([[10, both("||")]]), facts(true, { a: [10], b: [] })).size).toBe(0);
+  // Without a working pgrep nothing is settled.
+  expect(stuckLoops(new Map([[10, waits("p")]]), facts(undefined, { p: [10] })).size).toBe(0);
+  expect(stuckLoops(new Map([[10, waits("p")]]), facts(true, { p: undefined })).size).toBe(0);
+  // A file with an empty name never appears.
+  expect(stuckLoops(new Map([[10, loopOf(`until grep -q x ""; do sleep 5; done`)], [11, loopOf(`while ! [ -f "" ]; do sleep 5; done`)]]), facts(true, {})).size).toBe(2);
+  expect(stuckLoops(new Map([[10, loopOf(`until grep -q x /tmp/f; do sleep 5; done`)]]), facts(true, {})).size).toBe(0);
+});
+
+test.each([
+  [{ status: "waiting" }, { type: "proved", reason: "r" }, { status: "stuck", reason: "r" }],
+  [{ status: "waiting" }, { type: "stopped" }, { status: "waiting" }],
+  [{ status: "stuck", reason: "r" }, { type: "stopped" }, { status: "stopped", reason: "r" }],
+  [{ status: "stuck", reason: "r" }, { type: "proved", reason: "s" }, { status: "stuck", reason: "r" }],
+  [{ status: "stopped", reason: "r" }, { type: "stopped" }, { status: "stopped", reason: "r" }],
+] as const)("loop %o + %o", (state, event, next) => {
+  expect(loopTransition(state as LoopState, event)).toEqual(next as LoopState);
+});
+
+test("the session is the harness's other children, found past package runners", () => {
+  const table = new Map([
+    row(1, 0, "launchd"),
+    row(10, 1, "-zsh"),
+    row(20, 10, "claude"),
+    row(30, 20, "/bin/zsh -c eval 'bun run teardown'"),
+    row(31, 30, "bun run teardown"),
+    row(32, 31, "sh -c bun src/cli.ts teardown"),
+    row(33, 32, "agent-tool teardown"),
+    row(40, 20, "/bin/zsh -c until ! pgrep -f x; do sleep 15; done"),
+    row(41, 40, "sleep 15"),
+    row(50, 20, "node mcp-server.js"),
+    row(60, 10, "/bin/zsh -c other terminal job"),
+  ].map(item => [item.pid, item]));
+  expect([...sessionProcesses(table, 33)].sort((a, b) => a - b)).toEqual([40, 41, 50]);
+  // From an interactive shell there is no harness.
+  expect(sessionProcesses(new Map([row(1, 0, "launchd"), row(10, 1, "-zsh"), row(11, 10, "agent-tool teardown"), row(12, 10, "sleep 9")].map(item => [item.pid, item])), 11).size).toBe(0);
+});
+
+// A stand-in agent harness: it starts each planned command as its own child, then runs each
+// teardown through a `sh -c` shell beside them, as an agent's command would.
+const HARNESS = `
+const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const plan = JSON.parse(fs.readFileSync(process.env.AGENT_TOOL_TEST_PLAN, "utf8"));
+const pids = {};
+for (const [name, argv] of Object.entries(plan.background)) pids[name] = spawn(argv[0], argv.slice(1), { cwd: plan.cwd, stdio: "ignore" }).pid;
+const run = args => new Promise(resolve => {
+  const child = spawn("sh", ["-c", '"$0" "$@"; exit $?', ...args], { cwd: plan.repository, stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "", stderr = "";
+  child.stdout.on("data", chunk => { stdout += chunk; });
+  child.stderr.on("data", chunk => { stderr += chunk; });
+  child.on("close", status => resolve({ status, stdout, stderr }));
+});
+setTimeout(async () => {
+  const results = [];
+  for (const args of plan.runs) results.push(await run(args));
+  fs.writeFileSync(plan.out, JSON.stringify({ pids, results }));
+}, plan.settleMs);
+setInterval(() => {}, 1000);
+`;
+
+interface LoopEntry { pid: number; state: string; seen: string; reason?: string; command: string; ageSeconds: number }
+
+test("teardown fails on the session's wait loops that cannot finish, --apply stops only those, and other loops and processes are left alone", async () => {
+  const root = repository(), elsewhere = directory("agent-tool-loops-session-"), id = `${process.pid}-${Date.now()}`;
+  const review = path.join(elsewhere, "review.txt");
+  // The reviewer's verdict and the exit marker ran together on one line.
+  writeFileSync(review, "VERDICT: CLEANexit=0\n");
+  const sh = (script: string) => ["sh", "-c", script];
+  const plan = {
+    cwd: elsewhere,
+    repository: root,
+    out: path.join(elsewhere, "out.json"),
+    // Long enough for every loop to have started and gone to sleep.
+    settleMs: 4000,
+    background: {
+      // Each matches the other, and on Linux itself; the leading sleep lets both start before either looks.
+      pairA: sh(`sleep 2; until ! pgrep -f "agent-tool-stuck-${id}" >/dev/null; do sleep 30; done`),
+      pairB: sh(`sleep 2; while pgrep -f "agent-tool-stuck-${id}" >/dev/null; do sleep 30; done`),
+      emptyName: sh(`until grep -q "^exit " "" 2>/dev/null; do sleep 30; done`),
+      other: [process.execPath, "-e", "setInterval(() => {}, 1000)", `agent-tool-other-${id}`],
+      waitsForOther: sh(`sleep 2; until ! pgrep -f "[a]gent-tool-other-${id}" >/dev/null; do sleep 1; done`),
+      fileWait: sh(`until grep -q "^exit=" ${review} 2>/dev/null; do sleep 30; done`),
+      sleeper: ["sleep", "300"],
+      shell: sh("sleep 300; :"),
+    },
+    runs: [[process.execPath, cli, "teardown"], [process.execPath, cli, "teardown", "--apply"], [process.execPath, cli, "teardown"]],
+  };
+  const planFile = path.join(elsewhere, "plan.json");
+  writeFileSync(planFile, JSON.stringify(plan));
+  const harness = spawn(process.execPath, ["-e", HARNESS], { cwd: elsewhere, detached: true, stdio: "ignore", env: { ...process.env, AGENT_TOOL_TEST_PLAN: planFile } });
+  groups.push(harness.pid!);
+  expect(await until(() => existsSync(plan.out), 45_000)).toBe(true);
+  const { pids, results } = JSON.parse(readFileSync(plan.out, "utf8")) as { pids: Record<keyof typeof plan.background, number>; results: { status: number; stdout: string; stderr: string }[] };
+  const [before, applied, after] = results.map(result => ({ status: result.status, json: JSON.parse(result.stdout) as { ok: boolean; unavailable: string[]; loops: LoopEntry[] } }));
+  const byPid = (loops: LoopEntry[]) => new Map(loops.map(loop => [loop.pid, loop]));
+
+  const found = byPid(before!.json.loops);
+  expect(before!.status).toBe(1);
+  expect(before!.json.ok).toBe(false);
+  for (const name of ["pairA", "pairB"] as const) expect(found.get(pids[name])).toMatchObject({ state: "stuck", seen: "session", reason: expect.stringContaining(`pgrep -f "agent-tool-stuck-${id}" always finds`) });
+  expect(found.get(pids.emptyName)).toMatchObject({ state: "stuck", reason: expect.stringContaining("empty name") });
+  expect(found.get(pids.waitsForOther)).toMatchObject({ state: "waiting", seen: "session" });
+  expect(found.get(pids.fileWait)).toMatchObject({ state: "waiting", command: `until grep -q "^exit=" ${review} 2>/dev/null; do sleep 30; done` });
+  expect(found.get(pids.fileWait)!.ageSeconds).toBeGreaterThanOrEqual(0);
+  expect(found.get(pids.waitsForOther)!.reason).toBeUndefined();
+  for (const name of ["other", "sleeper", "shell"] as const) expect(found.has(pids[name])).toBe(false);
+
+  const stopped = byPid(applied!.json.loops);
+  for (const name of ["pairA", "pairB", "emptyName"] as const) expect(stopped.get(pids[name])?.state).toBe("stopped");
+  for (const name of ["waitsForOther", "fileWait"] as const) expect(stopped.get(pids[name])?.state).toBe("waiting");
+  if (applied!.json.unavailable.length === 0) expect(applied!.status).toBe(0);
+
+  expect(after!.json.loops.map(loop => [loop.pid, loop.state])).toEqual([[pids.waitsForOther, "waiting"], [pids.fileWait, "waiting"]].sort((a, b) => (a[0] as number) - (b[0] as number)));
+  if (after!.json.unavailable.length === 0) expect(after!.json.ok).toBe(true);
+  for (const name of ["pairA", "pairB", "emptyName"] as const) expect(alive(pids[name])).toBe(false);
+  for (const name of ["waitsForOther", "fileWait", "other", "sleeper", "shell"] as const) expect(alive(pids[name])).toBe(true);
+  // The loop waiting for a real process finishes once that process does.
+  kill(pids.other, false);
+  expect(await until(() => !alive(pids.waitsForOther), 10_000)).toBe(true);
+}, 90_000);
+
+test("a stuck wait loop in the repository fails teardown and --apply stops it, leaving a waiting one", async () => {
+  const root = repository();
+  const start = (script: string) => { const child = spawn("sh", ["-c", script], { cwd: root, detached: true, stdio: "ignore" }); children.push(child); return child.pid!; };
+  const stuck = start(`until [ -f "" ]; do sleep 30; done`), waiting = start("until [ -f stop ]; do sleep 30; done");
+  await sleep(1000);
+  const report = (...args: string[]) => {
+    const result = spawnSync(process.execPath, [cli, "teardown", ...args], { cwd: root, encoding: "utf8", timeout: 30_000 });
+    return { status: result.status, json: JSON.parse(result.stdout) as { unavailable: string[]; loops: LoopEntry[]; untracked: { pid: number }[] } };
+  };
+  const before = report();
+  // Without lsof or /proc nothing shows which processes work in the repository.
+  if (before.json.unavailable.includes("working directories (lsof)")) return;
+  expect(before.status).toBe(1);
+  expect(entry(before.json.loops, stuck)).toMatchObject({ state: "stuck", seen: "repository", reason: expect.stringContaining("empty name") });
+  expect(entry(before.json.loops, waiting)).toMatchObject({ state: "waiting", seen: "repository" });
+  const applied = report("--apply");
+  expect(entry(applied.json.loops, stuck)?.state).toBe("stopped");
+  expect(alive(stuck)).toBe(false);
+  expect(alive(waiting)).toBe(true);
+  expect(applied.json.untracked.map(item => item.pid)).toContain(waiting);
+  expect(applied.json.untracked.map(item => item.pid)).not.toContain(stuck);
+  if (applied.json.unavailable.length === 0) expect(applied.status).toBe(0);
+}, 60_000);
+
+const entry = (loops: LoopEntry[], pid: number) => loops.find(loop => loop.pid === pid);

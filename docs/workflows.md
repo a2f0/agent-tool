@@ -701,20 +701,72 @@ SIGTERM to the group and to members outside it, SIGKILL after the grace period
 - `untracked`: other processes whose working directory is inside the
   repository, with their listening ports, excluding agent-tool's own ancestors
   (the harness and shell that ran it) and pipeline siblings that do not listen;
+- `loops`: shell wait loops (an `until` or `while` loop whose body sleeps), as
+  described below, each with its `pid`, `ageSeconds`, the script holding it
+  (`command`, unwrapped from a harness's `eval`, at most 200 characters), `cwd`,
+  where it was `seen` (`repository` or `session`), its `state` (`waiting`,
+  `stuck`, or `stopped` by `--apply`), and, unless waiting, the `reason` it can
+  never finish;
 - `worktrees`: worktrees added to the repository, which may need removing;
 - `unavailable`: inspections that could not run (`lsof` missing or failing);
 - `skipped`: record files that could not be read.
 
-It exits 1 while a leftover runs, an untracked process listens on a port, or an
-inspection is unavailable or a record unreadable, since a running process could
-then go unseen. `proc start` refuses to start anything when `ps` cannot run.
-`--apply` stops leftovers and removes finished records; it never signals
-untracked processes or kept ones, and never removes worktrees, since they may be
-someone else's. Stop those deliberately, then run `teardown` again. An unrecorded
+It exits 1 while a leftover runs, an untracked process listens on a port, a
+stuck wait loop runs, or an inspection is unavailable or a record unreadable,
+since a running process could then go unseen. `proc start` refuses to start
+anything when `ps` cannot run. `--apply` stops leftovers and stuck wait loops
+and removes finished records; it never signals untracked processes, waiting
+loops or kept ones, and never removes worktrees, since they may be someone
+else's. Stop those deliberately, then run `teardown` again. An unrecorded
 descendant that outlives its parent, leaves the group, and clears or hides its
 ownership tag cannot be recovered by ownership inspection. If it also changes
 out of the repository, cwd inspection cannot report it either. From a matrix-style
 workspace, run it per checkout with `--repo <checkout>`.
+
+### Wait loops
+
+Agents wait in the background with loops such as
+`until ! pgrep -f "release verify" >/dev/null; do sleep 15; done`, and a loop
+that can never finish keeps running long after the work. Teardown reads the
+script of every `-c` shell (`sh -c`, `zsh -c`, `bash -lc`) among the untracked
+processes and among the agent session's other shells. A harness starts each
+command, in the background or not, as a `-c` shell of its own process, so
+walking up from teardown, the first `-c` shell whose parent is not a shell and
+has other children names the harness, and those children and their
+descendants are the session. A package runner with only the one child, such as
+`bun run`, is passed over; from an interactive terminal there is no session.
+
+Several delegates may share one harness, so a sibling can be another's live
+wait: a loop is `stuck` only when it provably can never finish on its own, and
+every other loop is `waiting`. Teardown proves it only when all of these hold:
+
+- The shell is running that loop now: each of its children runs that loop's
+  `sleep` or one of its checks, and those commands appear nowhere else in the
+  script. A shell between commands proves nothing.
+- The body does nothing but `sleep`, and no `timeout` command runs above the
+  shell.
+- The condition is one `&&`/`||` list of simple checks, optionally negated with
+  `!`, that settles for good. Two checks settle:
+  - `pgrep -f <pattern>`, with a literal pattern and output only discarded,
+    stays true while it finds a process that cannot exit. procps `pgrep` (Linux)
+    reports the shell that runs it, so there a loop whose own command line
+    matches its pattern never ends; BSD and macOS `pgrep` leave out that shell
+    and its ancestors, so there it takes loops whose patterns match each other.
+    Teardown asks `pgrep` itself which processes match, and probes which of the
+    two it is.
+  - `grep`, `[ -f ]`, `test -e` and the other file tests on an empty file name
+    (`""`) never succeed.
+- Taken together: a set of loops is stuck when each one's condition is settled
+  while all of them keep running, since none can be the first to finish.
+
+Nothing else counts as settled. A variable such as `"$f"` holds a value no
+other process can read, and a file that merely stopped changing can still be
+replaced by a build or by a process that holds its path internally, so those
+loops are reported as waiting, with their age. Stuck loops fail teardown, and
+`--apply` sends SIGTERM to the loop's shell and to the `sleep` or check it is
+running, each only while it is the same process (pid, start time and command),
+then SIGKILL after two seconds. Write waits that cannot match themselves: wait
+on a pid, or use a pattern such as `pgrep -f '[r]elease verify'`.
 
 ## CI aggregate gates
 
