@@ -556,8 +556,10 @@ without a manifest, and `outdated` when the manifest records another release or
 no usable one, as manifests from releases before the field do. Rerun the
 install with `--apply` and the same `--harness` to fix it, as for other drift;
 a version is provenance, not ownership, so an unusable one never blocks that
-install. A recorded version newer than the running one means the installed
-package is older than the pin: reinstall dependencies rather than the skills.
+install. A recorded version newer than the running one usually means the
+installed package is older than the pin: reinstall dependencies first, and
+rerun the install only when the running version matches the pin, as after an
+intentional downgrade.
 The field is additive, so `schemaVersion` stays 1, older manifests remain
 readable, and older releases still read newer ones.
 `.agent-tool-permissions.json` records and checks the version the same way

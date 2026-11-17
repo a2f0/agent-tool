@@ -47,15 +47,17 @@ executable may capture it with `agent-tool --repo <checkout> run --label setup -
 assume a sibling workspace exists. Verify the installed version afterward; if it
 still differs, report the mismatch rather than deleting arbitrary dependencies.
 
-After upgrading agent-tool, run the repository's skill/permission sync commands
-(or `agent-tool skills install --harness <existing-scope> --apply`), preserve its
-harness scope, and commit the ownership manifests with any generated files. The
-manifests record the agent-tool version, so every upgrade changes them, even
+After upgrading agent-tool, run the repository's skill/permission sync commands,
+or without one, `agent-tool skills install --harness <existing-scope> --apply`
+and, when `.agent-tool-permissions.json` exists,
+`agent-tool permissions install --harness <existing-scope> --apply`. Preserve
+each harness scope, and commit the ownership manifests with any generated files.
+The manifests record the agent-tool version, so every upgrade changes them, even
 when no skill or rule changed, and `skills check` and `permissions check` fail
-until the sync records the new version. Hermes reads
-the shared `.agents/skills` in a trusted project; the installer does not grant
-trust. If discovery is unavailable, read those files directly rather than silently
-using a stale global copy.
+until the sync records the new version. Hermes reads the shared `.agents/skills`
+in a trusted project; the installer does not grant trust. If discovery is
+unavailable, read those files directly rather than silently using a stale global
+copy.
 
 ## Nonblocking execution
 
