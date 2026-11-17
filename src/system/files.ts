@@ -17,11 +17,17 @@ export function assertNoLinks(base: string, destination: string): void {
 export type RegularFile = { status: "missing" } | { status: "irregular" } | { status: "file"; contents: string };
 
 /**
- * Reads a regular file through one descriptor opened without following a final symbolic link
- * and without blocking, then checks that descriptor, so a path replaced between a check and the
- * read can neither redirect it nor stall it on a FIFO or device.
+ * Reads a regular file. It refuses anything else before opening it, then opens one descriptor
+ * without following a final symbolic link and without blocking and checks that descriptor, so a
+ * path replaced after the first check can neither redirect the read nor stall it on a FIFO.
  */
 export function readRegularFile(file: string): RegularFile {
+  // Never open an existing special file: opening a device can block or act even without reading.
+  try { if (!lstatSync(file).isFile()) return { status: "irregular" }; }
+  catch (error) {
+    if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return { status: "missing" };
+    throw error;
+  }
   let descriptor: number;
   try { descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
   catch (error) {

@@ -17,6 +17,10 @@ test("reads a regular file and reports a missing one", () => {
   expect(readRegularFile(path.join(root, "file.json", "below"))).toEqual({ status: "missing" });
 });
 
+test("refuses a device before opening it", () => {
+  expect(readRegularFile("/dev/null")).toEqual({ status: "irregular" });
+});
+
 test("refuses a final symbolic link, a directory, and a FIFO without following or blocking", () => {
   const root = fixture(), elsewhere = fixture();
   writeFileSync(path.join(elsewhere, "target.json"), "outside\n");

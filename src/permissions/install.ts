@@ -3,7 +3,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, renameSync, 
 import path from "node:path";
 import { readRegularFile } from "../system/files";
 import { AGENT_TOOL_VERSION, manifestVersionCheck, validVersion, type CheckStatus } from "../system/manifestVersion";
-import { claudePermissions, codexRules, type CatalogEntry, type ClaudePermissions } from "./catalog";
+import { claudePermissions, codexRules, INVOCATIONS, type CatalogEntry, type ClaudePermissions } from "./catalog";
 import { projectCommands } from "./project";
 
 export const PERMISSIONS_MANIFEST = ".agent-tool-permissions.json";
@@ -169,14 +169,29 @@ export function checkInstalledPermissions(rootDir: string): { harness: string; c
 }
 
 /**
- * `bun x`'s check, or null without a manifest: only the harnesses whose rules the manifest
- * records, none when it records none, then the manifest's own entry, from one reading of it.
+ * Whether a harness's destination holds agent-tool rules its manifest does not own: the Codex
+ * rules file, which only agent-tool writes, or Claude allow rules in an agent-tool spelling.
+ * Other Claude settings are the user's and never count.
+ */
+function unownedRules(root: string, harness: Harness): boolean {
+  const read = readRegularFile(destination(root, harness === "claude" ? CLAUDE_SETTINGS : CODEX_RULES));
+  if (read.status === "missing") return false;
+  if (read.status === "irregular" || harness === "codex") return true;
+  const allow = parseSettings(read.contents).permissions?.allow as string[] | undefined;
+  return (allow ?? []).some(rule => INVOCATIONS.some(invocation => rule.startsWith(`Bash(${invocation} `)));
+}
+
+/**
+ * `bun x`'s check, or null without a manifest: the harnesses whose rules the manifest records,
+ * and any whose destination holds agent-tool rules it does not own, which then fail as stale,
+ * then the manifest's own entry. A manifest that records none, beside no agent-tool rules,
+ * checks no rule files.
  */
 export function checkRecordedPermissions(rootDir: string): PermissionCheck[] | null {
   const root = realpathSync(rootDir);
   const recorded = readManifest(root);
   if (recorded.raw === undefined) return null;
-  return checks(root, HARNESSES.filter(harness => recorded.manifest[harness] !== undefined), recorded);
+  return checks(root, HARNESSES.filter(harness => recorded.manifest[harness] !== undefined || unownedRules(root, harness)), recorded);
 }
 
 export function showPermissions(rootDir: string, target: string): string {

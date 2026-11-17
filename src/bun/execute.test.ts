@@ -82,9 +82,18 @@ test("an executable that asks is refused while the generated rules predate its c
     writeFileSync(manifestFile, JSON.stringify({ ...manifest, agentToolVersion }));
     expect(JSON.parse(f.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
   }
-  // Only recorded harnesses are checked: a manifest that records none requires no rule files.
-  rmSync(path.join(f.project, ".claude"), { recursive: true }); rmSync(path.join(f.project, ".codex"), { recursive: true });
+  // A manifest that records no harness requires no rule files, and user Claude settings stay the user's,
+  // but agent-tool rules it does not own fail closed, since they may predate the current class.
+  const settings = path.join(f.project, ".claude/settings.json"), rules = path.join(f.project, ".codex/rules/agent-tool.rules"), generated = readFileSync(rules, "utf8");
+  rmSync(rules);
+  writeFileSync(settings, JSON.stringify({ permissions: { allow: ["Bash(make test)"] } }));
   writeFileSync(manifestFile, JSON.stringify({ schemaVersion: 1 }));
+  expect(JSON.parse(f.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
+  writeFileSync(settings, JSON.stringify({ permissions: { allow: ["Bash(make test)", "Bash(bun run agent-tool bun x wrangler *)"] } }));
+  expect(f.run(["x", "wrangler"]).stderr).toMatch(/Permission rules predate the current class of 'bun x wrangler'/);
+  rmSync(settings); writeFileSync(rules, generated);
+  expect(f.run(["x", "wrangler"]).stderr).toMatch(/Permission rules predate the current class of 'bun x wrangler'/);
+  rmSync(path.join(f.project, ".codex"), { recursive: true });
   expect(JSON.parse(f.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
   // A recorded harness whose rules are gone is stale.
   writeFileSync(manifestFile, JSON.stringify({ schemaVersion: 1, codex: manifest.codex }));
