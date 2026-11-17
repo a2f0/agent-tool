@@ -747,34 +747,50 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
 
 - It read the shell's exact argv: from `/proc` on Linux and from the kernel
   (`KERN_PROCARGS2`) on macOS, since `ps` joins positional arguments onto the
-  script. Elsewhere no loop is judged.
+  script. Elsewhere no loop is judged. Teardown never runs anything the shell
+  names, such as its `argv[0]`.
+- The shell belongs to no other agent-tool record: it carries no
+  `AGENT_TOOL_PROCESS` (a `proc start --keep` from another checkout). Outside
+  the session, a shell is judged only when its environment shows that; macOS
+  hides a protected shell's, so there only session shells are judged.
 - The shell is running that loop now: each of its children runs that loop's
   `sleep` or one of its checks, and nothing else in the script could start a
   process that looks the same. That rules out a script with the same command
   elsewhere (past assignments and modifiers such as `command` or `exec`), a
   command naming one of the loop's programs as an argument (`nohup sleep 15`),
-  a shell, exec wrapper or interpreter that could turn into one in place
-  (`sh -c 'exec sleep 15'`, `env`, `python3`), a call of a function that a
-  sourced or startup file defines, a command substitution (`x=$(...)`, whose
-  subshell may run its command in place), `eval`ed text that cannot be read,
-  and a command whose words are expanded when its program is one of the loop's,
-  is itself expanded (`"$@"`), or runs other code (`sleep "$n"`, `eval "$x"`,
-  `xargs`). A shell between commands proves nothing.
+  a shell, exec wrapper or interpreter, by name or path, that could turn into
+  one in place (`/bin/sh -c 'exec sleep 15'`, `env`, `python3`), a call of a
+  function that a sourced or startup file defines, a command substitution
+  (`x=$(...)`, whose subshell may run its command in place), `eval`ed text
+  that cannot be read, and a command whose words are expanded when its program
+  is one of the loop's, is itself expanded (`"$@"`), or runs other code
+  (`sleep "$n"`, `eval "$x"`, `xargs`). A shell between commands proves
+  nothing.
 - The body does nothing but `sleep`, and no `timeout` command runs above the
   shell.
-- The loop's commands run as what their names say. Teardown runs nothing to find
-  out; it reads: the script defines none of them as a function or alias; nor
-  does any file it sources by literal path (nested sources are read the same
-  way, and one whose path is expanded may define anything) or any startup file
-  of its shell (zsh's `zshenv` files, bash's `$BASH_ENV`); and for bash, also
-  as `sh`, no exported function in the environment replaces one. The
-  environment is the shell's own on Linux, and teardown's on macOS, where a
-  shell's cannot be read; a harness's commands share it. Files are read only
-  when regular (never a FIFO or device), up to 4 MB, and one that cannot be
-  read stops the proof. A harness's shell snapshot can redefine `grep`, as
-  Claude Code's does. Text a sourced or startup file runs through `eval`, such
-  as `eval "$(mise activate zsh)"`, is not read, nor is what a sourced file
-  runs at its top level.
+- The loop's commands run as what their names say, read without running
+  anything: the script defines none of them as a function or alias; nor does
+  any file it sources by literal path (nested sources are read the same way,
+  and one whose path is expanded may define anything) or any startup file of
+  its shell (zsh's `zshenv` files, and for a login shell `zprofile` and
+  `zlogin`; bash's `$BASH_ENV`, and for a login shell `/etc/profile` and the
+  user's profiles; `/etc/profile` and `~/.profile` for a login `sh`); and for
+  bash, also as `sh`, no exported function in the environment replaces one.
+  The environment is the shell's own where the system shows it, and
+  teardown's on macOS, where a protected shell's is hidden; a harness's
+  commands share it. Files are read only when regular (never a FIFO or
+  device), up to 4 MB, and one that cannot be read stops the proof. A
+  harness's shell snapshot can redefine `grep`, as Claude Code's does. Text a
+  sourced or startup file runs through `eval`, such as
+  `eval "$(mise activate zsh)"`, is not read, nor is what a sourced file runs
+  at its top level.
+- Its programs are the ones teardown runs: the shell's PATH (the one it
+  started with where the system shows it, then each startup file, literal
+  assignment and sourced file before the loop, in order; a harness's shell
+  snapshot ends by setting it) finds each of `pgrep`, `grep` and `sleep` at the
+  same file teardown finds outside the repository. A PATH step teardown cannot
+  read (an `eval`, a function, an expanded assignment, `hash`) leaves the loop
+  unjudged.
 - The condition is one `&&`/`||` list, optionally negated with `!`, of checks
   that all settle for good; any other command in it could leave the loop some
   other way, such as `break`. Two checks settle:
@@ -783,11 +799,11 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
     reports the shell that runs it, so there a loop whose own command line
     matches its pattern never ends; BSD and macOS `pgrep` leave out that shell
     and its ancestors, so there it takes loops whose patterns match each other.
-    Teardown asks `pgrep` itself (the one on its own `PATH`, which the loop's
-    shell is taken to share) which processes match, and probes which of the two
-    it is.
+    Teardown asks that same `pgrep` which processes match, and probes which of
+    the two it is.
   - `grep` with one empty file operand (`grep -q x ""`), `[ -f "" ]`,
-    `test -e ""` and the other file tests never succeed. `grep -e ""` is an
+    `test -e ""` and the other file tests never succeed. Teardown confirms a
+    `grep` by running the same file with the same arguments. `grep -e ""` is an
     empty pattern on the standard input, which can still arrive.
 - Taken together: a set of loops is stuck when each one's condition is settled
   while all of them keep running, since none can be the first to finish.
@@ -797,17 +813,18 @@ other process can read, and a file that merely stopped changing can still be
 replaced by a build or by a process that holds its path internally, so those
 loops are reported as waiting, with their age.
 
-Stuck loops fail teardown. `--apply` stops them one at a time. Stopping one
-loop can release another that waited on it, so after each stop the loops are
-judged again in a fresh process snapshot, and a released loop is left to
-finish. A candidate counts only while its pid names the same process (start
-time and command), so a reused pid inherits nothing. Immediately before the
-first signal, a fresh snapshot must still show the shell running the loop: the
-same process, with children that each run a loop command; otherwise nothing is
-signalled. The shell and those children get SIGTERM; a shell that outlives two
-seconds is stopped with SIGSTOP, so it cannot start another command, then
-killed with every loop command it started since. Each is signalled only while
-it is the same process. A loop whose processes outlive all of it is
+Stuck loops fail teardown. `--apply` stops them one at a time, and a candidate
+counts only while its pid names the same process (start time and command), so
+a reused pid inherits nothing. Each stop first suspends the shell with SIGSTOP,
+so it cannot start another command, then requires a fresh snapshot to show the
+same shell with children that each run a loop command, and every loop to be
+judged again with it suspended: stopping one loop, or losing a peer, can release
+another that waited on it. When that no longer holds the shell is resumed and
+nothing is signalled. Otherwise its children and the shell get SIGTERM and the
+shell SIGCONT to act on it; a shell that outlives two seconds is suspended again
+and killed with every loop command it started since. Each is signalled only
+while it is the same process. After each stop the loops are judged again, and a
+released loop is left to finish. A loop whose processes outlive all of it is
 `stop-failed`, with their pids, and still fails teardown.
 
 Write waits that cannot match themselves: wait on a pid, or use a pattern such

@@ -247,12 +247,13 @@ function survey(root: string, directory: string): Survey {
     return [{ pid, command: row.command, cwd: directoryOf, ports }];
   }).sort((a, b) => a.pid - b.pid);
   // Wait loops among those, and among the agent session's other shells, which may run anywhere.
-  const seen = new Map<number, Seen>([...[...sessionProcesses(table)].map(pid => [pid, "session"] as const), ...untracked.map(item => [item.pid, "repository"] as const)]);
+  const session = sessionProcesses(table);
+  const seen = new Map<number, Seen>([...[...session].map(pid => [pid, "session"] as const), ...untracked.map(item => [item.pid, "repository"] as const)]);
   const uid = process.getuid?.(), candidates = new Map<number, Candidate>();
   for (const [pid, where] of seen) {
     const row = table.get(pid);
     if (!row || excluded.has(pid) || owned.has(pid) || row.ppid === process.pid || (uid !== undefined && row.uid !== uid)) continue;
-    candidates.set(pid, { seen: where, started: row.started, command: row.command });
+    candidates.set(pid, { seen: where, session: session.has(pid), started: row.started, command: row.command });
   }
   const worktrees: { path: string; branch: string | null }[] = [];
   let current: { path: string; branch: string | null } | undefined;
@@ -292,7 +293,7 @@ export async function teardownCommand(args: string[]): Promise<number> {
     }
   }
   const { candidates, ...rest } = survey(root, directory);
-  const settled = await settleLoops(candidates.pids, candidates.cwd, apply, candidates.table);
+  const settled = await settleLoops(candidates.pids, candidates.cwd, root, apply, candidates.table);
   const gone = new Set(settled.gone);
   const untracked = rest.untracked.filter(item => !gone.has(item.pid)), loops = settled.loops.map(item => loopReport(item));
   // A clean report needs every inspection: without lsof a listening server would go unseen.

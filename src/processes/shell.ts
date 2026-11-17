@@ -33,20 +33,21 @@ export function isShell(command: string): boolean {
 }
 
 /** Where the script operand of a `<shell> [options] -c <script> [name [args...]]` argv is. */
-function scriptOperand(argv: string[]): { shell: string; index: number } | undefined {
+function scriptOperand(argv: string[]): { shell: string; index: number; login: boolean } | undefined {
   const shell = path.basename(argv[0] ?? "");
   if (!SHELLS.has(shell)) return undefined;
   // Options may follow `-c` (`zsh -c -l script`); the script is the first operand after them.
-  let script = false, index = 1;
+  let script = false, login = false, index = 1;
   for (; index < argv.length; index += 1) {
     const part = argv[index]!;
     if (part === "--") { index += 1; break; }
-    if (part === "-o" || part === "+o") { index += 1; continue; }
-    if (/^--[a-z][a-z-]*$/.test(part)) continue;
+    if (part === "-o" || part === "+o") { login ||= argv[index + 1] === "login"; index += 1; continue; }
+    if (/^--[a-z][a-z-]*$/.test(part)) { login ||= part === "--login"; continue; }
     if (!/^[-+][A-Za-z]+$/.test(part)) break;
     if (part.startsWith("-") && part.includes("c")) script = true;
+    if (part.startsWith("-") && part.includes("l")) login = true;
   }
-  return script && index < argv.length ? { shell, index } : undefined;
+  return script && index < argv.length ? { shell, index, login } : undefined;
 }
 
 /**
@@ -59,10 +60,13 @@ export function shellScript(command: string): { shell: string; script: string } 
   return found && { shell: found.shell, script: parts.slice(found.index).join(" ") };
 }
 
-/** The script of a `-c` shell from its exact argv, without the positional arguments after it. */
-export function shellArgvScript(argv: string[]): { shell: string; script: string } | undefined {
+/**
+ * The script of a `-c` shell from its exact argv, without the positional arguments after it, and
+ * whether it is a login shell (`bash -lc`), which reads profiles first.
+ */
+export function shellArgvScript(argv: string[]): { shell: string; script: string; login: boolean } | undefined {
   const found = scriptOperand(argv);
-  return found && { shell: found.shell, script: argv[found.index]! };
+  return found && { shell: found.shell, script: argv[found.index]!, login: found.login };
 }
 
 const runs = (text: string, at: number) => text[at] === "`" || text[at + 1] === "(";
@@ -339,8 +343,8 @@ export function parseScript(text: string, shell = "sh"): List | undefined {
 /** One test in a loop's condition, as far as teardown can judge it. */
 export type Check =
   | { kind: "pgrep"; pattern: string }
-  /** A file test that can never succeed: `grep` or `[ -f ]` on an empty file name. */
-  | { kind: "missing-file" }
+  /** A file test that can never succeed: `grep` (its argv, to confirm) or `[ -f ]` on an empty file name. */
+  | { kind: "missing-file"; argv?: string[] }
   | { kind: "other" };
 export interface Atom { negated: boolean; text: string; check: Check }
 
@@ -380,7 +384,14 @@ export interface Analysis {
   defines: Set<string>;
   /** Files the script sources by a literal path, whose definitions apply too. */
   sourced: string[];
+  /**
+   * What changes `PATH` in the shell, in the order the shell runs it, by the index of the command
+   * doing it: a literal assignment, a sourced file, or something whose effect cannot be read.
+   */
+  path: PathEvent[];
 }
+
+export type PathEvent = { at: number } & ({ kind: "assign"; value: string } | { kind: "source"; file: string } | { kind: "unknown" });
 
 type Simple = Extract<Command, { kind: "simple" }>;
 
@@ -404,9 +415,7 @@ function harmless(redirects: Redirect[]): boolean {
 }
 
 function check(command: Command): Check {
-  // `[` and `]` read as globs, but alone they are the test command and its closing word.
-  const literal = (word: Word) => word.literal || (!word.quoted && (word.text === "[" || word.text === "]"));
-  if (command.kind !== "simple" || command.assignments > 0 || !harmless(command.redirects) || !command.words.every(literal)) return { kind: "other" };
+  if (command.kind !== "simple" || command.assignments > 0 || !harmless(command.redirects) || !command.words.every(plain)) return { kind: "other" };
   const words = command.words.map(word => word.text);
   if (words[0] === "pgrep" && words[1] === "-f") {
     const rest = words[2] === "--" ? words.slice(3) : words.slice(2);
@@ -419,7 +428,7 @@ function check(command: Command): Check {
     if (separated) index += 1;
     // A pattern, then exactly one file operand, which is empty. A pattern that looks like an option
     // (`-e ""`) would leave grep reading its input instead.
-    if (words.length === index + 2 && (separated || !words[index]!.startsWith("-")) && words[index + 1] === "") return { kind: "missing-file" };
+    if (words.length === index + 2 && (separated || !words[index]!.startsWith("-")) && words[index + 1] === "") return { kind: "missing-file", argv: words };
   }
   const test = words[0] === "[" ? (words.at(-1) === "]" ? words.slice(1, -1) : undefined) : words[0] === "test" ? words.slice(1) : undefined;
   if (test?.length === 2 && FILE_TESTS.has(test[0]!) && test[1] === "") return { kind: "missing-file" };
@@ -464,6 +473,9 @@ const sleeps = (list: List): boolean => [...simpleCommands(list)].some(command =
 // Precommand modifiers, which run the command after them in place.
 const MODIFIERS = new Set(["builtin", "command", "exec", "noglob", "nocorrect", "-"]);
 
+// `[` and `]` read as globs, but alone they are the test command and its closing word.
+const plain = (word: Word) => word.literal || (!word.quoted && (word.text === "[" || word.text === "]"));
+
 function describe(command: Simple): CommandInfo {
   const all = [...command.words, ...command.redirects.map(redirect => redirect.target)];
   // The process it starts: without assignments, and past modifiers and their options (`exec -a name`).
@@ -474,9 +486,9 @@ function describe(command: Simple): CommandInfo {
   }
   return {
     text: commandText(words),
-    ...(words[0]?.literal ? { program: words[0].text } : {}),
+    ...(words[0] && plain(words[0]) ? { program: words[0].text } : {}),
     args: words.slice(1).map(word => word.text),
-    expands: all.some(word => !word.literal),
+    expands: all.some(word => !plain(word)),
     substitutes: all.some(word => word.substitution),
   };
 }
@@ -487,53 +499,67 @@ function describe(command: Simple): CommandInfo {
  * does not parse.
  */
 export function analyzeScript(text: string, shell = "sh"): Analysis | undefined {
-  const analysis: Analysis = { loops: [], commands: [], defines: new Set(), sourced: [] };
+  const analysis: Analysis = { loops: [], commands: [], defines: new Set(), sourced: [], path: [] };
   return collect(text, shell, analysis, 0) ? analysis : undefined;
 }
 
 // Stands for `eval`ed text that could not be read: it may run anything.
 const OPAQUE: CommandInfo = { text: "eval", args: [], expands: true, substitutes: true };
 
-/** What a simple command defines or sources: aliases, autoloaded functions, and sourced files. */
-function definitions(command: CommandInfo, analysis: Analysis): void {
-  const operands = command.args.filter(arg => !arg.startsWith("-") && !arg.startsWith("+"));
-  if (command.program === "alias") for (const arg of operands) { const name = /^([^=]+)=/.exec(arg)?.[1]; if (name) analysis.defines.add(name); }
-  if (command.program === "autoload" || command.program === "functions") for (const arg of operands) analysis.defines.add(arg.replace(/=.*$/, ""));
-  if ((command.program === "source" || command.program === ".") && operands[0] && !command.expands) analysis.sourced.push(operands[0]);
+/** What a simple command defines, sources, or does to `PATH`. */
+function definitions(command: Simple, info: CommandInfo, at: number, analysis: Analysis, nested: boolean): void {
+  const path = (event: PathEvent) => analysis.path.push(nested ? { at, kind: "unknown" } : event);
+  const operands = info.args.filter(arg => !arg.startsWith("-") && !arg.startsWith("+"));
+  if (info.program === "alias") for (const arg of operands) { const name = /^([^=]+)=/.exec(arg)?.[1]; if (name) analysis.defines.add(name); }
+  if (info.program === "autoload" || info.program === "functions") for (const arg of operands) analysis.defines.add(arg.replace(/=.*$/, ""));
+  if ((info.program === "source" || info.program === ".") && operands[0] && !info.expands) {
+    analysis.sourced.push(operands[0]);
+    path({ at, kind: "source", file: operands[0] });
+  }
+  // `PATH=...` alone sets it in the shell; before a program it sets it for that program only.
+  const words = command.words.slice(command.assignments);
+  const exported = info.program !== undefined && ["export", "typeset", "declare", "readonly", "local"].includes(info.program) ? words.slice(1) : words.length === 0 ? command.words : [];
+  for (const word of exported) {
+    if (/^PATH\+?=/.test(word.text)) path(word.literal && !word.text.startsWith("PATH+=") ? { at, kind: "assign", value: word.text.slice(5) } : { at, kind: "unknown" });
+  }
+  if (info.program === "hash" || info.program === "rehash" || (info.program === undefined && words.length > 0)) path({ at, kind: "unknown" });
 }
 
 function collect(text: string, shell: string, analysis: Analysis, depth: number): boolean {
   const list = parseScript(text, shell);
   if (!list) return false;
+  // Commands are numbered in the order the shell meets them, `eval`ed text where the `eval` is.
   const index = new Map<Simple, number>();
-  for (const command of simpleCommands(list)) {
-    index.set(command, analysis.commands.length);
-    const info = describe(command);
-    analysis.commands.push(info);
-    definitions(info, analysis);
-  }
-  const visit = (current: List) => {
+  // Inside a compound command, a change to PATH may not run, or may not reach the shell.
+  const visit = (current: List, nested = false) => {
     for (const command of commandsOf(current)) {
       if (command.kind === "loop") {
-        if (sleeps(command.body)) {
-          const inside = [...simpleCommands(command.condition), ...simpleCommands(command.body)], body = [...simpleCommands(command.body)];
-          analysis.loops.push({
-            keyword: command.keyword,
-            script: text,
-            condition: condition(command.condition),
-            pure: harmless(command.redirects) && [...commandsOf(command.body)].every(inner => inner.kind === "simple") && body.every(inner => inner.assignments === 0 && harmless(inner.redirects) && inner.words.length === 2 && inner.words[0]!.text === "sleep" && inner.words.every(word => word.literal) && SLEEP.test(inner.words[1]!.text)),
-            commands: inside.map(inner => commandText(inner.words)),
-            own: inside.map(inner => index.get(inner)!),
-          });
-        }
-        visit(command.condition);
-        visit(command.body);
+        visit(command.condition, true);
+        visit(command.body, true);
+        if (!sleeps(command.body)) continue;
+        const inside = [...simpleCommands(command.condition), ...simpleCommands(command.body)], body = [...simpleCommands(command.body)];
+        analysis.loops.push({
+          keyword: command.keyword,
+          script: text,
+          condition: condition(command.condition),
+          pure: harmless(command.redirects) && [...commandsOf(command.body)].every(inner => inner.kind === "simple") && body.every(inner => inner.assignments === 0 && harmless(inner.redirects) && inner.words.length === 2 && inner.words[0]!.text === "sleep" && inner.words.every(word => word.literal) && SLEEP.test(inner.words[1]!.text)),
+          commands: inside.map(inner => commandText(inner.words)),
+          own: inside.map(inner => index.get(inner)!),
+        });
       } else if (command.kind === "compound") {
         if (command.defines) analysis.defines.add(command.defines);
-        command.lists.forEach(visit);
+        for (const inner of command.lists) visit(inner, true);
       } else {
-        const nested = evaluated(command);
-        if (nested !== undefined && !(depth < 3 && collect(nested, shell, analysis, depth + 1))) analysis.commands.push(OPAQUE);
+        const at = analysis.commands.length, info = describe(command);
+        index.set(command, at);
+        analysis.commands.push(info);
+        definitions(command, info, at, analysis, nested);
+        const evaluatedText = evaluated(command);
+        if (evaluatedText !== undefined && !(depth < 3 && collect(evaluatedText, shell, analysis, depth + 1))) {
+          analysis.commands.push(OPAQUE);
+          analysis.path.push({ at, kind: "unknown" });
+        }
+        if (info.expands && info.program !== undefined && RUNNERS.has(path.basename(info.program))) analysis.path.push({ at, kind: "unknown" });
       }
     }
   };
@@ -553,12 +579,14 @@ function collect(text: string, shell: string, analysis: Analysis, depth: number)
 export function exclusive(analysis: Analysis, loop: WaitLoop, functions: ReadonlySet<string> = new Set()): boolean {
   const own = new Set(loop.own), texts = new Set(loop.commands);
   const programs = new Set(loop.commands.map(text => text.split(" ")[0]!));
+  // `/bin/sh` is `sh`, and `/bin/sleep` is `sleep`.
+  const name = (word: string) => path.basename(word);
   return analysis.commands.every((command, index) => own.has(index) || !(
     texts.has(command.text)
     || command.substitutes
-    || command.args.some(arg => programs.has(arg))
-    || (command.program !== undefined && (IMPERSONATORS.has(command.program) || INTERPRETERS.test(command.program) || functions.has(command.program)))
-    || (command.expands && (command.program === undefined || programs.has(command.program) || RUNNERS.has(command.program)))
+    || command.args.some(arg => programs.has(name(arg)))
+    || (command.program !== undefined && (IMPERSONATORS.has(name(command.program)) || INTERPRETERS.test(name(command.program)) || functions.has(command.program)))
+    || (command.expands && (command.program === undefined || programs.has(name(command.program)) || RUNNERS.has(name(command.program))))
   ));
 }
 

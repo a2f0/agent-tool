@@ -149,13 +149,14 @@ function darwinSysctl(): Sysctl | null {
   return sysctl;
 }
 
-// KERN_PROCARGS2: argc, the executable path, padding, then each argument NUL-terminated.
-function darwinArgv(pid: number): string[] | undefined {
+// KERN_PROCARGS2: argc, the executable path, padding, each argument, then each environment entry,
+// all NUL-terminated. macOS leaves the environment out for protected programs such as /bin/sh.
+function darwinArgs(pid: number): { argv: string[]; environment: string[] } | undefined {
   const call = darwinSysctl();
   const max = call?.([1, 8], 4)?.readInt32LE(0); // KERN_ARGMAX
   const raw = call && max && max > 0 ? call([1, 49, pid], max) : undefined;
   if (!raw || raw.length < 4) return undefined;
-  const argc = raw.readInt32LE(0), argv: string[] = [];
+  const argc = raw.readInt32LE(0), argv: string[] = [], environment: string[] = [];
   let at = raw.indexOf(0, 4);
   if (at < 0) return undefined;
   while (at < raw.length && raw[at] === 0) at += 1;
@@ -165,21 +166,27 @@ function darwinArgv(pid: number): string[] | undefined {
     argv.push(raw.subarray(at, end).toString("utf8"));
     at = end + 1;
   }
-  return argv;
+  for (let end = raw.indexOf(0, at); end > at; at = end + 1, end = raw.indexOf(0, at)) environment.push(raw.subarray(at, end).toString("utf8"));
+  return { argv, environment };
 }
 
 /**
- * A process's exact argv, which `ps` joins with spaces: from /proc on Linux and from the kernel
- * (KERN_PROCARGS2) on macOS. Undefined elsewhere, for another user's process, or once the process
- * has gone; read only while the pid still names the process `ps` reported, by its start time.
+ * A process's exact argv, which `ps` joins with spaces, and the environment it started with where
+ * the system shows it: from /proc on Linux and from the kernel (KERN_PROCARGS2) on macOS, which
+ * hides the environment of protected programs. Undefined elsewhere, for another user's process,
+ * or once the process has gone; read only while the pid still names the process `ps` reported, by
+ * its start time.
  */
-export function argvOf(pid: number, started: string): string[] | undefined {
-  let argv: string[] | undefined;
+export function argsOf(pid: number, started: string): { argv: string[]; environment?: Map<string, string> } | undefined {
+  let found: { argv: string[]; environment: string[] } | undefined;
   try {
     if (process.platform === "linux") {
-      argv = readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0");
-      if (argv.at(-1) === "") argv.pop();
-    } else if (process.platform === "darwin") argv = darwinArgv(pid);
-  } catch { argv = undefined; }
-  return argv?.length && startOf(pid) === started ? argv : undefined;
+      const split = (file: string) => readFileSync(`/proc/${pid}/${file}`).toString("utf8").split("\0").filter((item, index, all) => item !== "" || index < all.length - 1);
+      found = { argv: split("cmdline"), environment: split("environ") };
+    } else if (process.platform === "darwin") found = darwinArgs(pid);
+  } catch { found = undefined; }
+  if (!found?.argv.length || startOf(pid) !== started) return undefined;
+  // Every process has some environment; none at all means it is hidden.
+  const environment = found.environment.length ? new Map(found.environment.map(entry => [entry.slice(0, entry.indexOf("=")), entry.slice(entry.indexOf("=") + 1)])) : undefined;
+  return { argv: found.argv, ...(environment ? { environment } : {}) };
 }

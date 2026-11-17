@@ -5,13 +5,14 @@
 // waiting: reported, never failed on, never stopped.
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { plainText } from "../commands/output";
+import { outsideExecutable } from "../system/executable";
 import { readRegularFile } from "../system/files";
 import { analyzeScript, definedNames, exclusive, isShell, shellArgvScript, shellScript, wordsInOrder, type Analysis, type WaitLoop } from "./shell";
-import { ancestors, argvOf, processTable, type ProcessRow } from "./table";
+import { ancestors, argsOf, processTable, type ProcessRow } from "./table";
 
 export type LoopState =
   | { status: "waiting" }
@@ -129,6 +130,8 @@ export interface LoopFacts {
   matches: Map<string, Set<number> | undefined>;
   /** Each judged loop's shell and the processes above it. */
   ancestors: Map<number, Set<number>>;
+  /** The `grep` checks on an empty file name that the same grep, run by teardown, failed. */
+  failing: Set<string>;
 }
 
 type Truth = "true" | "false" | "unknown";
@@ -158,7 +161,7 @@ function verdict(pid: number, loop: WaitLoop, stuck: Set<number>, facts: LoopFac
           reasons.push(`pgrep -f ${JSON.stringify(atom.check.pattern)} always finds ${named.join(" and ")}`);
         }
       }
-    } else if (atom.check.kind === "missing-file") {
+    } else if (atom.check.kind === "missing-file" && (!atom.check.argv || facts.failing.has(atom.text))) {
       truth = "false";
       reasons.push(`\`${atom.text}\` tests a file with an empty name, which never exists`);
     }
@@ -189,18 +192,18 @@ export function stuckLoops(loops: Map<number, WaitLoop>, facts: LoopFacts): Map<
   return new Map([...stuck].map(pid => [pid, verdict(pid, loops.get(pid)!, stuck, facts).reasons.join("; ")]));
 }
 
-/** Whether pgrep reports its own ancestors, found by asking it for the shell that runs it. */
-function pgrepSeesAncestors(): boolean | undefined {
+/** Whether the pgrep at `pgrep` reports its own ancestors, found by asking it for the shell that runs it. */
+function pgrepSeesAncestors(pgrep: string): boolean | undefined {
   const token = `agent-tool-pgrep-probe-${randomUUID()}`;
-  const result = spawnSync("sh", ["-c", `pgrep -f ${token}; echo "status=$?"`], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "ignore"] });
+  const result = spawnSync("/bin/sh", ["-c", `"$0" -f ${token}; echo "status=$?"`, pgrep], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "ignore"] });
   const lines = (result.stdout ?? "").trim().split("\n").map(line => line.trim());
   if (lines.at(-1) === "status=1") return false;
   if (lines.at(-1) === "status=0" && result.pid && lines.includes(String(result.pid))) return true;
   return undefined;
 }
 
-function pgrepMatches(pattern: string): Set<number> | undefined {
-  const result = spawnSync("pgrep", ["-f", "--", pattern], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "ignore"] });
+function pgrepMatches(pgrep: string, pattern: string): Set<number> | undefined {
+  const result = spawnSync(pgrep, ["-f", "--", pattern], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "ignore"] });
   if (result.status === 1) return new Set();
   if (result.status !== 0) return undefined;
   return new Set(result.stdout.split("\n").map(line => line.trim()).filter(line => /^\d+$/.test(line)).map(Number));
@@ -209,6 +212,7 @@ function pgrepMatches(pattern: string): Set<number> | undefined {
 // What a wait loop looks like in a script the reader cannot parse: reported as waiting, never judged.
 const UNPARSED_LOOP = ["until|while", "do", "sleep", "done"];
 const TIMEOUTS = new Set(["timeout", "gtimeout"]);
+const BUILTINS = new Set(["[", "test"]);
 const program = (row: ProcessRow | undefined) => path.basename(row?.command.split(" ")[0] ?? "");
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -225,6 +229,8 @@ function readText(file: string): string | null | undefined {
   } catch (error) { return ["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "") ? null : undefined; }
 }
 
+const SOURCE = /(?:^|[;&|{(]|\bthen|\bdo|\belse)\s*(?:source|\.)\s+([^\s;&|)]+)/gm;
+
 /**
  * Whether shell text may define any of the names as an alias or function (`alias name=`,
  * `name () {`, `function name`, `autoload name`), or sources a file that may: nested sources are
@@ -237,7 +243,7 @@ export function definesAny(text: string, names: Iterable<string>, read: (file: s
     const forms = [`\\balias\\b[^\\n]*${edge}${word}=`, `\\bfunction\\s+${word}${end}`, `${edge}${word}\\s*\\(\\s*\\)`, `\\b(?:autoload|functions)\\b[^\\n]*${edge}${word}${end}`, `\\bfunctions\\[${word}\\]`];
     if (forms.some(form => new RegExp(form).test(text))) return true;
   }
-  for (const [, target] of text.matchAll(/(?:^|[;&|{(]|\bthen|\bdo|\belse)\s*(?:source|\.)\s+([^\s;&|)]+)/gm)) {
+  for (const [, target] of text.matchAll(SOURCE)) {
     const file = target!.replace(/^["']|["']$/g, "").replace(/^~(?=\/)|^\$HOME(?=\/)|^\$\{HOME\}(?=\/)/, homedir());
     if (depth >= 3 || /[$`*?]/.test(file) || !path.isAbsolute(file)) return true;
     const nested = read(file);
@@ -246,70 +252,151 @@ export function definesAny(text: string, names: Iterable<string>, read: (file: s
   return false;
 }
 
-/** The environment a process started with, where it can be read (Linux); undefined elsewhere. */
-function environmentOf(pid: number): Map<string, string> | undefined {
-  if (process.platform !== "linux") return undefined;
-  try {
-    const entries = readFileSync(`/proc/${pid}/environ`, "utf8").split("\0").filter(Boolean);
-    return new Map(entries.map(entry => [entry.slice(0, entry.indexOf("=")), entry.slice(entry.indexOf("=") + 1)]));
-  } catch { return undefined; }
+// A line that may change PATH in a way a reader cannot follow.
+const PATH_RISK = /\bPATH\b|\bpath\b|\beval\b|\b(?:re)?hash\b|\bsource\b|(?:^|[;&|{(])\s*\.\s/;
+const LITERAL_PATH = /^(?:export[ \t]+)?PATH=(?:'([^'$`]*)'|"([^"$`\\]*)"|([^\s'"$`\\;&|]*))[ \t]*;?$/;
+
+/**
+ * PATH after the shell runs a file: the literal its last line sets (as a harness's shell snapshot
+ * ends with `export PATH=...`), or `before` when no line may change it and the file defines no
+ * function that could; undefined when that cannot be read.
+ */
+export function pathAfter(text: string, before: string | undefined): string | undefined {
+  const lines = text.split("\n").map(line => line.trim()).filter(line => line && !line.startsWith("#"));
+  const last = lines.length ? LITERAL_PATH.exec(lines.at(-1)!) : null;
+  if (last) return last[1] ?? last[2] ?? last[3];
+  // A function may change PATH when called; an alias only stands for words.
+  const functions = lines.some(line => /^(?:function[ \t]+[^\s(){};&|]+|[^\s(){};&|=]+[ \t]*\([ \t]*\))/.test(line));
+  return functions || lines.some(line => PATH_RISK.test(line)) ? undefined : before;
+}
+
+/** Where PATH finds a program: the real file of its first executable entry; undefined when a relative entry comes first. */
+export function resolveIn(searchPath: string, name: string): string | undefined {
+  for (const directory of searchPath.split(":")) {
+    if (!path.isAbsolute(directory)) return undefined;
+    try {
+      const candidate = path.join(directory, name);
+      accessSync(candidate, constants.X_OK);
+      const real = realpathSync(candidate);
+      if (statSync(real).isFile()) return real;
+    } catch { /* Not here. */ }
+  }
+  return undefined;
 }
 
 /**
- * The startup files a non-interactive `-c` shell reads before its script: zsh's `zshenv` files and
- * bash's `$BASH_ENV`. `sh`, `dash` and bash running as `sh` read none.
+ * The startup files a `-c` shell reads before its script: zsh's `zshenv` files (and, for a login
+ * shell, `zprofile` and `zlogin`), bash's `$BASH_ENV` (and, for a login shell, `/etc/profile` and
+ * the user's profiles), and `/etc/profile` and `~/.profile` for a login `sh`.
  */
-function startupFiles(shell: string, environment: (name: string) => string | undefined): string[] {
-  if (shell === "zsh") return ["/etc/zshenv", "/etc/zsh/zshenv", path.join(environment("ZDOTDIR") ?? environment("HOME") ?? homedir(), ".zshenv")];
+function startupFiles(shell: string, login: boolean, environment: (name: string) => string | undefined): string[] {
+  const home = environment("HOME") ?? homedir();
+  if (shell === "zsh") {
+    const dot = environment("ZDOTDIR") ?? home;
+    return ["/etc/zshenv", "/etc/zsh/zshenv", path.join(dot, ".zshenv"), ...(login ? ["/etc/zprofile", "/etc/zsh/zprofile", path.join(dot, ".zprofile"), "/etc/zlogin", "/etc/zsh/zlogin", path.join(dot, ".zlogin")] : [])];
+  }
+  const profiles = login ? ["/etc/profile", ...(shell === "bash" ? [".bash_profile", ".bash_login"] : []).map(name => path.join(home, name)), path.join(home, ".profile")] : [];
   const bashEnv = environment("BASH_ENV");
-  return shell === "bash" && bashEnv ? [bashEnv] : [];
+  return [...profiles, ...(shell === "bash" && bashEnv ? [bashEnv] : [])];
+}
+
+interface Context {
+  /** Startup files' texts, in the order the shell reads them. */
+  startup: string[];
+  /** Each file the script sources by literal path, and its text (null when missing). */
+  sourced: Map<string, string | null>;
+  environment: (name: string) => string | undefined;
+  /** The environment as the process started with it, when the system shows it. */
+  own?: Map<string, string>;
 }
 
 /**
- * The shell text that runs before a script's own: the files it sources by literal path and its
- * shell's startup files, read without running anything; undefined when one cannot be read. The
- * environment that names startup files is the process's own on Linux, and teardown's elsewhere,
- * where a shell's cannot be read; a harness's commands share it.
+ * What runs around a script, read without running anything: its shell's startup files and the files
+ * it sources by literal path; undefined when one cannot be read. The environment that names them is
+ * the process's own where the system shows it, and teardown's otherwise (macOS hides a protected
+ * shell's); a harness's commands share it.
  */
-function surroundings(analysis: Analysis, pid: number, shell: string, cwd: string | null): { texts: string[]; environment: (name: string) => string | undefined } | undefined {
-  const own = environmentOf(pid), environment = (name: string) => own ? own.get(name) : process.env[name];
-  const texts: string[] = [];
+function contextOf(analysis: Analysis, shell: string, login: boolean, own: Map<string, string> | undefined, cwd: string | null): Context | undefined {
+  const environment = (name: string) => own ? own.get(name) : process.env[name];
+  const startup: string[] = [], sourced = new Map<string, string | null>();
+  for (const file of startupFiles(shell, login, environment)) {
+    const text = readText(file);
+    if (text === undefined) return undefined;
+    if (text !== null) startup.push(text);
+  }
   for (const target of analysis.sourced) {
     const file = path.isAbsolute(target) ? target : cwd && path.resolve(cwd, target);
     const text = file ? readText(file) : undefined;
     if (text === undefined) return undefined;
-    if (text !== null) texts.push(text);
+    sourced.set(target, text);
   }
-  for (const file of startupFiles(shell, environment)) {
-    const text = readText(file);
-    if (text === undefined) return undefined;
-    if (text !== null) texts.push(text);
-  }
-  return { texts, environment };
+  return { startup, sourced, environment, ...(own ? { own } : {}) };
 }
 
 /**
  * Whether the loop's commands run as the plain programs or builtins their names say: neither the
- * script nor the text around it (`surroundings`) defines one as a function or alias, and for bash
- * (also as `sh`) no exported function in the environment replaces one.
+ * script nor the text around it defines one as a function or alias, and for bash (also as `sh`) no
+ * exported function in the environment replaces one.
  */
-function plainCommands(analysis: Analysis, loop: WaitLoop, shell: string, around: NonNullable<ReturnType<typeof surroundings>>): boolean {
+function plainCommands(analysis: Analysis, loop: WaitLoop, shell: string, context: Context): boolean {
   const names = [...new Set(loop.commands.map(text => text.split(" ")[0]!))];
   if (names.some(name => analysis.defines.has(name))) return false;
   // bash imports exported functions from its environment; zsh and dash do not.
-  if (shell !== "zsh" && shell !== "dash" && names.some(name => around.environment(`BASH_FUNC_${name}%%`) !== undefined)) return false;
-  return !around.texts.some(text => definesAny(text, names));
+  if (shell !== "zsh" && shell !== "dash" && names.some(name => context.environment(`BASH_FUNC_${name}%%`) !== undefined)) return false;
+  return ![...context.startup, ...[...context.sourced.values()].filter(text => text !== null)].some(text => definesAny(text, names));
 }
 
-export interface Candidate { seen: Seen; started: string; command: string }
+/**
+ * The PATH the shell searches while it runs the loop: the one it started with where the system
+ * shows it, then each startup file, and each literal assignment or sourced file in the script before
+ * the loop, in order. Undefined when any step cannot be read.
+ */
+function pathOf(analysis: Analysis, loop: WaitLoop, context: Context): string | undefined {
+  let current = context.own?.get("PATH");
+  for (const text of context.startup) current = pathAfter(text, current);
+  const start = Math.min(...loop.own);
+  for (const event of analysis.path.filter(item => item.at < start)) {
+    if (event.kind === "assign") current = event.value;
+    else if (event.kind === "unknown") current = undefined;
+    else {
+      const text = context.sourced.get(event.file);
+      if (text === undefined) return undefined;
+      if (text !== null) current = pathAfter(text, current);
+    }
+  }
+  return current;
+}
+
+/**
+ * The loop's programs, each resolved where its shell's PATH finds it, when that is the same file
+ * teardown itself finds outside the repository: then teardown's `pgrep` and `grep` read processes
+ * and files as the loop's do. Undefined when any differs or cannot be found.
+ */
+function samePrograms(loop: WaitLoop, searchPath: string | undefined, root: string): Map<string, string> | undefined {
+  if (searchPath === undefined) return undefined;
+  const programs = new Map<string, string>();
+  for (const name of new Set(loop.commands.map(text => text.split(" ")[0]!))) {
+    if (BUILTINS.has(name)) continue;
+    const theirs = resolveIn(searchPath, name), ours = outsideExecutable(name, process.env, root)?.resolved;
+    if (!theirs || theirs !== ours) return undefined;
+    programs.set(name, ours);
+  }
+  return programs;
+}
+
+/** A process that may run a wait loop: where it was seen, whether it is the agent session's, and its identity. */
+export interface Candidate { seen: Seen; session: boolean; started: string; command: string }
 
 /**
  * The shells among `candidates` that run a wait loop, each classified. A candidate counts only while
  * its pid still names the same process (start time and command), so a reused pid inherits
- * nothing. Read-only.
+ * nothing. One that carries another agent-tool record's `AGENT_TOOL_PROCESS` belongs to that
+ * record, and one outside the session is judged only when its environment shows it carries none.
+ * Read-only.
  */
-export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number, Candidate>, cwd: Map<number, string>): FoundLoop[] {
+export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number, Candidate>, cwd: Map<number, string>, root: string): FoundLoop[] {
   const children = childrenOf(table), found: FoundLoop[] = [], judged = new Map<number, WaitLoop>(), lineage = new Map<number, Set<number>>();
+  const tools = new Map<string, string>(), confirmed = new Set<string>();
   for (const [pid, candidate] of [...candidates].sort(([a], [b]) => a - b)) {
     const row = table.get(pid), parsed = row && shellScript(row.command);
     if (!row || !parsed || row.started !== candidate.started || row.command !== candidate.command) continue;
@@ -324,24 +411,36 @@ export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number
     // `ps` joins positional arguments onto the script, so only the exact argv can prove which loop
     // runs. Judge a loop only when the body only sleeps, the condition is simple checks, no
     // `timeout` above will end it, and its commands run as what their names say.
-    const argv = guess?.pure && guess.condition ? argvOf(pid, row.started) : undefined;
-    const exact = argv && shellArgvScript(argv), analysis = exact && analyzeScript(exact.script, exact.shell);
-    const around = analysis ? surroundings(analysis, pid, exact.shell, base.cwd) : undefined;
+    const args = guess?.pure && guess.condition ? argsOf(pid, row.started) : undefined;
+    const owned = args?.environment?.has("AGENT_TOOL_PROCESS") || (!candidate.session && !args?.environment);
+    const exact = args && !owned ? shellArgvScript(args.argv) : undefined, analysis = exact && analyzeScript(exact.script, exact.shell);
+    const context = analysis ? contextOf(analysis, exact.shell, exact.login, args!.environment, base.cwd) : undefined;
     // A call of a function defined around the script runs code teardown has not judged.
-    const loop = analysis && around ? runningLoop(analysis, kids, new Set(around.texts.flatMap(text => [...definedNames(text)]))) : undefined;
+    const functions = new Set([...(context?.startup ?? []), ...[...(context?.sourced.values() ?? [])].filter(text => text !== null)].flatMap(text => [...definedNames(text)]));
+    const loop = analysis && context ? runningLoop(analysis, kids, functions) : undefined;
     found.push({ ...base, script: (loop ?? guess ?? shown.loops[0]!).script, ...(loop ? { loop } : {}) });
     const above = ancestors(table, pid);
-    if (analysis && around && loop?.pure && loop.condition && ![...above].some(other => TIMEOUTS.has(program(table.get(other)))) && plainCommands(analysis, loop, exact.shell, around)) {
-      judged.set(pid, loop);
-      lineage.set(pid, above);
+    if (!analysis || !context || !loop?.pure || !loop.condition || [...above].some(other => TIMEOUTS.has(program(table.get(other)))) || !plainCommands(analysis, loop, exact.shell, context)) continue;
+    const programs = samePrograms(loop, pathOf(analysis, loop, context), root);
+    if (!programs) continue;
+    for (const [name, file] of programs) tools.set(name, file);
+    // A grep on an empty file name fails as the loop's grep would: confirm it with the same file.
+    for (const atom of loop.condition.atoms) {
+      if (atom.check.kind !== "missing-file" || !atom.check.argv || confirmed.has(atom.text)) continue;
+      const result = spawnSync(programs.get("grep")!, atom.check.argv.slice(1), { timeout: 10_000, stdio: "ignore" });
+      if (result.status !== null && result.status >= 2) confirmed.add(atom.text);
     }
+    judged.set(pid, loop);
+    lineage.set(pid, above);
   }
   const patterns = new Set([...judged.values()].flatMap(loop => loop.condition!.atoms.flatMap(atom => atom.check.kind === "pgrep" ? [atom.check.pattern] : [])));
   if (judged.size === 0) return found;
+  const pgrep = tools.get("pgrep");
   const facts: LoopFacts = {
-    ancestorsVisible: patterns.size ? pgrepSeesAncestors() : undefined,
-    matches: new Map([...patterns].map(pattern => [pattern, pgrepMatches(pattern)])),
+    ancestorsVisible: patterns.size && pgrep ? pgrepSeesAncestors(pgrep) : undefined,
+    matches: new Map([...patterns].map(pattern => [pattern, pgrep ? pgrepMatches(pgrep, pattern) : undefined])),
     ancestors: lineage,
+    failing: confirmed,
   };
   const stuck = stuckLoops(judged, facts);
   for (const item of found) {
@@ -374,27 +473,35 @@ const same = (table: Map<number, ProcessRow>, target: ProcessRow) => {
 };
 
 /**
- * Stops a stuck loop's shell and the sleep or check it is running. Immediately before the first
- * signal, a fresh snapshot must still show the shell judged (pid, start time and command) running
- * that loop: children, each a loop command and each still the process it was. Otherwise nothing is
- * signalled (`skipped`). The shell and its children get SIGTERM; a shell that outlives the grace
- * period is stopped with SIGSTOP, so it cannot start another command, then killed with every loop
- * command it started since. Each is signalled only while it is the same process. `remaining`
- * lists what outlived it all.
+ * Stops a stuck loop's shell and the sleep or check it is running. It first suspends the shell
+ * (SIGSTOP), so it cannot start another command, then requires a fresh snapshot to show the same
+ * shell (pid, start time and command) with children that each run a loop command, and `recheck` to
+ * find the loop still stuck now; otherwise it resumes the shell and signals nothing (`skipped`).
+ * The children and the shell then get SIGTERM, and the shell SIGCONT to act on it. A shell that
+ * outlives the grace period is suspended again and killed with every loop command it started
+ * since. Each is signalled only while it is the same process; `remaining` lists what outlived it all.
  */
-export async function stopLoop(item: FoundLoop, grace = 2000): Promise<{ outcome: "stopped" | "skipped" | "survived"; gone: number[]; remaining: number[] }> {
-  const commands = new Set(item.loop?.commands ?? []);
+export async function stopLoop(item: FoundLoop, recheck: () => boolean, grace = 2000): Promise<{ outcome: "stopped" | "skipped" | "survived"; gone: number[]; remaining: number[] }> {
+  const commands = new Set(item.loop?.commands ?? []), known = new Map<number, ProcessRow>();
   const send = (targets: ProcessRow[], signal: NodeJS.Signals) => {
-    for (const target of targets) { try { process.kill(target.pid, signal); } catch { /* Gone, or no longer ours to signal. */ } }
+    const now = processTable();
+    for (const target of targets) {
+      if (!same(now, target)) continue;
+      try { process.kill(target.pid, signal); } catch { /* Gone, or no longer ours to signal. */ }
+    }
   };
-  const before = processTable(), kids = [...before.values()].filter(row => row.ppid === item.row.pid);
-  if (!same(before, item.row) || kids.length === 0 || kids.some(row => !commands.has(row.command))) return { outcome: "skipped", gone: [], remaining: [] };
-  const known = new Map(kids.map(row => [row.pid, row]));
-  const look = (now = processTable()) => {
+  const look = () => {
+    const now = processTable();
     if (same(now, item.row)) for (const row of now.values()) if (row.ppid === item.row.pid && commands.has(row.command)) known.set(row.pid, row);
     return [item.row, ...known.values()].filter(target => same(now, target));
   };
-  send([item.row, ...kids], "SIGTERM");
+  send([item.row], "SIGSTOP");
+  try {
+    const now = processTable(), kids = [...now.values()].filter(row => row.ppid === item.row.pid);
+    if (!same(now, item.row) || kids.length === 0 || kids.some(row => !commands.has(row.command)) || !recheck()) return { outcome: "skipped", gone: [], remaining: [] };
+    for (const kid of kids) known.set(kid.pid, kid);
+    send([...kids, item.row], "SIGTERM");
+  } finally { send([item.row], "SIGCONT"); }
   let live = look();
   for (const deadline = performance.now() + grace; live.length && performance.now() < deadline; live = look()) await pause(50);
   if (live.length) {
@@ -408,24 +515,25 @@ export async function stopLoop(item: FoundLoop, grace = 2000): Promise<{ outcome
 
 /**
  * Finds and classifies the wait loops among `candidates`, and with `apply` stops the stuck ones,
- * one at a time. Stopping one loop can release another that waited on it, so after each stop the
- * loops are judged again in a fresh snapshot. A loop whose processes outlive the stop is reported
- * as `stop-failed`, whether or not its shell is still there.
+ * one at a time. Stopping one loop can release another that waited on it, so each stop first
+ * judges every loop again with its target suspended, and after it the loops are judged again in a
+ * fresh snapshot. A loop whose processes outlive the stop is reported as `stop-failed`, whether or
+ * not its shell is still there.
  */
-export async function settleLoops(candidates: Map<number, Candidate>, cwd: Map<number, string>, apply: boolean, table = processTable()): Promise<{ loops: FoundLoop[]; gone: number[] }> {
-  let found = findLoops(table, candidates, cwd);
+export async function settleLoops(candidates: Map<number, Candidate>, cwd: Map<number, string>, root: string, apply: boolean, table = processTable()): Promise<{ loops: FoundLoop[]; gone: number[] }> {
+  let found = findLoops(table, candidates, cwd, root);
   const settled: FoundLoop[] = [], gone: number[] = [], tried = new Set<number>();
+  const remaining = () => new Map([...candidates].filter(([pid]) => !settled.some(item => item.row.pid === pid) && !gone.includes(pid)));
   while (apply) {
     const target = found.find(item => item.state.status === "stuck" && !tried.has(item.row.pid));
     if (!target) break;
     tried.add(target.row.pid);
-    const result = await stopLoop(target);
+    const result = await stopLoop(target, () => findLoops(processTable(), remaining(), cwd, root).some(item => item.row.pid === target.row.pid && item.state.status === "stuck"));
     gone.push(...result.gone);
     if (result.outcome === "stopped") settled.push({ ...target, state: loopTransition(target.state, { type: "stopped" }) });
     else if (result.outcome === "survived") settled.push({ ...target, state: loopTransition(target.state, { type: "stop-failed", remaining: result.remaining }) });
     // A skipped loop is judged again too: it may have gone, or left the loop.
-    const done = new Set(settled.map(item => item.row.pid));
-    found = findLoops(processTable(), new Map([...candidates].filter(([pid]) => !done.has(pid) && !gone.includes(pid))), cwd);
+    found = findLoops(processTable(), remaining(), cwd, root);
   }
   return { loops: [...settled, ...found].sort((a, b) => a.row.pid - b.row.pid), gone };
 }
