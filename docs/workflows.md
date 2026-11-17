@@ -763,13 +763,16 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
   a shell, exec wrapper or interpreter, by name or path, that could turn into
   one in place (`/bin/sh -c 'exec sleep 15'`, `env`, `python3`), a call of a
   function that a sourced or startup file defines, a command substitution
-  (`x=$(...)`, whose subshell may run its command in place), `eval`ed text
+  (`x=$(...)`, whose subshell may run its command in place, including in a
+  `for` header or a redirection), `eval`ed text
   that cannot be read, and a command whose words are expanded when its program
   is one of the loop's, is itself expanded (`"$@"`), or runs other code
   (`sleep "$n"`, `eval "$x"`, `xargs`). A shell between commands proves
   nothing.
-- The body does nothing but `sleep`, and no `timeout` command runs above the
-  shell.
+- The body does nothing but `sleep`, no `timeout` command runs above the
+  shell, and neither the script nor any file around it sets a trap that runs
+  between commands or on failures (`DEBUG`, `ERR`, `RETURN`, zsh's `ZERR` and
+  `TRAPDEBUG`), which could leave the loop; nor a trap teardown cannot read.
 - The loop's commands run as what their names say, read without running
   anything: the script defines none of them as a function or alias; nor does
   any file it sources by literal path (nested sources are read the same way,
@@ -822,17 +825,21 @@ loops are reported as waiting, with their age.
 Stuck loops fail teardown. `--apply` stops them one at a time, and a candidate
 counts only while its pid names the same process (start time and command), so
 a reused pid inherits nothing. A shell someone else suspended is left alone.
-Each stop first suspends the shell with SIGSTOP, and waits to see it
-suspended, so it cannot start another command, then requires a fresh snapshot to show the
-same shell with children that each run a loop command, and every loop to be
-judged again with it suspended: stopping one loop, or losing a peer, can release
-another that waited on it. When that no longer holds the shell is resumed and
-nothing is signalled. Otherwise its children and the shell get SIGTERM and the
-shell SIGCONT to act on it; a shell that outlives two seconds is suspended again
-and killed with every loop command it started since. Each is signalled only
-while it is the same process. After each stop the loops are judged again, and a
-released loop is left to finish. A loop whose processes outlive all of it is
-`stop-failed`, with their pids, and still fails teardown.
+Each stop first holds the shell with SIGSTOP and waits to see it suspended:
+held, it cannot start a command or exit, and its children's pids cannot be
+reused, since an exited child stays a zombie until the shell reaps it. Held, it
+must still be the same shell with children that each run a loop command, and
+every loop is judged again (stopping one loop, or losing a peer, can release
+another that waited on it); otherwise it is resumed and nothing is signalled.
+Then its children are killed, and the shell gets SIGTERM and is resumed to act
+on it; a shell that outlives two seconds is held again and killed with any loop
+command it started since. Whatever fails, a shell teardown suspended is
+resumed. Every signal goes only to a process that a fresh snapshot shows is
+still the same one; between that snapshot and the signal, a pid can only name
+another process if the system's pids wrap around, as for `proc stop`. After
+each stop the loops are judged again, and a released loop is left to finish. A
+loop whose processes outlive all of it is `stop-failed`, with their pids, and
+still fails teardown.
 
 Write waits that cannot match themselves: wait on a pid, or use a pattern such
 as `pgrep -f '[r]elease verify'`.

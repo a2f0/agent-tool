@@ -8,13 +8,13 @@ import path from "node:path";
  * A word after quote removal. `literal` is false when it holds an expansion or a glob, whose value
  * only the shell knows; `substitution` when it runs a command (`$(...)` or backquotes) to find it.
  */
-export interface Word { text: string; literal: boolean; quoted: boolean; substitution: boolean }
+export interface Word { text: string; literal: boolean; quoted: boolean; substitution: boolean; /** It begins with an unquoted `NAME=`, so it assigns when it leads a command. */ assignment?: boolean }
 /** A redirection; `fd` is the descriptor written before the operator (`2>`), when there is one. */
 export interface Redirect { operator: string; fd?: number; target: Word }
 export type Command =
   | { kind: "simple"; words: Word[]; assignments: number; redirects: Redirect[] }
   | { kind: "loop"; keyword: "until" | "while"; condition: List; body: List; redirects: Redirect[] }
-  | { kind: "compound"; lists: List[]; redirects: Redirect[]; defines?: string };
+  | { kind: "compound"; lists: List[]; redirects: Redirect[]; defines?: string; /** A `for` header's words, which the shell expands. */ header?: Word[] };
 export interface Pipeline { negated: boolean; commands: Command[] }
 /** An and-or list; `background` when `&` ends it, so the shell does not wait for it. */
 export interface AndOr { pipelines: Pipeline[]; operators: ("&&" | "||")[]; background?: boolean }
@@ -135,6 +135,8 @@ function skipBalanced(text: string, start: number, open: string, close: string):
 
 function readWord(text: string, start: number): { word: Word; end: number } | undefined {
   let at = start, value = "", literal = true, quoted = false, substitution = false;
+  // The unquoted text before the first quote or expansion, which decides whether it is `NAME=...`.
+  const name = /^[A-Za-z_][A-Za-z0-9_]*\+?=/.exec(text.slice(start, start + 256).replace(/['"\\$`][\s\S]*$/, ""));
   while (at < text.length && !META.has(text[at]!)) {
     const char = text[at]!;
     if (char === "\\") {
@@ -162,7 +164,7 @@ function readWord(text: string, start: number): { word: Word; end: number } | un
     if ("*?[]{}~".includes(char)) literal = false;
     value += char; at += 1;
   }
-  return { word: { text: value, literal, quoted, substitution }, end: at };
+  return { word: { text: value, literal, quoted, substitution, ...(name && name[0].length <= at - start ? { assignment: true } : {}) }, end: at };
 }
 
 function lex(text: string, shell: string): Token[] | undefined {
@@ -296,12 +298,13 @@ class Parser {
       if (this.peek()?.type !== "word") throw new Unsupported("for without a name");
       this.at += 1;
       this.newlines();
-      if (this.reserved(["in"])) { this.at += 1; while (this.peek()?.type === "word") this.at += 1; }
+      const header: Word[] = [];
+      if (this.reserved(["in"])) { this.at += 1; while (this.peek()?.type === "word") { header.push((this.peek() as { word: Word }).word); this.at += 1; } }
       while (this.operator([";", "\n"])) this.at += 1;
       this.expect("do");
       const body = this.list(["done"]);
       this.expect("done");
-      return { kind: "compound", lists: [body], redirects: this.redirects() };
+      return { kind: "compound", lists: [body], redirects: this.redirects(), header };
     }
     if (this.reserved(["case", "select", "function", "coproc", "then", "do", "done", "fi", "elif", "else", "esac", "}"])) throw new Unsupported("unsupported construct");
     if (this.reserved(["[["])) {
@@ -331,7 +334,7 @@ class Parser {
     }
     if (words.length === 0 && redirects.length === 0) throw new Unsupported("empty command");
     let assignments = 0;
-    while (assignments < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[assignments]!.text) && !words[assignments]!.quoted) assignments += 1;
+    while (assignments < words.length && words[assignments]!.assignment) assignments += 1;
     return { kind: "simple", words, assignments, redirects };
   }
 }
@@ -394,7 +397,12 @@ export interface Analysis {
    * doing it: a literal assignment, a sourced file, or something whose effect cannot be read.
    */
   path: PathEvent[];
+  /** Whether the script sets a trap that runs between commands or on failures (`STEP_TRAP`), or one teardown cannot read. */
+  traps: boolean;
 }
+
+/** A trap the shell runs between commands or on failures (`DEBUG`, `ERR`, `RETURN`, zsh's `ZERR` and `TRAPDEBUG`), which can leave a loop. */
+export const STEP_TRAP = /\btrap\b[^\n]*(?<![\w-])(?:SIG)?(?:DEBUG|ERR|RETURN|ZERR)\b|\bTRAP(?:DEBUG|ZERR)\b/;
 
 export type PathEvent = { at: number } & ({ kind: "assign"; value: string } | { kind: "source"; file: string } | { kind: "unknown" });
 
@@ -519,7 +527,7 @@ function describe(command: Simple): CommandInfo {
  * does not parse.
  */
 export function analyzeScript(text: string, shell = "sh"): Analysis | undefined {
-  const analysis: Analysis = { loops: [], commands: [], defines: new Set(), sourced: [], path: [] };
+  const analysis: Analysis = { loops: [], commands: [], defines: new Set(), sourced: [], path: [], traps: false };
   return collect(text, shell, analysis, 0) ? analysis : undefined;
 }
 
@@ -531,6 +539,7 @@ function definitions(command: Simple, info: CommandInfo, at: number, analysis: A
   const path = (event: PathEvent) => analysis.path.push(nested ? { at, kind: "unknown" } : event);
   const operands = info.args.filter(arg => !arg.startsWith("-") && !arg.startsWith("+"));
   if (info.program === "alias") for (const arg of operands) { const name = /^([^=]+)=/.exec(arg)?.[1]; if (name) analysis.defines.add(name); }
+  if (info.program === "trap" && (info.expands || STEP_TRAP.test(["trap", ...info.args].join(" ")))) analysis.traps = true;
   if (info.program === "autoload" || info.program === "functions") for (const arg of operands) analysis.defines.add(arg.replace(/=.*$/, ""));
   if ((info.program === "source" || info.program === ".") && operands[0] && !info.expands) {
     analysis.sourced.push(operands[0]);
@@ -550,12 +559,18 @@ function collect(text: string, shell: string, analysis: Analysis, depth: number)
   if (!list) return false;
   // Commands are numbered in the order the shell meets them, `eval`ed text where the `eval` is.
   const index = new Map<Simple, number>();
+  // A `for` header or a compound command's redirections are expanded by the shell too, and a
+  // command substitution among them runs a command: record them as a command with no program.
+  const expanded = (words: Word[]) => {
+    if (words.some(word => !plain(word))) analysis.commands.push({ text: "", args: words.map(word => word.text), expands: true, substitutes: words.some(word => word.substitution) });
+  };
   // Inside a compound command, after `&&` or `||`, in a pipeline or in the background, a change to
   // PATH may not run, or may not reach the shell.
   const visit = (current: List, nested = false) => {
     for (const andOr of current) for (const [position, pipeline] of andOr.pipelines.entries()) for (const command of pipeline.commands) {
       const conditional = nested || !!andOr.background || position > 0 || pipeline.commands.length > 1;
       if (command.kind === "loop") {
+        expanded(command.redirects.map(redirect => redirect.target));
         visit(command.condition, true);
         visit(command.body, true);
         if (!sleeps(command.body)) continue;
@@ -570,6 +585,8 @@ function collect(text: string, shell: string, analysis: Analysis, depth: number)
         });
       } else if (command.kind === "compound") {
         if (command.defines) analysis.defines.add(command.defines);
+        if (command.defines && /^TRAP(?:DEBUG|ZERR)$/.test(command.defines)) analysis.traps = true;
+        expanded([...(command.header ?? []), ...command.redirects.map(redirect => redirect.target)]);
         for (const inner of command.lists) visit(inner, true);
       } else {
         const at = analysis.commands.length, info = describe(command);

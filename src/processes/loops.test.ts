@@ -3,7 +3,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { definesAny, failsTeardown, findLoops, loopTransition, pathAfter, programOf, resolveIn, runningLoop, runsShell, sessionProcesses, stopLoop, stuckLoops, withSources, type LoopFacts, type LoopState } from "./loops";
+import { definesAny, failsTeardown, findLoops, loopTransition, pathAfter, programOf, resolveIn, runningLoop, runsShell, sessionProcesses, stopLoop, stopTransition, stuckLoops, withSources, type LoopFacts, type LoopState, type StopState } from "./loops";
 import { analyzeScript, definedNames, parseScript, shellArgvScript, shellScript, wordsInOrder, type WaitLoop } from "./shell";
 import { processTable, type ProcessRow } from "./table";
 
@@ -131,6 +131,10 @@ test("proves which loop a shell is running from its children", () => {
     expect(runningLoop(analyzeScript(`${before}; until ! pgrep -f x; do sleep 5; done`)!, [child("sleep 5")])).toBeUndefined();
     expect(runningLoop(analyzeScript(`until ! pgrep -f x; do sleep 5; done; ${before}`)!, [child("sleep 5")])).toBeUndefined();
   }
+  // So could a command substitution in a `for` header or a compound command's redirection.
+  expect(runningLoop(analyzeScript("for i in $(sleep 5); do :; done; until ! pgrep -f x; do sleep 5; done")!, [child("sleep 5")])).toBeUndefined();
+  expect(runningLoop(analyzeScript("{ :; } > \"$(sleep 5)\"; until ! pgrep -f x; do sleep 5; done")!, [child("sleep 5")])).toBeUndefined();
+  expect(runningLoop(analyzeScript("for i in 1 2; do :; done; until ! pgrep -f x; do sleep 5; done")!, [child("sleep 5")])).toBeDefined();
   // So could a function defined around the script, such as in a sourced shell snapshot.
   expect(runningLoop(analyzeScript("mise use node; until ! pgrep -f x; do sleep 5; done")!, [child("sleep 5")], new Set(["mise"]))).toBeUndefined();
   expect(runningLoop(analyzeScript("mise use node; until ! pgrep -f x; do sleep 5; done")!, [child("sleep 5")])).toBeDefined();
@@ -219,12 +223,35 @@ test("reads the PATH a loop's shell searches", () => {
   expect(resolveIn(`.:${path.dirname(pgrep)}`, "pgrep")).toBeUndefined();
   // Literal assignments and sources are recorded where they run; nested or expanded ones are unknown.
   expect(analyzeScript(`PATH=/usr/bin:/bin; source /tmp/snap.sh; export PATH="$HOME/bin"; if true; then PATH=/x; fi; until [ -f "" ]; do sleep 5; done`)!.path.map(event => event.kind === "assign" ? event.value : event.kind)).toEqual(["/usr/bin:/bin", "source", "unknown", "unknown"]);
+  // A quoted value is still an assignment.
+  expect(analyzeScript(`PATH="/custom/bin:/usr/bin:/bin"; until [ -f "" ]; do sleep 5; done`)!.path).toEqual([{ at: 0, kind: "assign", value: "/custom/bin:/usr/bin:/bin" }]);
+  // A quoted name is a command named `PATH=/x`, which changes nothing.
+  expect(analyzeScript(`"PATH=/x"; until [ -f "" ]; do sleep 5; done`)!.path).toEqual([]);
   // So are ones that may not run: after `&&` or `||`, in a pipeline, or in the background.
   expect(analyzeScript(`false && PATH=/a; PATH=/b | cat; PATH=/c & source /tmp/s || PATH=/d; until [ -f "" ]; do sleep 5; done`, "bash")!.path.map(event => event.kind === "assign" ? event.value : event.kind)).toEqual(["unknown", "unknown", "unknown", "source", "unknown"]);
   // Files sourced in turn are read by literal path.
   expect(withSources(". /etc/agent-tool-a\n", file => file === "/etc/agent-tool-a" ? "source /etc/agent-tool-b" : "f() { :; }")).toEqual([". /etc/agent-tool-a\n", "source /etc/agent-tool-b", "f() { :; }"]);
   expect(withSources(". ./relative\n", () => "")).toBeUndefined();
   expect(withSources('. "$DIR/env"\n', () => "")).toBeUndefined();
+});
+
+test("traps that run between commands or on failures are noticed", () => {
+  for (const script of [`trap '[ -f ready ] && exit' DEBUG`, `trap 'exit' ERR`, `trap "$handler" INT`, "TRAPDEBUG() { exit; }"]) expect(analyzeScript(`${script}; until [ -f "" ]; do sleep 5; done`, "zsh")!.traps).toBe(true);
+  expect(analyzeScript(`trap 'echo caught' TERM; until [ -f "" ]; do sleep 5; done`)!.traps).toBe(false);
+});
+
+test.each([
+  [{ status: "ready" }, { type: "suspended" }, { status: "holding" }],
+  [{ status: "ready" }, { type: "declined" }, { status: "skipped" }],
+  [{ status: "holding" }, { type: "declined" }, { status: "skipped" }],
+  [{ status: "holding" }, { type: "terminated" }, { status: "released" }],
+  [{ status: "released" }, { type: "declined" }, { status: "released" }],
+  [{ status: "released" }, { type: "escalated" }, { status: "holding" }],
+  [{ status: "holding" }, { type: "finished", remaining: [] }, { status: "finished", remaining: [] }],
+  [{ status: "ready" }, { type: "finished", remaining: [] }, { status: "ready" }],
+  [{ status: "skipped" }, { type: "suspended" }, { status: "skipped" }],
+] as const)("stop %o + %o", (state, event, next) => {
+  expect(stopTransition(state as StopState, event as never)).toEqual(next as StopState);
 });
 
 test("a process is judged as a shell only when it runs one", () => {
@@ -357,6 +384,8 @@ test("teardown fails on the session's wait loops that cannot finish, --apply sto
     fileWait: sh(`${PATHED}until grep -q "^exit=" ${review} 2>/dev/null; do sleep 30; done`),
     sleeper: { argv: ["sleep", "300"] },
     shell: sh("sleep 300; :"),
+    // Its condition never changes, but a DEBUG trap leaves the loop once a file appears.
+    debugTrap: { argv: ["bash", "-c", `trap '[ -f ${path.join(elsewhere, "ready")} ] && exit 0' DEBUG; ${PATHED}until [ -f "" ]; do sleep 1; done`] },
   }, [[], ["--apply"], []], 4000);
   const [before, applied, after] = reports;
 
@@ -366,6 +395,7 @@ test("teardown fails on the session's wait loops that cannot finish, --apply sto
   for (const name of ["pairA", "pairB"] as const) expect(found.get(pids[name])).toMatchObject({ state: "stuck", seen: "session", reason: expect.stringContaining(`pgrep -f "agent-tool-stuck-${id}" always finds`) });
   expect(found.get(pids.emptyName)).toMatchObject({ state: "stuck", reason: expect.stringContaining("empty name") });
   expect(found.get(pids.waitsForOther)).toMatchObject({ state: "waiting", seen: "session" });
+  expect(found.get(pids.debugTrap)).toMatchObject({ state: "waiting", seen: "session" });
   expect(found.get(pids.fileWait)).toMatchObject({ state: "waiting", command: `${PATHED}until grep -q "^exit=" ${review} 2>/dev/null; do sleep 30; done` });
   expect(found.get(pids.fileWait)!.ageSeconds).toBeGreaterThanOrEqual(0);
   expect(found.get(pids.waitsForOther)!.reason).toBeUndefined();
@@ -385,10 +415,11 @@ test("teardown fails on the session's wait loops that cannot finish, --apply sto
   if (after!.json.unavailable.length === 0) expect(after!.json.ok).toBe(true);
   expect(await until(() => !alive(pids.pairA) && !alive(pids.pairB), 10_000)).toBe(true);
   expect(alive(pids.emptyName)).toBe(false);
-  for (const name of ["waitsForOther", "fileWait", "other", "sleeper", "shell"] as const) expect(alive(pids[name])).toBe(true);
-  // The loop waiting for a real process finishes once that process does.
+  for (const name of ["waitsForOther", "fileWait", "other", "sleeper", "shell", "debugTrap"] as const) expect(alive(pids[name])).toBe(true);
+  // The loop waiting for a real process finishes once that process does, and the trapped one once its file appears.
   kill(pids.other, false);
-  expect(await until(() => !alive(pids.waitsForOther), 10_000)).toBe(true);
+  writeFileSync(path.join(elsewhere, "ready"), "");
+  expect(await until(() => !alive(pids.waitsForOther) && !alive(pids.debugTrap), 10_000)).toBe(true);
 }, 120_000);
 
 test("a stuck wait loop in the repository is stopped with every sleep it starts, without running anything it names", async () => {
@@ -405,7 +436,7 @@ test("a stuck wait loop in the repository is stopped with every sleep it starts,
     trapped: named(`${PATHED}trap 'echo caught' TERM; until [ -f "" ]; do sleep 37; done`),
     waiting: named(`${PATHED}until [ -f stop ]; do sleep 30; done`),
     // Its pgrep is not the one teardown would run, so nothing is proved about what it finds.
-    shimmed: named(`PATH=${bin}:/usr/bin:/bin; until ! pgrep -f "agent-tool-shim-${id}" >/dev/null; do sleep 30; done`),
+    shimmed: named(`PATH="${bin}:/usr/bin:/bin"; until ! pgrep -f "agent-tool-shim-${id}" >/dev/null; do sleep 30; done`),
   }, [[], ["--apply"]], 1500);
   const [before, applied] = reports;
   if (before!.json.unavailable.includes("working directories (lsof)")) return;
@@ -456,4 +487,9 @@ test("a stop that rechecks and finds the loop no longer stuck signals nothing", 
   expect(await stopLoop({ row, seen: "session", cwd: null, script: loop.script, loop, state: { status: "stuck", reason: "r" } }, () => true)).toEqual({ outcome: "skipped", gone: [], remaining: [] });
   expect(stat()).toMatch(/^T/);
   process.kill(shell.pid!, "SIGCONT");
+  expect(await until(() => !stat().startsWith("T"), 5_000)).toBe(true);
+  // An inspection that fails after suspending the shell still resumes it.
+  await expect(stopLoop({ row, seen: "session", cwd: null, script: loop.script, loop, state: { status: "stuck", reason: "r" } }, () => { throw new Error("inspection failed"); })).rejects.toThrow("inspection failed");
+  expect(stat()).not.toMatch(/^T/);
+  expect(alive(shell.pid!)).toBe(true);
 }, 30_000);

@@ -11,7 +11,7 @@ import path from "node:path";
 import { plainText } from "../commands/output";
 import { outsideExecutable } from "../system/executable";
 import { readRegularFile } from "../system/files";
-import { analyzeScript, definedNames, exclusive, isShell, shellArgvScript, shellScript, wordsInOrder, type Analysis, type WaitLoop } from "./shell";
+import { analyzeScript, definedNames, exclusive, isShell, shellArgvScript, shellScript, STEP_TRAP, wordsInOrder, type Analysis, type WaitLoop } from "./shell";
 import { ancestors, argsOf, processTable, type ProcessRow } from "./table";
 
 export type LoopState =
@@ -460,7 +460,9 @@ export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number
     const loop = analysis && context ? runningLoop(analysis, kids, functions) : undefined;
     found.push({ ...base, script: (loop ?? guess ?? shown.loops[0]!).script, ...(loop ? { loop } : {}) });
     const above = ancestors(table, pid);
-    if (!analysis || !context || !loop?.pure || !loop.condition || [...above].some(other => TIMEOUTS.has(program(table.get(other)))) || !plainCommands(analysis, loop, exact!.shell, context)) continue;
+    // A trap that runs between commands or on failures can leave the loop, and so can unknown ones.
+    const trapped = !analysis || analysis.traps || !context || context.all.some(text => STEP_TRAP.test(text));
+    if (trapped || !analysis || !context || !loop?.pure || !loop.condition || [...above].some(other => TIMEOUTS.has(program(table.get(other)))) || !plainCommands(analysis, loop, exact!.shell, context)) continue;
     const programs = samePrograms(loop, pathOf(analysis, loop, context), root);
     if (!programs) continue;
     for (const [name, file] of programs) tools.set(name, file);
@@ -513,51 +515,113 @@ const same = (table: Map<number, ProcessRow>, target: ProcessRow) => {
 };
 
 /**
- * Stops a stuck loop's shell and the sleep or check it is running. It first suspends the shell
- * (SIGSTOP), so it cannot start another command, then requires a fresh snapshot to show the same
- * shell (pid, start time and command) with children that each run a loop command, and `recheck` to
- * find the loop still stuck now; otherwise it resumes the shell and signals nothing (`skipped`).
- * The children and the shell then get SIGTERM, and the shell SIGCONT to act on it. A shell that
- * outlives the grace period is suspended again and killed with every loop command it started
- * since. Each is signalled only while it is the same process; `remaining` lists what outlived it all.
+ * Where stopping a loop's shell stands. While teardown holds it suspended, the shell cannot start a
+ * command or exit, and its children's pids cannot be reused (an exited child stays a zombie until
+ * the shell reaps it), so they are signalled only then; teardown owes it a SIGCONT on every way out.
+ */
+export type StopState =
+  | { status: "ready" }
+  | { status: "holding" }
+  | { status: "released" }
+  | { status: "skipped" }
+  | { status: "finished"; remaining: number[] };
+export type StopEvent =
+  | { type: "suspended" }
+  | { type: "declined" }
+  | { type: "terminated" }
+  | { type: "escalated" }
+  | { type: "finished"; remaining: number[] };
+
+/** Holding begins only from ready or released; declining ends a stop that has not terminated anything. */
+export function stopTransition(state: StopState, event: StopEvent): StopState {
+  switch (event.type) {
+    case "suspended":
+      return state.status === "ready" ? { status: "holding" } : state;
+    case "declined":
+      return state.status === "ready" || state.status === "holding" ? { status: "skipped" } : state;
+    case "terminated":
+      return state.status === "holding" ? { status: "released" } : state;
+    case "escalated":
+      return state.status === "released" ? { status: "holding" } : state;
+    case "finished":
+      return state.status === "holding" || state.status === "released" ? { status: "finished", remaining: event.remaining } : state;
+    default:
+      return assertNever(event);
+  }
+}
+
+const SKIPPED = { outcome: "skipped" as const, gone: [], remaining: [] };
+
+/**
+ * Stops a stuck loop's shell and the sleep or check it is running. The shell is suspended first
+ * (SIGSTOP), and only a shell teardown saw running, not one someone else suspended. Held, it must
+ * still be the process judged (pid, start time and command), its children must each run a loop
+ * command, and `recheck` must find the loop still stuck; otherwise it is resumed and nothing else
+ * is signalled (`skipped`). Its children are then killed, the shell gets SIGTERM and is resumed to
+ * act on it, and a shell that outlives the grace period is held again and killed with any loop
+ * command it started since. `remaining` lists what outlived it all.
  */
 export async function stopLoop(item: FoundLoop, recheck: () => boolean, grace = 2000): Promise<{ outcome: "stopped" | "skipped" | "survived"; gone: number[]; remaining: number[] }> {
-  const commands = new Set(item.loop?.commands ?? []), known = new Map<number, ProcessRow>();
-  const send = (targets: ProcessRow[], signal: NodeJS.Signals) => {
-    const now = processTable();
+  const commands = new Set(item.loop?.commands ?? []), signalled = new Map<number, ProcessRow>();
+  let state: StopState = { status: "ready" };
+  const send = (table: Map<number, ProcessRow>, targets: ProcessRow[], signal: NodeJS.Signals) => {
     for (const target of targets) {
-      if (!same(now, target)) continue;
+      if (!same(table, target)) continue;
       try { process.kill(target.pid, signal); } catch { /* Gone, or no longer ours to signal. */ }
     }
   };
-  const look = () => {
-    const now = processTable();
-    if (same(now, item.row)) for (const row of now.values()) if (row.ppid === item.row.pid && commands.has(row.command)) known.set(row.pid, row);
-    return [item.row, ...known.values()].filter(target => same(now, target));
+  const resume = () => send(processTable(), [item.row], "SIGCONT");
+  const held = (table: Map<number, ProcessRow>) => same(table, item.row) && (table.get(item.row.pid)?.stat?.startsWith("T") ?? false);
+  // Suspends the shell and returns the snapshot that shows it held, or undefined.
+  const hold = async () => {
+    send(processTable(), [item.row], "SIGSTOP");
+    for (let tries = 0; tries < 40; tries += 1) {
+      const table = processTable();
+      if (held(table)) return table;
+      if (!same(table, item.row)) return undefined;
+      await pause(25);
+    }
+    return undefined;
   };
-  // A shell someone else suspended is theirs to resume: leave it alone.
-  const suspended = (table: Map<number, ProcessRow>) => table.get(item.row.pid)?.stat?.startsWith("T") ?? false;
-  const skipped = { outcome: "skipped" as const, gone: [], remaining: [] };
-  if (!same(processTable(), item.row) || suspended(processTable())) return skipped;
-  send([item.row], "SIGSTOP");
-  let now = processTable();
-  for (let tries = 0; tries < 20 && same(now, item.row) && !suspended(now); tries += 1) { await pause(25); now = processTable(); }
-  if (!same(now, item.row) || !suspended(now)) return skipped;
+  const kids = (table: Map<number, ProcessRow>) => [...table.values()].filter(row => row.ppid === item.row.pid);
   try {
-    const kids = [...now.values()].filter(row => row.ppid === item.row.pid);
-    if (kids.length === 0 || kids.some(row => !commands.has(row.command)) || !recheck()) return skipped;
-    for (const kid of kids) known.set(kid.pid, kid);
-    send([...kids, item.row], "SIGTERM");
-  } finally { send([item.row], "SIGCONT"); }
-  let live = look();
-  for (const deadline = performance.now() + grace; live.length && performance.now() < deadline; live = look()) await pause(50);
-  if (live.length) {
-    if (live.includes(item.row)) { send([item.row], "SIGSTOP"); live = look(); }
-    send(live, "SIGKILL");
-    for (let tries = 0; tries < 20 && (live = look()).length; tries += 1) await pause(50);
+    const first = processTable();
+    // A shell someone else suspended is theirs to resume: leave it alone.
+    if (!same(first, item.row) || first.get(item.row.pid)?.stat?.startsWith("T")) { state = stopTransition(state, { type: "declined" }); return SKIPPED; }
+    state = stopTransition(state, { type: "suspended" });
+    const table = await hold();
+    const children = table ? kids(table) : [];
+    if (!table || children.length === 0 || children.some(row => !commands.has(row.command)) || !recheck()) {
+      state = stopTransition(state, { type: "declined" });
+      resume();
+      return SKIPPED;
+    }
+    // The children's pids are pinned while the shell is held: kill them, then let the shell take SIGTERM.
+    for (const child of children) signalled.set(child.pid, child);
+    send(processTable(), children, "SIGKILL");
+    send(processTable(), [item.row], "SIGTERM");
+    state = stopTransition(state, { type: "terminated" });
+    resume();
+    const alive = () => same(processTable(), item.row);
+    for (const deadline = performance.now() + grace; alive() && performance.now() < deadline;) await pause(50);
+    if (alive()) {
+      state = stopTransition(state, { type: "escalated" });
+      const again = await hold();
+      if (again) {
+        const later = kids(again).filter(row => commands.has(row.command));
+        for (const child of later) signalled.set(child.pid, child);
+        send(again, later, "SIGKILL");
+        send(processTable(), [item.row], "SIGKILL");
+      }
+      for (let tries = 0; tries < 20 && alive(); tries += 1) await pause(50);
+    }
+    const now = processTable(), remaining = [item.row, ...signalled.values()].filter(target => same(now, target)).map(target => target.pid);
+    state = stopTransition(state, { type: "finished", remaining });
+    return { outcome: remaining.length ? "survived" : "stopped", gone: [item.row, ...signalled.values()].map(target => target.pid).filter(pid => !remaining.includes(pid)), remaining };
+  } finally {
+    // Never leave a shell teardown suspended frozen, whatever failed.
+    if (state.status === "holding" || (state.status === "finished" && state.remaining.includes(item.row.pid))) resume();
   }
-  const remaining = live.map(target => target.pid);
-  return { outcome: remaining.length ? "survived" : "stopped", gone: [item.row, ...known.values()].map(target => target.pid).filter(pid => !remaining.includes(pid)), remaining };
 }
 
 /**
