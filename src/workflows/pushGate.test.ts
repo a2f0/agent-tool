@@ -202,7 +202,7 @@ test("Python runners, environment managers, and wrappers are followed to the com
     [["uv", "run", "--no-sync", "--with", "pytest-cov", "--", "pytest", "--cov"], ["test"]], [["uv", "run", "--no-sync", "-m", "pytest"], ["test"]], [["uv", "run", "--no-sync", "--module", "build"], ["build"]],
     [["uv", "--directory", "build", "run", "--no-sync", "--with", "test", "mypy"], []], [["uv", "--directory", "build", "run", "--no-sync", "npm", "test"], ["test"]],
     [["UV_NO_SYNC=1", "uv", "run", "pytest"], ["test"]], [["env", "UV_NO_SYNC=true", "uv", "run", "mypy"], []], [["UV_NO_SYNC=1", "env", "-u", "UV_NO_SYNC", "uv", "run", "mypy"], ["install"]], [["UV_NO_SYNC=0", "uv", "run", "mypy"], ["install"]],
-    [["uvx", "pytest"], ["test"]], [["uvx", "--from", "pytest", "py.test"], ["test"]], [["uv", "tool", "run", "--with", "build", "tox"], ["test"]], [["uvx", "ruff@0.6", "check"], []],
+    [["uvx", "pytest"], ["test"]], [["uv", "tool", "--no-cache", "run", "pytest"], ["test"]], [["uv", "tool", "--directory", "build", "run", "npm", "test"], ["test"]], [["uvx", "--from", "pytest", "py.test"], ["test"]], [["uv", "tool", "run", "--with", "build", "tox"], ["test"]], [["uvx", "ruff@0.6", "check"], []],
     [["poetry", "run", "pytest"], ["test"]], [["poetry", "-C", "build", "run", "mypy"], []], [["poetry", "--directory=build", "run", "npm", "test"], ["test"]],
     [["pdm", "run", "--venv", "test", "pytest"], ["test"]], [["pdm", "run", "-k", "post_lint", "flake8"], []], [["pdm", "run", "--working-dir", "build", "npm", "test"], ["test"]],
     // `pdm run -p` keeps the directory pdm started in; `--working-dir` is relative to the project root.
@@ -244,7 +244,7 @@ test("Python test runs, installs, and builds are classified, and Python static c
     ["ruff", "check"], ["ruff", "format", "--check"], ["mypy"], ["pyright"], ["black", "--check", "."], ["isort", "--check-only", "."], ["flake8"], ["pylint", "src"],
     ["uv", "run", "--no-sync", "ruff", "check"], ["uv", "run", "--no-sync", "ruff", "format", "--check"], ["uv", "run", "--no-sync", "mypy"], ["uv", "run", "--no-sync", "pyright"], ["uvx", "black", "--check", "."],
     ["poetry", "run", "flake8"], ["pdm", "run", "pylint", "src"], ["pipenv", "run", "isort", "--check-only", "."], ["python", "-m", "mypy"], ["hatch", "fmt", "--check"],
-    ["uv", "lock", "--check"], ["uv", "sync", "--check"], ["uv", "sync", "--dry-run"], ["uv", "pip", "install", "--dry-run", "httpx"], ["pip", "install", "--dry-run", "."], ["poetry", "install", "--dry-run"], ["poetry", "add", "--lock", "httpx"], ["pdm", "sync", "--dry-run"], ["pipenv", "update", "--dry-run"], ["uv", "pip", "list"], ["pip", "check"], ["poetry", "check"], ["poetry", "lock"], ["pdm", "lock", "--check"],
+    ["uv", "lock", "--check"], ["uv", "sync", "--check"], ["uv", "sync", "--dry-run"], ["uv", "pip", "install", "--dry-run", "httpx"], ["pip", "install", "--dry-run", "."], ["poetry", "install", "--dry-run"], ["poetry", "add", "--lock", "httpx"], ["pdm", "sync", "--dry-run"], ["pipenv", "update", "--dry-run"], ["pipenv", "upgrade", "requests"], ["uv", "pip", "list"], ["pip", "check"], ["poetry", "check"], ["poetry", "lock"], ["pdm", "lock", "--check"],
     // Option values are never read as subcommands.
     ["uv", "--project", "sync", "lock", "--check"], ["uv", "--directory", "build", "tree"], ["poetry", "-C", "install", "check"], ["pip", "--log", "install", "list"], ["hatch", "-e", "build", "fmt"], ["pdm", "run", "--venv", "build", "mypy"],
   ];

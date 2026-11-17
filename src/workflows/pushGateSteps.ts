@@ -531,7 +531,9 @@ const PYTHON_TOOLS = {
 const MISE = tool(["-C", "--cd", "-E", "--env", "-j", "--jobs", "-c", "--command", "--allow-env", "--allow-net", "--allow-read", "--allow-write", "--secrets"]);
 /** Subcommands that install a Python project's dependencies into its environment. */
 const PYTHON_INSTALLS: Partial<Record<keyof typeof PYTHON_TOOLS, readonly string[]>> = {
-  uv: ["sync", "add", "remove"], poetry: ["install", "sync", "add", "remove", "update"], pdm: ["install", "sync", "add", "remove", "update"], pipenv: ["install", "sync", "update", "upgrade"],
+  uv: ["sync", "add", "remove"], poetry: ["install", "sync", "add", "remove", "update"], pdm: ["install", "sync", "add", "remove", "update"],
+  // `pipenv upgrade` only updates the lockfile; `pipenv update` also syncs.
+  pipenv: ["install", "sync", "update"],
 };
 /** A Python install that only previews or locks: `--dry-run`, `uv sync --check`, or poetry's `--lock`. `pdm install --check` checks the lockfile and then installs. */
 const previews = (tool: string, sub: string | undefined, args: string[]) => args.some(arg => arg === "--dry-run" || (arg === "--check" && tool === "uv" && sub === "sync") || (arg === "--lock" && tool === "poetry"));
@@ -555,14 +557,16 @@ function uv(context: Context, args: string[], cwd: string, chain: string[], dept
   const spec = PYTHON_TOOLS.uv;
   const { rest, seen } = options(args, spec);
   const sub = rest[0], words = rest.slice(1);
-  if (sub === "run" || (sub === "tool" && words[0] === "run")) {
-    const run = scriptOptions(sub === "run" ? words : words.slice(1), spec);
-    const flags = new Set([...seen.keys(), ...run.seen.keys()]);
+  // uv reads its global options anywhere, so `uv tool --no-cache run` is `uv tool run`.
+  const tool = sub === "tool" ? options(words, spec) : { rest: [], seen: new Map<string, string | true>() };
+  if (sub === "run" || tool.rest[0] === "run") {
+    const run = scriptOptions(sub === "run" ? words : tool.rest.slice(1), spec);
+    const flags = new Set([...seen.keys(), ...tool.seen.keys(), ...run.seen.keys()]);
     // Even without a command, `uv run` syncs before it lists what it could run.
     if (sub === "run" && !["--no-sync", "--no-project", "-s", "--script", "--gui-script"].some(flag => flags.has(flag)) && !truthy(context.env.UV_NO_SYNC)) report(context, "install", text, chain);
     if (!run.rest.length) return;
     const module = sub === "run" && (run.seen.has("-m") || run.seen.has("--module"));
-    visit(context, module ? ["python", "-m", ...run.rest] : run.rest, movedTo(cwd, ["--directory"], seen, run.seen), chain, depth + 1);
+    visit(context, module ? ["python", "-m", ...run.rest] : run.rest, movedTo(cwd, ["--directory"], seen, tool.seen, run.seen), chain, depth + 1);
   } else if ((PYTHON_INSTALLS.uv!.includes(sub ?? "") || (sub === "pip" && ["install", "sync"].includes(options(words, spec).rest[0] ?? ""))) && !previews("uv", sub, words)) report(context, "install", text, chain);
   else if (sub === "build") report(context, "build", text, chain);
 }

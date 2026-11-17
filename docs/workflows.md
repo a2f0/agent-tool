@@ -396,10 +396,11 @@ install|add|up`, `agent-tool bun install`, `pod` or `bundle install`, the
 environment syncs of `uv run` and `hatch run`, and the Python installs `pip
 install` (also `pip3` and `python -m pip`), `uv sync|add|remove`, `uv pip
 install|sync`, `poetry install|sync|add|remove|update`, `pdm
-install|sync|add|remove|update`, and `pipenv install|sync|update|upgrade`,
-unless they only preview or lock (`--dry-run`, `uv sync --check`, or poetry's
-`--lock`; `pdm install --check` still installs). Executables and script files are
-leaves: their contents are not inspected. The report is:
+install|sync|add|remove|update`, and `pipenv install|sync|update` (not
+`pipenv upgrade`, which only relocks), unless they only preview or lock
+(`--dry-run`, `uv sync --check`, or poetry's `--lock`; `pdm install --check`
+still installs). Executables and script files are leaves: their contents are
+not inspected. The report is:
 
 ```json
 {
