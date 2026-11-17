@@ -207,6 +207,8 @@ test("Python runners, environment managers, and wrappers are followed to the com
     [["pdm", "run", "--venv", "test", "pytest"], ["test"]], [["pdm", "run", "-k", "post_lint", "flake8"], []], [["pdm", "run", "--working-dir", "build", "npm", "test"], ["test"]],
     // `pdm run -p` keeps the directory pdm started in; `--working-dir` is relative to the project root.
     [["pdm", "run", "-p", "api", "npm", "test"], []], [["pdm", "run", "-p", "api", "--working-dir", ".", "npm", "test"], ["test"]], [["sh", "-c", "cd api/src && pdm run --working-dir . npm test"], ["test"]],
+    // pdm rejects `-p` before its subcommand, but a misplaced option value still never hides the command.
+    [["pdm", "-p", "api", "run", "pytest"], ["test"]], [["pdm", "--venv", "test", "run", "--working-dir", "build", "npm", "test"], ["test"]],
     // `hatch run` creates and syncs the environment before running its command.
     [["hatch", "run", "pytest"], ["install", "test"]], [["hatch", "run", "+py=3.12", "-version=9000", "test:pytest"], ["install", "test"]], [["hatch", "-e", "test", "run", "mypy"], ["install"]], [["hatch", "env", "run", "-e", "test", "--", "pytest"], ["install", "test"]],
     [["pipenv", "run", "pytest"], ["test"]], [["pipx", "run", "--spec", "build", "tox"], ["test"]], [["pipx", "run", "black", "--check", "."], []],

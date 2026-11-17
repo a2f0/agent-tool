@@ -518,7 +518,8 @@ const PYTHON_TOOLS = {
     "--no-binary-package", "--refresh-package",
   ]),
   poetry: tool(["-C", "--directory", "-P", "--project"]),
-  pdm: tool(["-c", "--config"]),
+  // pdm takes `-p`, `--project`, and `--venv` only after its subcommand (`pdm -p api run` fails), but reading them before it too means a misplaced one never hides the command.
+  pdm: tool(["-c", "--config", "-p", "--project", "--venv"]),
   pdmRun: tool(["-p", "--project", "-k", "--skip", "--venv", "--env", "--env-file", "--working-dir"]),
   hatch: tool(["-e", "--env", "-p", "--project", "--data-dir", "--cache-dir", "--config"]),
   hatchEnvRun: tool(["-e", "--env", "-i", "--include", "-x", "--exclude", "-f", "--filter"]),
@@ -593,7 +594,7 @@ function pythonProject(context: Context, name: "poetry" | "pdm" | "hatch" | "pip
     let directory = movedTo(cwd, name === "poetry" ? ["-C", "--directory"] : [], seen, run.seen);
     const working = name === "pdm" ? run.seen.get("--working-dir") : undefined;
     if (typeof working === "string") {
-      const project = run.seen.get("--project") ?? run.seen.get("-p");
+      const project = run.seen.get("--project") ?? run.seen.get("-p") ?? seen.get("--project") ?? seen.get("-p");
       directory = path.resolve(typeof project === "string" ? path.resolve(cwd, project) : packageRoot(context, cwd, "pyproject.toml"), working);
     }
     visit(context, run.rest, directory, chain, depth + 1);
