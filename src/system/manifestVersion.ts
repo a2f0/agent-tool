@@ -9,9 +9,9 @@ export const AGENT_TOOL_VERSION: string = metadata.version;
 export type CheckStatus = "missing" | "outdated" | "unmanaged" | "unchanged";
 export interface ManifestVersionCheck { path: string; status: CheckStatus; recordedVersion: string | null; currentVersion: string }
 
-/** A recorded version: a non-empty token without whitespace, such as `0.1.64`. */
+/** A recorded version in the package's release format: semantic versioning, such as `0.1.64` or `1.0.0-rc.1`. */
 export function validVersion(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9A-Za-z][0-9A-Za-z.+-]*$/.test(value);
+  return typeof value === "string" && /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(value);
 }
 
 /**

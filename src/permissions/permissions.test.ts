@@ -225,7 +225,7 @@ test("install records the agent-tool version, and check requires the running one
     expect(readFileSync(path.join(root, ".codex/rules/agent-tool.rules"), "utf8")).toBe(rules);
   }
   // An unusable version is provenance lost, not ownership: it reads as none, and the install replaces it.
-  for (const invalid of [1, "", "0.1 beta", null, { version: metadata.version }]) {
+  for (const invalid of [1, "", "0.1 beta", "banana", "1..0", "01.2.3", null, { version: metadata.version }]) {
     writeFileSync(manifestFile, JSON.stringify({ ...manifest, agentToolVersion: invalid }));
     expect(checkPermissions(root, "all").at(-1)).toEqual({ path: ".agent-tool-permissions.json", status: "outdated", recordedVersion: null, currentVersion: metadata.version });
     expect(installPermissions(root, "all", true).filter(item => item.status !== "unchanged")).toEqual([{ path: ".agent-tool-permissions.json", status: "update" }]);

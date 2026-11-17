@@ -20,6 +20,9 @@ export type RegularFile = { status: "missing" } | { status: "irregular" } | { st
  * Reads a regular file. It refuses anything else before opening it, then opens one descriptor
  * without following a final symbolic link and without blocking and checks that descriptor, so a
  * path replaced after the first check can neither redirect the read nor stall it on a FIFO.
+ * Callers refuse links in parent directories with a component walk first. Node has no `openat`,
+ * so a parent swapped between that walk and the open is outside this guard; only a concurrent
+ * writer of the checkout could do it, and that writer already controls its hooks and packages.
  */
 export function readRegularFile(file: string): RegularFile {
   // Never open an existing special file: opening a device can block or act even without reading.
