@@ -9,7 +9,7 @@ import { createLog } from "../commands/logFile";
 import { plainText } from "../commands/output";
 import { assert, git, output } from "../workflows/core";
 import { claimedBy, ledgerDirectory, membersOf, newId, observe, readRecords, removeRecord, saveRecord, type ProcessRecord, type ProcessState } from "./ledger";
-import { findLoops, loopReport, loopTransition, sessionProcesses, stopLoop, type FoundLoop, type LoopReport, type Seen } from "./loops";
+import { loopReport, sessionProcesses, settleLoops, type LoopReport, type Seen } from "./loops";
 import { ancestors, carrying, listeningPorts, processTable, startOf, workingDirectories, type ProcessRow } from "./table";
 
 const STOP_GRACE_MS = 5000;
@@ -223,7 +223,12 @@ export interface TeardownReport {
   skipped: { file: string; reason: string }[];
 }
 
-function survey(root: string, directory: string): Omit<TeardownReport, "ok" | "applied" | "stopped" | "loops"> & { loops: FoundLoop[] } {
+interface Survey extends Omit<TeardownReport, "ok" | "applied" | "stopped" | "loops"> {
+  /** Shells that may run wait loops, and the table and working directories they were found in. */
+  candidates: { pids: Map<number, Seen>; table: Map<number, ProcessRow>; cwd: Map<number, string> };
+}
+
+function survey(root: string, directory: string): Survey {
   const table = processTable(), { records, skipped } = readRecords(directory);
   const listening = listeningPorts(), cwd = workingDirectories(table.keys());
   const described = records.map(record => describe(record, table, listening.ports, records));
@@ -248,7 +253,6 @@ function survey(root: string, directory: string): Omit<TeardownReport, "ok" | "a
     const row = table.get(pid);
     if (!row || excluded.has(pid) || owned.has(pid) || row.ppid === process.pid || (uid !== undefined && row.uid !== uid)) candidates.delete(pid);
   }
-  const loops = findLoops(table, candidates, cwd.cwd);
   const worktrees: { path: string; branch: string | null }[] = [];
   let current: { path: string; branch: string | null } | undefined;
   for (const line of git(["worktree", "list", "--porcelain"]).split("\n")) {
@@ -261,7 +265,7 @@ function survey(root: string, directory: string): Omit<TeardownReport, "ok" | "a
     kept: described.filter(item => alive(item.state) && item.keep),
     finished: described.filter(item => !alive(item.state)).map(item => ({ id: item.id, label: item.label, state: item.state })),
     untracked,
-    loops,
+    candidates: { pids: candidates, table, cwd: cwd.cwd },
     // The first entry is the main worktree; the rest were added and may need removing.
     worktrees: worktrees.slice(1),
     unavailable: [...(listening.available ? [] : ["listening ports (lsof)"]), ...(cwd.available ? [] : ["working directories (lsof)"])],
@@ -286,17 +290,10 @@ export async function teardownCommand(args: string[]): Promise<number> {
       else if (!record.keep) stopped.push(await stopRecord(directory, record));
     }
   }
-  const { loops: found, ...rest } = survey(root, directory);
-  const gone = new Set<number>();
-  if (apply) {
-    for (const item of found) {
-      if (item.state.status !== "stuck") continue;
-      const result = await stopLoop(item);
-      for (const pid of result.gone) gone.add(pid);
-      if (result.stopped) item.state = loopTransition(item.state, { type: "stopped" });
-    }
-  }
-  const untracked = rest.untracked.filter(item => !gone.has(item.pid)), loops = found.map(item => loopReport(item));
+  const { candidates, ...rest } = survey(root, directory);
+  const settled = await settleLoops(candidates.pids, candidates.cwd, apply, candidates.table);
+  const gone = new Set(settled.gone);
+  const untracked = rest.untracked.filter(item => !gone.has(item.pid)), loops = settled.loops.map(item => loopReport(item));
   // A clean report needs every inspection: without lsof a listening server would go unseen.
   // Unreadable records may name running processes, so they fail teardown too.
   const ok = rest.leftover.length === 0 && untracked.every(item => item.ports.length === 0) && loops.every(item => item.state !== "stuck") && rest.unavailable.length === 0 && rest.skipped.length === 0;

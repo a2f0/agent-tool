@@ -1,11 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loopTransition, runningLoop, sessionProcesses, stuckLoops, type LoopFacts, type LoopState } from "./loops";
-import { analyzeScript, parseScript, shellScript, wordsInOrder, type WaitLoop } from "./shell";
-import type { ProcessRow } from "./table";
+import { loopTransition, programOf, runningLoop, sessionProcesses, stuckLoops, type LoopFacts, type LoopState } from "./loops";
+import { analyzeScript, parseScript, shellArgvScript, shellScript, wordsInOrder, type WaitLoop } from "./shell";
+import { processTable, type ProcessRow } from "./table";
 
 const cli = path.resolve(import.meta.dir, "../index.ts");
 const temporary: string[] = [];
@@ -48,6 +48,8 @@ test("reads the script of a -c shell from its ps command line", () => {
   expect(shellScript("zsh -c -l echo hi")).toEqual({ shell: "zsh", script: "echo hi" });
   expect(shellScript("bash --noprofile -o pipefail -c true")).toEqual({ shell: "bash", script: "true" });
   for (const command of ["-zsh", "/bin/bash script.sh", "bash -l", "node -c x", "sleep 15"]) expect(shellScript(command)).toBeUndefined();
+  // ps joins positional arguments onto the script; exact argv leaves them out.
+  expect(shellArgvScript(["sh", "-c", "echo \"$1\"", "name", "; until [ -f '' ]; do sleep 30; done"])).toEqual({ shell: "sh", script: "echo \"$1\"" });
 });
 
 test("finds a wait loop inside a harness's eval wrapper and reads its condition", () => {
@@ -69,7 +71,7 @@ test("finds a wait loop inside a harness's eval wrapper and reads its condition"
       { negated: true, text: "pgrep -f seq 1 20", check: { kind: "pgrep", pattern: "seq 1 20" } },
     ],
   });
-  expect(analysis.counts.get("sleep 15")).toBe(1);
+  expect(runningLoop(analysis, [row(99, 1, "sleep 15")])).toBe(loop);
 });
 
 test("judges only checks whose outcome can be read from the script", () => {
@@ -85,6 +87,9 @@ test("judges only checks whose outcome can be read from the script", () => {
   expect(checks(`! pgrep -af verify`)).toEqual(["other"]);
   expect(checks(`! pgrep -f verify >/tmp/out`)).toEqual(["other"]);
   expect(checks(`! LC_ALL=C pgrep -f verify`)).toEqual(["other"]);
+  // An empty pattern after -e leaves grep reading its input, which may still arrive.
+  expect(checks(`grep -q -e ""`)).toEqual(["other"]);
+  expect(checks(`grep -q -- -e ""`)).toEqual(["missing-file"]);
   // A pipeline or a sequence in the condition is not read at all.
   expect(checks(`pgrep -f x | grep -q .`)).toBeUndefined();
   expect(checks(`true; ! pgrep -f x`)).toBeUndefined();
@@ -113,8 +118,15 @@ test("proves which loop a shell is running from its children", () => {
   expect(runningLoop(analysis, [child("pgrep -f x")])?.keyword).toBe("until");
   expect(runningLoop(analysis, [])).toBeUndefined();
   expect(runningLoop(analysis, [child("sleep 5"), child("tail -f log")])).toBeUndefined();
-  // The same command before the loop could be what runs now.
-  expect(runningLoop(analyzeScript("sleep 5; until ! pgrep -f x; do sleep 5; done")!, [child("sleep 5")])).toBeUndefined();
+  // Anything else in the script that could start the same process could be what runs now: the
+  // same command, a command whose arguments are expanded (n=5), one naming the program as an
+  // argument, a command substitution, or a program found by expansion.
+  for (const before of ["sleep 5", "sleep \"$n\"", "nohup sleep 5 &", "x=$(date)", "echo `date`", "\"$@\"", "eval \"$command\""]) {
+    expect(runningLoop(analyzeScript(`${before}; until ! pgrep -f x; do sleep 5; done`)!, [child("sleep 5")])).toBeUndefined();
+    expect(runningLoop(analyzeScript(`until ! pgrep -f x; do sleep 5; done; ${before}`)!, [child("sleep 5")])).toBeUndefined();
+  }
+  // Commands that cannot start it leave the proof standing.
+  for (const before of ["sleep 1", "echo \"$x\"", "cd /tmp", "cat \"$f\""]) expect(runningLoop(analyzeScript(`${before}; until ! pgrep -f x; do sleep 5; done`)!, [child("sleep 5")])).toBeDefined();
   // Nested loops: the innermost one whose commands the children run.
   const nested = analyzeScript("while pgrep -f a; do until [ -f '' ]; do sleep 1; done; sleep 2; done")!;
   expect(runningLoop(nested, [child("sleep 1")])?.keyword).toBe("until");
@@ -167,7 +179,8 @@ test.each([
   expect(loopTransition(state as LoopState, event)).toEqual(next as LoopState);
 });
 
-test("the session is the harness's other children, found past package runners", () => {
+test("the session is an agent harness's other children, found past package runners and build tools", () => {
+  expect(["claude --resume", "/opt/homebrew/bin/codex exec", "node /usr/local/bin/claude", "python3 /usr/bin/hermes chat", "bun run teardown", "make -j4"].map(programOf)).toEqual(["claude", "codex", "claude", "hermes", "run", "make"]);
   const table = new Map([
     row(1, 0, "launchd"),
     row(10, 1, "-zsh"),
@@ -180,14 +193,21 @@ test("the session is the harness's other children, found past package runners", 
     row(41, 40, "sleep 15"),
     row(50, 20, "node mcp-server.js"),
     row(60, 10, "/bin/zsh -c other terminal job"),
+    // A parallel build under the session: its other recipes are not the harness's.
+    row(70, 20, "/bin/zsh -c make -j2"),
+    row(71, 70, "make -j2"),
+    row(72, 71, "/bin/sh -c agent-tool teardown"),
+    row(73, 72, "agent-tool teardown"),
+    row(74, 71, "/bin/sh -c until ! pgrep -f y; do sleep 1; done"),
   ].map(item => [item.pid, item]));
-  expect([...sessionProcesses(table, 33)].sort((a, b) => a - b)).toEqual([40, 41, 50]);
+  expect([...sessionProcesses(table, 33)].sort((a, b) => a - b)).toEqual([40, 41, 50, 70, 71, 72, 73, 74]);
+  expect([...sessionProcesses(table, 73)].sort((a, b) => a - b)).toEqual([30, 31, 32, 33, 40, 41, 50]);
   // From an interactive shell there is no harness.
   expect(sessionProcesses(new Map([row(1, 0, "launchd"), row(10, 1, "-zsh"), row(11, 10, "agent-tool teardown"), row(12, 10, "sleep 9")].map(item => [item.pid, item])), 11).size).toBe(0);
 });
 
-// A stand-in agent harness: it starts each planned command as its own child, then runs each
-// teardown through a `sh -c` shell beside them, as an agent's command would.
+// A stand-in agent harness, Bun under the name `claude`: it starts each planned command as its own
+// child, then runs each teardown through a `sh -c` shell beside them, as an agent's command would.
 const HARNESS = `
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
@@ -225,8 +245,8 @@ test("teardown fails on the session's wait loops that cannot finish, --apply sto
     settleMs: 4000,
     background: {
       // Each matches the other, and on Linux itself; the leading sleep lets both start before either looks.
-      pairA: sh(`sleep 2; until ! pgrep -f "agent-tool-stuck-${id}" >/dev/null; do sleep 30; done`),
-      pairB: sh(`sleep 2; while pgrep -f "agent-tool-stuck-${id}" >/dev/null; do sleep 30; done`),
+      pairA: sh(`sleep 2; until ! pgrep -f "agent-tool-stuck-${id}" >/dev/null; do sleep 3; done`),
+      pairB: sh(`sleep 2; while pgrep -f "agent-tool-stuck-${id}" >/dev/null; do sleep 3; done`),
       emptyName: sh(`until grep -q "^exit " "" 2>/dev/null; do sleep 30; done`),
       other: [process.execPath, "-e", "setInterval(() => {}, 1000)", `agent-tool-other-${id}`],
       waitsForOther: sh(`sleep 2; until ! pgrep -f "[a]gent-tool-other-${id}" >/dev/null; do sleep 1; done`),
@@ -238,7 +258,10 @@ test("teardown fails on the session's wait loops that cannot finish, --apply sto
   };
   const planFile = path.join(elsewhere, "plan.json");
   writeFileSync(planFile, JSON.stringify(plan));
-  const harness = spawn(process.execPath, ["-e", HARNESS], { cwd: elsewhere, detached: true, stdio: "ignore", env: { ...process.env, AGENT_TOOL_TEST_PLAN: planFile } });
+  const bin = path.join(elsewhere, "bin");
+  mkdirSync(bin);
+  symlinkSync(process.execPath, path.join(bin, "claude"));
+  const harness = spawn(path.join(bin, "claude"), ["-e", HARNESS], { cwd: elsewhere, detached: true, stdio: "ignore", env: { ...process.env, AGENT_TOOL_TEST_PLAN: planFile } });
   groups.push(harness.pid!);
   expect(await until(() => existsSync(plan.out), 45_000)).toBe(true);
   const { pids, results } = JSON.parse(readFileSync(plan.out, "utf8")) as { pids: Record<keyof typeof plan.background, number>; results: { status: number; stdout: string; stderr: string }[] };
@@ -257,23 +280,31 @@ test("teardown fails on the session's wait loops that cannot finish, --apply sto
   for (const name of ["other", "sleeper", "shell"] as const) expect(found.has(pids[name])).toBe(false);
 
   const stopped = byPid(applied!.json.loops);
-  for (const name of ["pairA", "pairB", "emptyName"] as const) expect(stopped.get(pids[name])?.state).toBe("stopped");
+  expect(stopped.get(pids.emptyName)?.state).toBe("stopped");
+  // Where pgrep reports its own shell, each of the pair is stuck alone and both are stopped. Where
+  // it does not, stopping one releases the other, which is judged again, left alone, and finishes.
+  const pair = [stopped.get(pids.pairA)?.state, stopped.get(pids.pairB)?.state];
+  expect(pair).toContain("stopped");
+  expect(pair).not.toContain("stuck");
   for (const name of ["waitsForOther", "fileWait"] as const) expect(stopped.get(pids[name])?.state).toBe("waiting");
   if (applied!.json.unavailable.length === 0) expect(applied!.status).toBe(0);
-
-  expect(after!.json.loops.map(loop => [loop.pid, loop.state])).toEqual([[pids.waitsForOther, "waiting"], [pids.fileWait, "waiting"]].sort((a, b) => (a[0] as number) - (b[0] as number)));
+  expect(after!.json.loops.filter(loop => loop.state === "stuck")).toEqual([]);
+  expect(after!.json.loops.map(loop => loop.pid)).toEqual(expect.arrayContaining([pids.waitsForOther, pids.fileWait]));
   if (after!.json.unavailable.length === 0) expect(after!.json.ok).toBe(true);
-  for (const name of ["pairA", "pairB", "emptyName"] as const) expect(alive(pids[name])).toBe(false);
+  expect(await until(() => !alive(pids.pairA) && !alive(pids.pairB), 10_000)).toBe(true);
+  expect(alive(pids.emptyName)).toBe(false);
   for (const name of ["waitsForOther", "fileWait", "other", "sleeper", "shell"] as const) expect(alive(pids[name])).toBe(true);
   // The loop waiting for a real process finishes once that process does.
   kill(pids.other, false);
   expect(await until(() => !alive(pids.waitsForOther), 10_000)).toBe(true);
 }, 90_000);
 
-test("a stuck wait loop in the repository fails teardown and --apply stops it, leaving a waiting one", async () => {
+test("a stuck wait loop in the repository fails teardown and --apply stops it with every sleep it starts, leaving a waiting one", async () => {
   const root = repository();
   const start = (script: string) => { const child = spawn("sh", ["-c", script], { cwd: root, detached: true, stdio: "ignore" }); children.push(child); return child.pid!; };
-  const stuck = start(`until [ -f "" ]; do sleep 30; done`), waiting = start("until [ -f stop ]; do sleep 30; done");
+  // The stuck shell survives SIGTERM, and its loop starts a new sleep when the old one is stopped.
+  const stuck = start(`trap 'echo caught' TERM; until [ -f "" ]; do sleep 37; done`), waiting = start("until [ -f stop ]; do sleep 30; done");
+  const sleeps = () => [...processTable().values()].filter(item => item.command === "sleep 37").map(item => item.pid);
   await sleep(1000);
   const report = (...args: string[]) => {
     const result = spawnSync(process.execPath, [cli, "teardown", ...args], { cwd: root, encoding: "utf8", timeout: 30_000 });
@@ -287,6 +318,7 @@ test("a stuck wait loop in the repository fails teardown and --apply stops it, l
   expect(entry(before.json.loops, waiting)).toMatchObject({ state: "waiting", seen: "repository" });
   const applied = report("--apply");
   expect(entry(applied.json.loops, stuck)?.state).toBe("stopped");
+  expect(sleeps()).toEqual([]);
   expect(alive(stuck)).toBe(false);
   expect(alive(waiting)).toBe(true);
   expect(applied.json.untracked.map(item => item.pid)).toContain(waiting);

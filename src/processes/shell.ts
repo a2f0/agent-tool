@@ -4,8 +4,11 @@
 // know nothing about its loops.
 import path from "node:path";
 
-/** A word after quote removal. `literal` is false when it holds an expansion or a glob, whose value only the shell knows. */
-export interface Word { text: string; literal: boolean; quoted: boolean }
+/**
+ * A word after quote removal. `literal` is false when it holds an expansion or a glob, whose value
+ * only the shell knows; `substitution` when it runs a command (`$(...)` or backquotes) to find it.
+ */
+export interface Word { text: string; literal: boolean; quoted: boolean; substitution: boolean }
 export interface Redirect { operator: string; target: Word }
 export type Command =
   | { kind: "simple"; words: Word[]; assignments: number; redirects: Redirect[] }
@@ -29,33 +32,46 @@ export function isShell(command: string): boolean {
   return SHELLS.has(path.basename(command.split(" ")[0] ?? "").replace(/^-/, ""));
 }
 
-/**
- * The script of a `<shell> [options] -c <script>` command line as `ps` prints it: argv joined by
- * spaces, so the script runs to the end of the line. Undefined for anything else, including
- * interactive and login shells and shells reading a script file.
- */
-export function shellScript(command: string): { shell: string; script: string } | undefined {
-  const parts = command.split(" ");
-  const shell = path.basename(parts[0] ?? "");
+/** Where the script operand of a `<shell> [options] -c <script> [name [args...]]` argv is. */
+function scriptOperand(argv: string[]): { shell: string; index: number } | undefined {
+  const shell = path.basename(argv[0] ?? "");
   if (!SHELLS.has(shell)) return undefined;
   // Options may follow `-c` (`zsh -c -l script`); the script is the first operand after them.
   let script = false, index = 1;
-  for (; index < parts.length; index += 1) {
-    const part = parts[index]!;
+  for (; index < argv.length; index += 1) {
+    const part = argv[index]!;
     if (part === "--") { index += 1; break; }
     if (part === "-o" || part === "+o") { index += 1; continue; }
     if (/^--[a-z][a-z-]*$/.test(part)) continue;
     if (!/^[-+][A-Za-z]+$/.test(part)) break;
     if (part.startsWith("-") && part.includes("c")) script = true;
   }
-  return script && index < parts.length ? { shell, script: parts.slice(index).join(" ") } : undefined;
+  return script && index < argv.length ? { shell, index } : undefined;
 }
 
-function readDouble(text: string, start: number): { value: string; literal: boolean; end: number } | undefined {
-  let value = "", literal = true;
+/**
+ * The script of a `-c` shell from its `ps` command line. `ps` joins argv with spaces, so the
+ * script runs to the end of the line, positional arguments included. Undefined for anything else,
+ * including interactive and login shells and shells reading a script file.
+ */
+export function shellScript(command: string): { shell: string; script: string } | undefined {
+  const parts = command.split(" "), found = scriptOperand(parts);
+  return found && { shell: found.shell, script: parts.slice(found.index).join(" ") };
+}
+
+/** The script of a `-c` shell from its exact argv, without the positional arguments after it. */
+export function shellArgvScript(argv: string[]): { shell: string; script: string } | undefined {
+  const found = scriptOperand(argv);
+  return found && { shell: found.shell, script: argv[found.index]! };
+}
+
+const runs = (text: string, at: number) => text[at] === "`" || text[at + 1] === "(";
+
+function readDouble(text: string, start: number): { value: string; literal: boolean; substitution: boolean; end: number } | undefined {
+  let value = "", literal = true, substitution = false;
   for (let at = start; at < text.length;) {
     const char = text[at]!;
-    if (char === "\"") return { value, literal, end: at + 1 };
+    if (char === "\"") return { value, literal, substitution, end: at + 1 };
     if (char === "\\") {
       const next = text[at + 1];
       if (next === undefined) return undefined;
@@ -65,6 +81,7 @@ function readDouble(text: string, start: number): { value: string; literal: bool
     if (char === "$" || char === "`") {
       const end = skipExpansion(text, at);
       if (end === undefined) return undefined;
+      substitution ||= runs(text, at);
       value += text.slice(at, end); literal = false; at = end; continue;
     }
     value += char; at += 1;
@@ -111,7 +128,7 @@ function skipBalanced(text: string, start: number, open: string, close: string):
 }
 
 function readWord(text: string, start: number): { word: Word; end: number } | undefined {
-  let at = start, value = "", literal = true, quoted = false;
+  let at = start, value = "", literal = true, quoted = false, substitution = false;
   while (at < text.length && !META.has(text[at]!)) {
     const char = text[at]!;
     if (char === "\\") {
@@ -127,18 +144,19 @@ function readWord(text: string, start: number): { word: Word; end: number } | un
     if (char === "\"") {
       const inner = readDouble(text, at + 1);
       if (!inner) return undefined;
-      value += inner.value; literal &&= inner.literal; quoted = true; at = inner.end; continue;
+      value += inner.value; literal &&= inner.literal; substitution ||= inner.substitution; quoted = true; at = inner.end; continue;
     }
     if (char === "$" || char === "`") {
       const end = skipExpansion(text, at);
       if (end === undefined) return undefined;
+      substitution ||= runs(text, at);
       value += text.slice(at, end); literal = false; at = end; continue;
     }
     // Globs, brace expansion and `~` give the word a value the shell decides.
     if ("*?[]{}~".includes(char)) literal = false;
     value += char; at += 1;
   }
-  return { word: { text: value, literal, quoted }, end: at };
+  return { word: { text: value, literal, quoted, substitution }, end: at };
 }
 
 function lex(text: string, shell: string): Token[] | undefined {
@@ -282,11 +300,12 @@ class Parser {
       const words: Word[] = [];
       while (this.peek() && !this.reserved(["]]"])) {
         const token = this.peek()!;
-        words.push(token.type === "word" ? { ...token.word, literal: false } : { text: token.value, literal: false, quoted: false });
+        words.push(token.type === "word" ? { ...token.word, literal: false } : { text: token.value, literal: false, quoted: false, substitution: false });
         this.at += 1;
       }
       this.expect("]]");
-      return { kind: "simple", words: [{ text: "[[", literal: false, quoted: false }, ...words, { text: "]]", literal: false, quoted: false }], assignments: 0, redirects: this.redirects() };
+      const bracket = (text: string): Word => ({ text, literal: false, quoted: false, substitution: false });
+      return { kind: "simple", words: [bracket("[["), ...words, bracket("]]")], assignments: 0, redirects: this.redirects() };
     }
     const words: Word[] = [], redirects: Redirect[] = [];
     for (;;) {
@@ -325,6 +344,20 @@ export type Check =
   | { kind: "other" };
 export interface Atom { negated: boolean; text: string; check: Check }
 
+/** A simple command anywhere in a script, `eval`ed text included, as far as it shows what it may start. */
+export interface CommandInfo {
+  /** Its words joined, as `ps` shows the process it starts. */
+  text: string;
+  /** Its first word after assignments, unless that is an expansion. */
+  program?: string;
+  /** Its other words. */
+  args: string[];
+  /** Whether a word, assignment or redirection holds an expansion. */
+  expands: boolean;
+  /** Whether one runs a command (`$(...)` or backquotes) to find its value. */
+  substitutes: boolean;
+}
+
 export interface WaitLoop {
   keyword: "until" | "while";
   /** The script holding the loop, unwrapped from `eval`. */
@@ -335,17 +368,23 @@ export interface WaitLoop {
   pure: boolean;
   /** Each simple command in the loop, as `ps` shows it once started. */
   commands: string[];
+  /** Indexes into the analysis's `commands` of the loop's own simple commands. */
+  own: number[];
 }
 
 export interface Analysis {
   loops: WaitLoop[];
-  /** How often each simple command appears in the whole script, loops and `eval`ed text included. */
-  counts: Map<string, number>;
+  /** Every simple command in the script, loops and `eval`ed text included. */
+  commands: CommandInfo[];
 }
+
+type Simple = Extract<Command, { kind: "simple" }>;
 
 const commandText = (words: Word[]) => words.map(word => word.text).join(" ").trim();
 const SLEEP = /^\d+(?:\.\d+)?[smhd]?$/;
 const FILE_TESTS = new Set(["-e", "-f", "-s", "-r", "-w", "-x", "-d", "-L", "-h", "-p", "-S", "-b", "-c"]);
+// Commands that run code or another program given in their arguments.
+const RUNNERS = new Set(["eval", "exec", "command", "builtin", "source", ".", "env", "nohup", "nice", "xargs", "time", "stdbuf", "sudo", "doas", "timeout", "gtimeout"]);
 
 /** Redirections that only discard or merge output, which change nothing a loop waits on. */
 function harmless(redirects: Redirect[]): boolean {
@@ -364,9 +403,11 @@ function check(command: Command): Check {
   if (words[0] === "grep") {
     let index = 1;
     while (index < words.length && /^-[qsEFiwxv]+$/.test(words[index]!)) index += 1;
-    if (words[index] === "--") index += 1;
-    // A pattern, then exactly one file operand, which is empty.
-    if (words.length === index + 2 && words[index + 1] === "") return { kind: "missing-file" };
+    const separated = words[index] === "--";
+    if (separated) index += 1;
+    // A pattern, then exactly one file operand, which is empty. A pattern that looks like an option
+    // (`-e ""`) would leave grep reading its input instead.
+    if (words.length === index + 2 && (separated || !words[index]!.startsWith("-")) && words[index + 1] === "") return { kind: "missing-file" };
   }
   const test = words[0] === "[" ? (words.at(-1) === "]" ? words.slice(1, -1) : undefined) : words[0] === "test" ? words.slice(1) : undefined;
   if (test?.length === 2 && FILE_TESTS.has(test[0]!) && test[1] === "") return { kind: "missing-file" };
@@ -378,7 +419,7 @@ function* commandsOf(list: List): Generator<Command> {
 }
 
 /** Every simple command under a list, loops and nested lists included, but not `eval`ed text. */
-function* simpleCommands(list: List): Generator<Extract<Command, { kind: "simple" }>> {
+function* simpleCommands(list: List): Generator<Simple> {
   for (const command of commandsOf(list)) {
     if (command.kind === "simple") yield command;
     else if (command.kind === "loop") { yield* simpleCommands(command.condition); yield* simpleCommands(command.body); }
@@ -386,7 +427,7 @@ function* simpleCommands(list: List): Generator<Extract<Command, { kind: "simple
   }
 }
 
-function evaluated(command: Extract<Command, { kind: "simple" }>): string | undefined {
+function evaluated(command: Simple): string | undefined {
   const words = command.words.slice(command.assignments);
   const start = words[0]?.text === "builtin" ? 1 : 0;
   if (words[start]?.text !== "eval" || words.length === start + 1) return undefined;
@@ -408,26 +449,44 @@ function condition(list: List): WaitLoop["condition"] {
 
 const sleeps = (list: List): boolean => [...simpleCommands(list)].some(command => command.words[command.assignments]?.text === "sleep");
 
+function describe(command: Simple): CommandInfo {
+  const words = command.words.slice(command.assignments), all = [...command.words, ...command.redirects.map(redirect => redirect.target)];
+  return {
+    text: commandText(command.words),
+    ...(words[0]?.literal ? { program: words[0].text } : {}),
+    args: words.slice(1).map(word => word.text),
+    expands: all.some(word => !word.literal),
+    substitutes: all.some(word => word.substitution),
+  };
+}
+
 /**
  * The wait loops in a script (`until` or `while` loops whose body sleeps), searching `eval`ed text
  * too, since harnesses wrap the command they were given in `eval '...'`. Undefined when the script
  * does not parse.
  */
-export function analyzeScript(text: string, shell = "sh", depth = 0): Analysis | undefined {
+export function analyzeScript(text: string, shell = "sh"): Analysis | undefined {
+  const analysis: Analysis = { loops: [], commands: [] };
+  return collect(text, shell, analysis, 0) ? analysis : undefined;
+}
+
+function collect(text: string, shell: string, analysis: Analysis, depth: number): boolean {
   const list = parseScript(text, shell);
-  if (!list) return undefined;
-  const loops: WaitLoop[] = [], counts = new Map<string, number>();
+  if (!list) return false;
+  const index = new Map<Simple, number>();
+  for (const command of simpleCommands(list)) { index.set(command, analysis.commands.length); analysis.commands.push(describe(command)); }
   const visit = (current: List) => {
     for (const command of commandsOf(current)) {
       if (command.kind === "loop") {
         if (sleeps(command.body)) {
-          const body = [...simpleCommands(command.body)];
-          loops.push({
+          const inside = [...simpleCommands(command.condition), ...simpleCommands(command.body)], body = [...simpleCommands(command.body)];
+          analysis.loops.push({
             keyword: command.keyword,
             script: text,
             condition: condition(command.condition),
             pure: harmless(command.redirects) && [...commandsOf(command.body)].every(inner => inner.kind === "simple") && body.every(inner => inner.assignments === 0 && harmless(inner.redirects) && inner.words.length === 2 && inner.words[0]!.text === "sleep" && inner.words.every(word => word.literal) && SLEEP.test(inner.words[1]!.text)),
-            commands: [...simpleCommands(command.condition), ...body].map(inner => commandText(inner.words)),
+            commands: inside.map(inner => commandText(inner.words)),
+            own: inside.map(inner => index.get(inner)!),
           });
         }
         visit(command.condition);
@@ -435,17 +494,31 @@ export function analyzeScript(text: string, shell = "sh", depth = 0): Analysis |
       } else if (command.kind === "compound") command.lists.forEach(visit);
       else {
         const nested = depth < 3 ? evaluated(command) : undefined;
-        const inner = nested === undefined ? undefined : analyzeScript(nested, shell, depth + 1);
-        if (inner) {
-          loops.push(...inner.loops);
-          for (const [key, count] of inner.counts) counts.set(key, (counts.get(key) ?? 0) + count);
-        }
+        if (nested !== undefined) collect(nested, shell, analysis, depth + 1);
       }
     }
   };
   visit(list);
-  for (const command of simpleCommands(list)) { const key = commandText(command.words); counts.set(key, (counts.get(key) ?? 0) + 1); }
-  return { loops, counts };
+  return true;
+}
+
+/**
+ * Whether nothing in the script outside the loop could start a process that looks like one of the
+ * loop's own: no command with the same words, no command naming one of its programs as an
+ * argument (`env sleep 30`), no command whose program or arguments are found by expansion when it
+ * runs one of its programs or runs other code (`sleep "$n"`, `"$@"`, `eval "$x"`), and no command
+ * substitution, whose subshell may run the command directly. Functions and sourced files are taken
+ * at their word: they are not read.
+ */
+export function exclusive(analysis: Analysis, loop: WaitLoop): boolean {
+  const own = new Set(loop.own), texts = new Set(loop.commands);
+  const programs = new Set(loop.commands.map(text => text.split(" ")[0]!));
+  return analysis.commands.every((command, index) => own.has(index) || !(
+    texts.has(command.text)
+    || command.substitutes
+    || command.args.some(arg => programs.has(arg))
+    || (command.expands && (command.program === undefined || programs.has(command.program) || RUNNERS.has(command.program)))
+  ));
 }
 
 /** Whether the words occur in this order, as whole words, anywhere in the text; linear in its length. */

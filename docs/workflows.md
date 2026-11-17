@@ -729,20 +729,32 @@ Agents wait in the background with loops such as
 `until ! pgrep -f "release verify" >/dev/null; do sleep 15; done`, and a loop
 that can never finish keeps running long after the work. Teardown reads the
 script of every `-c` shell (`sh -c`, `zsh -c`, `bash -lc`) among the untracked
-processes and among the agent session's other shells. A harness starts each
-command, in the background or not, as a `-c` shell of its own process, so
-walking up from teardown, the first `-c` shell whose parent is not a shell and
-has other children names the harness, and those children and their
-descendants are the session. A package runner with only the one child, such as
-`bun run`, is passed over; from an interactive terminal there is no session.
+processes and among the agent session's other shells. On Linux it reads the
+script from the shell's exact argv; elsewhere `ps` joins positional arguments
+onto it, which the ownership rule below has to cover.
+
+A harness starts each command, in the background or not, as a `-c` shell of its
+own process. Walking up from teardown, the first `-c` shell whose parent is a
+known agent harness (`claude`, `codex`, `opencode`, `hermes`, `omp`, `gemini`,
+`cursor-agent`, `amp`, `goose`, `aider`, `crush` or `qwen`, by executable or by
+the script an interpreter such as `node` runs) names the session: that
+harness's other children and their descendants. Package runners and build tools
+in between (`bun run`, `make -j`) are passed over, and their other children are
+not the session. From an interactive terminal there is no session.
 
 Several delegates may share one harness, so a sibling can be another's live
 wait: a loop is `stuck` only when it provably can never finish on its own, and
 every other loop is `waiting`. Teardown proves it only when all of these hold:
 
 - The shell is running that loop now: each of its children runs that loop's
-  `sleep` or one of its checks, and those commands appear nowhere else in the
-  script. A shell between commands proves nothing.
+  `sleep` or one of its checks, and nothing else in the script could start a
+  process that looks the same. That rules out a script with the same command
+  elsewhere, a command naming one of the loop's programs as an argument
+  (`nohup sleep 15`), a command substitution (`x=$(...)`, whose subshell may run
+  its command in place), and a command whose words are expanded when its
+  program is one of the loop's, is itself expanded (`"$@"`), or runs other code
+  (`sleep "$n"`, `eval "$x"`, `exec`, `xargs`). Functions and sourced files are
+  taken at their word and not read. A shell between commands proves nothing.
 - The body does nothing but `sleep`, and no `timeout` command runs above the
   shell.
 - The condition is one `&&`/`||` list of simple checks, optionally negated with
@@ -754,19 +766,27 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
     and its ancestors, so there it takes loops whose patterns match each other.
     Teardown asks `pgrep` itself which processes match, and probes which of the
     two it is.
-  - `grep`, `[ -f ]`, `test -e` and the other file tests on an empty file name
-    (`""`) never succeed.
+  - `grep` with one empty file operand (`grep -q x ""`), `[ -f "" ]`,
+    `test -e ""` and the other file tests never succeed. `grep -e ""` is an
+    empty pattern on the standard input, which can still arrive.
 - Taken together: a set of loops is stuck when each one's condition is settled
   while all of them keep running, since none can be the first to finish.
 
 Nothing else counts as settled. A variable such as `"$f"` holds a value no
 other process can read, and a file that merely stopped changing can still be
 replaced by a build or by a process that holds its path internally, so those
-loops are reported as waiting, with their age. Stuck loops fail teardown, and
-`--apply` sends SIGTERM to the loop's shell and to the `sleep` or check it is
-running, each only while it is the same process (pid, start time and command),
-then SIGKILL after two seconds. Write waits that cannot match themselves: wait
-on a pid, or use a pattern such as `pgrep -f '[r]elease verify'`.
+loops are reported as waiting, with their age.
+
+Stuck loops fail teardown. `--apply` stops them one at a time, and judges the
+rest again against the live process table before each, since stopping one loop
+can release another that waited on it; a released loop is left to finish.
+Right before signalling, the shell must still be the process judged (pid,
+start time and command) with only the loop's commands as children. It gets
+SIGTERM with the `sleep` or check it runs; a shell that outlives two seconds is
+stopped with SIGSTOP, so it cannot start another command, then killed with
+every loop command it started, including any started after SIGTERM. Write
+waits that cannot match themselves: wait on a pid, or use a pattern such as
+`pgrep -f '[r]elease verify'`.
 
 ## CI aggregate gates
 
