@@ -194,14 +194,14 @@ test("bundlers, framework, native, and image builds are reported, and static che
 test("Python runners, environment managers, and wrappers are followed to the command they run", () => {
   const root = project({ "package.json": { scripts: { unit: "uv run --no-sync pytest", types: "uv run --no-sync mypy", gate: "UV_NO_SYNC=1 bun run synced", synced: "uv run mypy" } }, "build/package.json": { scripts: { test: "jest" } }, "api/pyproject.toml": "[project]\nname = \"api\"\n", "api/package.json": { scripts: { test: "vitest" } }, "api/src/app.py": "" });
   const cases: [string[], StepFinding["kind"][]][] = [
-    // `uv run` syncs the environment first, even with --frozen or --locked, unless --no-sync, --no-project, a script, or UV_NO_SYNC says otherwise.
+    // `uv run` syncs the environment first, even with --frozen or --locked, unless --no-sync, --no-project, or a script says otherwise.
     [["uv", "run", "pytest"], ["install", "test"]], [["uv", "run", "--frozen", "mypy"], ["install"]], [["uv", "run", "--locked", "--", "ruff", "check"], ["install"]],
     [["uv", "run", "--no-sync", "pytest"], ["test"]], [["uv", "run", "--no-project", "pytest"], ["test"]], [["uv", "run", "--script", "tools/check.py"], []], [["uv", "run", "-qs", "tools/check.py"], []],
     // Without a command, `uv run` still syncs before listing what it could run.
     [["uv", "run"], ["install"]], [["uv", "run", "--no-sync"], []],
     [["uv", "run", "--no-sync", "--with", "pytest-cov", "--", "pytest", "--cov"], ["test"]], [["uv", "run", "--no-sync", "-m", "pytest"], ["test"]], [["uv", "run", "--no-sync", "--module", "build"], ["build"]],
     [["uv", "--directory", "build", "run", "--no-sync", "--with", "test", "mypy"], []], [["uv", "--directory", "build", "run", "--no-sync", "npm", "test"], ["test"]],
-    [["UV_NO_SYNC=1", "uv", "run", "pytest"], ["test"]], [["env", "UV_NO_SYNC=true", "uv", "run", "mypy"], []], [["UV_NO_SYNC=1", "env", "-u", "UV_NO_SYNC", "uv", "run", "mypy"], ["install"]], [["UV_NO_SYNC=0", "uv", "run", "mypy"], ["install"]],
+    [["UV_NO_SYNC=1", "uv", "run", "pytest"], ["install", "test"]], [["env", "UV_NO_SYNC=true", "uv", "run", "mypy"], ["install"]],
     [["uvx", "pytest"], ["test"]], [["uv", "tool", "--no-cache", "run", "pytest"], ["test"]], [["uv", "tool", "--directory", "build", "run", "npm", "test"], ["test"]], [["uvx", "--from", "pytest", "py.test"], ["test"]], [["uv", "tool", "run", "--with", "build", "tox"], ["test"]], [["uvx", "ruff@0.6", "check"], []], [["uvx", "pytest==8.3", "-q"], ["test"]], [["uvx", "tox[uv]>=4"], ["test"]], [["pipx", "run", "pytest~=8.0"], ["test"]], [["uvx", "ruff[all]==0.6", "check"], []],
     [["poetry", "run", "pytest"], ["test"]], [["poetry", "-C", "build", "run", "mypy"], []], [["poetry", "--directory=build", "run", "npm", "test"], ["test"]],
     [["pdm", "run", "--venv", "test", "pytest"], ["test"]], [["pdm", "run", "-k", "post_lint", "flake8"], []], [["pdm", "run", "--working-dir", "build", "npm", "test"], ["test"]],
@@ -217,16 +217,13 @@ test("Python runners, environment managers, and wrappers are followed to the com
     [["coverage", "run", "--source", "src", "-m", "pytest"], ["test"]], [["coverage", "run", "--save-signal", "USR1", "-p", "-m", "pytest"], ["test"]], [["coverage", "run", "pytest.py"], []],
     [["mise", "exec", "python@3.12", "--", "pytest"], ["test"]], [["mise", "x", "-C", "build", "--", "npm", "test"], ["test"]], [["mise", "-C", "build", "x", "--", "mypy"], []], [["mise", "x", "-c", "uv run --no-sync pytest"], ["test"]],
     [["nice", "-n", "10", "pytest"], ["test"]], [["nice", "-5", "pytest"], ["test"]], [["time", "-p", "pytest"], ["test"]], [["timeout", "-k", "5", "60", "pytest"], ["test"]], [["nohup", "pytest"], ["test"]], [["stdbuf", "-o", "L", "pytest"], ["test"]],
-    [["env", "-i", "-C", "build", "PATH=/bin", "npm", "test"], ["test"]], [["/usr/bin/env", "-S", "uv run --no-sync pytest"], ["test"]], [["exec", "-a", "tests", "pytest"], ["test"]], [["UV_NO_SYNC=1", "bash", "-c", "exec -c uv run mypy"], ["install"]],
-    // A shell string's `export`, `unset`, or assignment may sit behind `&&`, `||`, or a branch, so a variable it changes stops counting as set.
-    [["sh", "-c", "export UV_NO_SYNC=1; uv run mypy"], ["install"]], [["sh", "-c", "false && export UV_NO_SYNC=1; uv run mypy"], ["install"]], [["sh", "-c", "UV_NO_SYNC=1; uv run mypy"], ["install"]],
-    [["UV_NO_SYNC=1", "sh", "-c", "unset UV_NO_SYNC; uv run mypy"], ["install"]], [["UV_NO_SYNC=1", "sh", "-c", "false && unset UV_NO_SYNC; uv run mypy"], ["install"]], [["UV_NO_SYNC=1", "sh", "-c", "UV_NO_SYNC=0 && uv run mypy"], ["install"]], [["UV_NO_SYNC=1", "bash", "-c", "export -n UV_NO_SYNC; uv run mypy"], ["install"]],
-    // A change in a subshell or a backgrounded command never reaches later commands; setting a variable to its value or unsetting a function changes nothing.
-    [["UV_NO_SYNC=1", "sh", "-c", "(unset UV_NO_SYNC); uv run mypy"], []], [["UV_NO_SYNC=1", "sh", "-c", "unset UV_NO_SYNC & uv run mypy"], []], [["UV_NO_SYNC=1", "sh", "-c", "export UV_NO_SYNC=1; uv run mypy"], []], [["UV_NO_SYNC=1", "sh", "-c", "unset -f UV_NO_SYNC; uv run mypy"], []], [["command", "-v", "pytest"], []],
+    [["env", "-i", "-C", "build", "PATH=/bin", "npm", "test"], ["test"]], [["/usr/bin/env", "-S", "uv run --no-sync pytest"], ["test"]], [["exec", "-a", "tests", "pytest"], ["test"]],
+    // Only the flag skips the sync: whether a command sees `UV_NO_SYNC` cannot be told from the step.
+    [["sh", "-c", "export UV_NO_SYNC=1; uv run mypy"], ["install"]], [["UV_NO_SYNC=1", "sh", "-c", "uv run mypy"], ["install"]], [["UV_NO_SYNC=1", "sh", "-c", "command unset UV_NO_SYNC; uv run mypy"], ["install"]],
     // Short options take a value attached to them or after bundled flags, as getopt reads them.
     [["env", "-Cbuild", "npm", "test"], ["test"]], [["env", "-iCbuild", "npm", "test"], ["test"]], [["env", "-Suv run --no-sync pytest"], ["test"]], [["env", "-uCI", "pytest"], ["test"]], [["env", "--argv0", "gate", "pytest"], ["test"]], [["sh", "-c", "git diff --name-only | xargs -r -n 20 -P 4 pytest"], ["test"]], [["sh", "-c", "git ls-files '*.py' | xargs -I {} uv run --no-sync ruff check {}"], []], [["env", "-a", "gate", "-P", "/usr/bin", "pytest"], ["test"]], [["time", "-o", "times.txt", "pytest"], ["test"]], [["timeout", "--signal", "TERM", "-k", "5", "60", "pytest"], ["test"]],
     [["UV_NO_SYNC=1", "env", "-iu", "UV_NO_SYNC", "uv", "run", "mypy"], ["install"]], [["command", "-pv", "pytest"], []], [["nice", "-n10", "pytest"], ["test"]], [["poetry", "-Cbuild", "run", "npm", "test"], ["test"]], [["mise", "x", "-Cbuild", "--", "npm", "test"], ["test"]],
-    [["bun", "run", "unit"], ["test"]], [["bun", "run", "types"], []], [["bun", "run", "gate"], []], [["bun", "run", "synced"], ["install"]],
+    [["bun", "run", "unit"], ["test"]], [["bun", "run", "types"], []], [["bun", "run", "gate"], ["install"]], [["bun", "run", "synced"], ["install"]],
   ];
   for (const [command, kinds] of cases) expect({ command, kinds: resolveStep(root, command).findings.map(finding => finding.kind) }).toEqual({ command, kinds });
   expect(resolveStep(root, ["bun", "run", "unit"]).findings).toEqual([{ kind: "test", runner: "pytest", chain: ["bun run unit", "package.json scripts.unit: uv run --no-sync pytest", "pytest"] }]);
@@ -239,7 +236,7 @@ test("Python test runs, installs, and builds are classified, and Python static c
     test: [["pytest", "-q"], ["py.test"], ["tox", "-e", "py312"], ["nox", "-s", "tests"], ["hatch", "test"], ["python", "-m", "tox"]],
     install: [
       ["pip", "install", "-e", "."], ["pip3", "--disable-pip-version-check", "install", "httpx"], ["pip", "--log", "build", "install", "."], ["pip3.12", "install", "-r", "requirements.txt"],
-      ["uv", "sync", "--frozen"], ["uv", "--project", "build", "sync"], ["uv", "pip", "install", "-r", "requirements.txt"], ["uv", "pip", "sync", "requirements.txt"], ["uv", "add", "httpx"], ["uv", "remove", "httpx"],
+      ["uv", "sync", "--frozen"], ["uv", "--project", "build", "sync"], ["uv", "pip", "install", "-r", "requirements.txt"], ["uv", "pip", "sync", "requirements.txt"], ["uv", "add", "httpx"], ["uv", "remove", "httpx"], ["UV_NO_SYNC=1", "uv", "add", "httpx"],
       ["poetry", "install", "--no-root"], ["poetry", "sync"], ["poetry", "add", "httpx"], ["poetry", "update"], ["pdm", "install", "--prod"], ["pdm", "install", "--check"], ["pdm", "sync"], ["pdm", "update"], ["pipenv", "install", "--dev"], ["pipenv", "sync"],
     ],
     build: [["python", "-m", "build", "--wheel"], ["pyproject-build"], ["uv", "build"], ["uv", "--directory", "api", "build"], ["poetry", "build"], ["hatch", "build", "-t", "wheel"], ["pdm", "build"]],
@@ -249,7 +246,7 @@ test("Python test runs, installs, and builds are classified, and Python static c
     ["ruff", "check"], ["ruff", "format", "--check"], ["mypy"], ["pyright"], ["black", "--check", "."], ["isort", "--check-only", "."], ["flake8"], ["pylint", "src"],
     ["uv", "run", "--no-sync", "ruff", "check"], ["uv", "run", "--no-sync", "ruff", "format", "--check"], ["uv", "run", "--no-sync", "mypy"], ["uv", "run", "--no-sync", "pyright"], ["uvx", "black", "--check", "."],
     ["poetry", "run", "flake8"], ["pdm", "run", "pylint", "src"], ["pipenv", "run", "isort", "--check-only", "."], ["python", "-m", "mypy"], ["hatch", "fmt", "--check"],
-    ["uv", "lock", "--check"], ["uv", "sync", "--check"], ["uv", "sync", "--dry-run"], ["uv", "pip", "install", "--dry-run", "httpx"], ["pip", "install", "--dry-run", "."], ["poetry", "install", "--dry-run"], ["poetry", "add", "--lock", "httpx"], ["pdm", "sync", "--dry-run"], ["pipenv", "update", "--dry-run"], ["pipenv", "upgrade", "requests"], ["uv", "add", "--no-sync", "httpx"], ["uv", "remove", "--frozen", "httpx"], ["UV_NO_SYNC=1", "uv", "add", "httpx"], ["pdm", "add", "--no-sync", "httpx"], ["pdm", "update", "--no-sync"], ["uv", "pip", "list"], ["pip", "check"], ["poetry", "check"], ["poetry", "lock"], ["pdm", "lock", "--check"],
+    ["uv", "lock", "--check"], ["uv", "sync", "--check"], ["uv", "sync", "--dry-run"], ["uv", "pip", "install", "--dry-run", "httpx"], ["pip", "install", "--dry-run", "."], ["poetry", "install", "--dry-run"], ["poetry", "add", "--lock", "httpx"], ["pdm", "sync", "--dry-run"], ["pipenv", "update", "--dry-run"], ["pipenv", "upgrade", "requests"], ["uv", "add", "--no-sync", "httpx"], ["uv", "remove", "--frozen", "httpx"], ["pdm", "add", "--no-sync", "httpx"], ["pdm", "update", "--no-sync"], ["uv", "pip", "list"], ["pip", "check"], ["poetry", "check"], ["poetry", "lock"], ["pdm", "lock", "--check"],
     // Option values are never read as subcommands.
     ["uv", "--project", "sync", "lock", "--check"], ["uv", "--directory", "build", "tree"], ["poetry", "-C", "install", "check"], ["pip", "--log", "install", "list"], ["hatch", "-e", "build", "fmt"], ["pdm", "run", "--venv", "build", "mypy"],
   ];

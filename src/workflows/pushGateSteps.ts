@@ -36,8 +36,7 @@ const INSTALLS: Record<"bun" | "npm" | "pnpm" | "yarn", string[]> = {
   yarn: ["install", "add", "up", "upgrade", "upgrade-interactive"],
 };
 
-/** `env` holds the variables a command assigns for itself and its children, such as `UV_NO_SYNC=1`. */
-interface Context { root: string; seen: Set<string>; findings: StepFinding[]; errors: string[]; env: Readonly<Record<string, string>> }
+interface Context { root: string; seen: Set<string>; findings: StepFinding[]; errors: string[] }
 
 /**
  * Follow a declared push-gate step through package scripts, shell strings,
@@ -51,7 +50,7 @@ interface Context { root: string; seen: Set<string>; findings: StepFinding[]; er
  * reported as an install and its command as what it does.
  */
 export function resolveStep(root: string, command: string[]): StepResolution {
-  const context: Context = { root, seen: new Set(), findings: [], errors: [], env: {} };
+  const context: Context = { root, seen: new Set(), findings: [], errors: [] };
   visit(context, command, root, [display(command)], 0);
   return { findings: context.findings, errors: context.errors };
 }
@@ -179,16 +178,15 @@ function runScript(context: Context, name: string, args: string[], directory: st
 /**
  * Strip what runs a command rather than being it: `NAME=value` assignments and
  * wrappers such as `env -u NAME`, `nice -n 5`, or `timeout 60`, with their
- * options. Returns the command, the directory it runs in (`env -C`), and the
- * variables it sets, or null when nothing runs (`command -v`).
+ * options. Returns the command and the directory it runs in (`env -C`), or
+ * null when nothing runs (`command -v`).
  */
-function unwrap(input: string[], cwd: string, inherited: Context["env"]): { argv: string[]; cwd: string; env: Context["env"] } | null {
+function unwrap(input: string[], cwd: string): { argv: string[]; cwd: string } | null {
   const argv = [...input];
-  let directory = cwd, env = inherited;
+  let directory = cwd;
   while (argv.length) {
-    const word = argv[0]!;
-    if (ASSIGNMENT.test(word)) { const equals = word.indexOf("="); env = { ...env, [word.slice(0, equals)]: word.slice(equals + 1) }; argv.shift(); continue; }
-    const wrapper = path.basename(word);
+    if (ASSIGNMENT.test(argv[0]!)) { argv.shift(); continue; }
+    const wrapper = path.basename(argv[0]!);
     const takesValue = WRAPPERS.get(wrapper);
     if (!takesValue) break;
     argv.shift();
@@ -198,11 +196,8 @@ function unwrap(input: string[], cwd: string, inherited: Context["env"]): { argv
       for (const [name, value] of optionWords(option, takesValue, () => argv.shift())) {
         // `command -v` and `command -V` only describe the command.
         if (wrapper === "command" && (name === "-v" || name === "-V")) return null;
-        // `exec -c` and `env -i` start the command with an empty environment.
-        if ((wrapper === "exec" && name === "-c") || (wrapper === "env" && (name === "-" || name === "-i" || name === "--ignore-environment"))) env = {};
-        else if (wrapper !== "env" || value === undefined) continue;
-        else if (name === "-u" || name === "--unset") env = Object.fromEntries(Object.entries(env).filter(([key]) => key !== value));
-        else if (name === "-C" || name === "--chdir") directory = path.resolve(directory, value);
+        if (wrapper !== "env" || value === undefined) continue;
+        if (name === "-C" || name === "--chdir") directory = path.resolve(directory, value);
         // `env -S 'a b'` reads its words as if they were given separately.
         else if (name === "-S" || name === "--split-string") argv.unshift(...splitShell(value).flat());
       }
@@ -210,17 +205,13 @@ function unwrap(input: string[], cwd: string, inherited: Context["env"]): { argv
     // `timeout` takes its duration before the command.
     if (wrapper === "timeout") argv.shift();
   }
-  return { argv, cwd: directory, env };
+  return { argv, cwd: directory };
 }
 
 function visit(context: Context, input: string[], invokedIn: string, chain: string[], depth: number): void {
   if (depth > MAX_DEPTH) { context.errors.push(`Resolution deeper than ${MAX_DEPTH} levels: ${chain.join(" -> ")}`); return; }
-  const unwrapped = unwrap(input, invokedIn, context.env);
-  if (!unwrapped?.argv.length) return;
-  // Variables a command sets reach every command it runs, and only those.
-  const outer = context.env;
-  context.env = unwrapped.env;
-  try { dispatch(context, unwrapped.argv, unwrapped.cwd, chain, depth); } finally { context.env = outer; }
+  const unwrapped = unwrap(input, invokedIn);
+  if (unwrapped?.argv.length) dispatch(context, unwrapped.argv, unwrapped.cwd, chain, depth);
 }
 
 function dispatch(context: Context, argv: string[], cwd: string, chain: string[], depth: number): void {
@@ -245,7 +236,7 @@ function dispatch(context: Context, argv: string[], cwd: string, chain: string[]
   else if (testRunner(name, args)) report(context, "test", text, chain);
   else if (builds(name, args)) report(context, "build", text, chain);
   else if ((name === "pod" || name === "bundle") && args[0] === "install") report(context, "install", text, chain);
-  else if (/^pip[\d.]*$/.test(name) && options(args, PYTHON_TOOLS.pip).rest[0] === "install" && !previews(context, "pip", "install", args)) report(context, "install", text, chain);
+  else if (/^pip[\d.]*$/.test(name) && options(args, PYTHON_TOOLS.pip).rest[0] === "install" && !previews("pip", "install", args)) report(context, "install", text, chain);
   else if (name === "bundle" && args[0] === "exec") visit(context, args.slice(1), cwd, chain, depth + 1);
 }
 
@@ -538,20 +529,17 @@ const PYTHON_INSTALLS: Partial<Record<keyof typeof PYTHON_TOOLS, readonly string
 };
 /**
  * A Python install that only previews or changes declarations and locks:
- * `--dry-run`, `uv sync --check`, `uv add|remove` with `--no-sync`,
- * `--frozen`, or a true `UV_NO_SYNC` or `UV_FROZEN`, `pdm add|remove|update
- * --no-sync`, or poetry's `--lock`. `pdm install --check` checks the lockfile
- * and then installs.
+ * `--dry-run`, `uv sync --check`, `uv add|remove` with `--no-sync` or
+ * `--frozen`, `pdm add|remove|update --no-sync`, or poetry's `--lock`. `pdm
+ * install --check` checks the lockfile and then installs.
  */
-function previews(context: Context, tool: string, sub: string | undefined, args: string[]): boolean {
-  if (tool === "uv" && (sub === "add" || sub === "remove") && (truthy(context.env.UV_NO_SYNC) || truthy(context.env.UV_FROZEN))) return true;
+function previews(tool: string, sub: string | undefined, args: string[]): boolean {
   return args.some(arg => arg === "--dry-run"
     || (tool === "uv" && sub === "sync" && arg === "--check")
     || (tool === "uv" && (sub === "add" || sub === "remove") && (arg === "--no-sync" || arg === "--frozen"))
     || (tool === "pdm" && (sub === "add" || sub === "remove" || sub === "update") && arg === "--no-sync")
     || (tool === "poetry" && arg === "--lock"));
 }
-const truthy = (value: string | undefined) => /^(?:1|t|true|y|yes|on)$/i.test(value ?? "");
 /** `uvx` and `pipx run` take a requirement for the command they run, such as `ruff==0.6`, `ruff>=0.6`, or `ruff[all]`; the command is its name. */
 const requirement = ([first, ...rest]: string[]) => first === undefined ? [] : [first.replace(/^([A-Za-z0-9][\w.-]*)\s*(?:\[[^\]]*\])?\s*(?:[=<>!~].*)?$/s, "$1"), ...rest];
 
@@ -564,9 +552,10 @@ function movedTo(cwd: string, names: string[], ...seen: Map<string, string | tru
 
 /**
  * `uv run` syncs the project's environment before its command, even with
- * `--frozen` or `--locked`, unless `--no-sync`, `--no-project`, a script
- * (`--script`, `--gui-script`), or a true `UV_NO_SYNC` skips it; `-m` runs a
- * module. `uvx` is `uv tool run`, whose cached tool environment, like `npx`'s
+ * `--frozen` or `--locked`, unless `--no-sync`, `--no-project`, or a script
+ * (`--script`, `--gui-script`) skips it; `-m` runs a module. `UV_NO_SYNC` is
+ * not read: whether a command sees a variable cannot be told from the step, so
+ * only the flag counts. `uvx` is `uv tool run`, whose cached tool environment, like `npx`'s
  * download, is not counted as an install; neither are `--with` requirements.
  */
 function uv(context: Context, args: string[], cwd: string, chain: string[], depth: number, text: string): void {
@@ -579,11 +568,11 @@ function uv(context: Context, args: string[], cwd: string, chain: string[], dept
     const run = scriptOptions(sub === "run" ? words : tool.rest.slice(1), spec);
     const flags = new Set([...seen.keys(), ...tool.seen.keys(), ...run.seen.keys()]);
     // Even without a command, `uv run` syncs before it lists what it could run.
-    if (sub === "run" && !["--no-sync", "--no-project", "-s", "--script", "--gui-script"].some(flag => flags.has(flag)) && !truthy(context.env.UV_NO_SYNC)) report(context, "install", text, chain);
+    if (sub === "run" && !["--no-sync", "--no-project", "-s", "--script", "--gui-script"].some(flag => flags.has(flag))) report(context, "install", text, chain);
     if (!run.rest.length) return;
     const module = sub === "run" && (run.seen.has("-m") || run.seen.has("--module"));
     visit(context, module ? ["python", "-m", ...run.rest] : sub === "run" ? run.rest : requirement(run.rest), movedTo(cwd, ["--directory"], seen, tool.seen, run.seen), chain, depth + 1);
-  } else if ((PYTHON_INSTALLS.uv!.includes(sub ?? "") || (sub === "pip" && ["install", "sync"].includes(options(words, spec).rest[0] ?? ""))) && !previews(context, "uv", sub, words)) report(context, "install", text, chain);
+  } else if ((PYTHON_INSTALLS.uv!.includes(sub ?? "") || (sub === "pip" && ["install", "sync"].includes(options(words, spec).rest[0] ?? ""))) && !previews("uv", sub, words)) report(context, "install", text, chain);
   else if (sub === "build") report(context, "build", text, chain);
 }
 
@@ -618,7 +607,7 @@ function pythonProject(context: Context, name: "poetry" | "pdm" | "hatch" | "pip
       directory = path.resolve(typeof project === "string" ? path.resolve(cwd, project) : packageRoot(context, cwd, "pyproject.toml"), working);
     }
     visit(context, name === "pipx" ? requirement(run.rest) : run.rest, directory, chain, depth + 1);
-  } else if (PYTHON_INSTALLS[name]?.includes(sub ?? "")) { if (!previews(context, name, sub, words)) report(context, "install", text, chain); }
+  } else if (PYTHON_INSTALLS[name]?.includes(sub ?? "")) { if (!previews(name, sub, words)) report(context, "install", text, chain); }
   else if (sub === "build" && name !== "pipenv" && name !== "pipx") report(context, "build", text, chain);
   else if (name === "hatch" && sub === "test") report(context, "test", text, chain);
 }
@@ -711,51 +700,26 @@ function agentTool(context: Context, input: string[], invokedIn: string, chain: 
 
 /**
  * Split a shell string into simple commands at `&&`, `||`, `;`, `|`, `&`,
- * newlines, and parentheses, honoring quotes; `cd <dir>` moves later commands,
- * and a variable that `export`, `unset`, or an assignment changes stops
- * counting as set for them. Command substitutions, functions, and loops are
- * not interpreted.
+ * newlines, and parentheses, honoring quotes; `cd <dir>` moves later commands.
+ * Command substitutions, functions, and loops are not interpreted.
  */
 function visitShell(context: Context, script: string, cwd: string, chain: string[], depth: number): void {
-  let directory = cwd, env = context.env;
-  // A `cd` or variable change inside parentheses ends with its subshell.
-  const outer: { directory: string; env: Context["env"] }[] = [];
+  let directory = cwd;
+  // A `cd` inside parentheses ends with its subshell.
+  const outer: string[] = [];
   const items = parseShell(script);
   for (const [index, item] of items.entries()) {
     if (item === "&") continue;
-    if (item === "(") { outer.push({ directory, env }); continue; }
-    if (item === ")") { ({ directory, env } = outer.pop() ?? { directory, env }); continue; }
+    if (item === "(") { outer.push(directory); continue; }
+    if (item === ")") { directory = outer.pop() ?? directory; continue; }
     const words = item;
-    // A backgrounded `cd dir &` runs in its own process and moves nothing after it; so does a backgrounded variable change.
+    // A backgrounded `cd dir &` runs in its own process and moves nothing after it.
     if (words[0] === "cd" && items[index + 1] === "&") continue;
     while (words.length && KEYWORDS.has(words[0]!)) words.shift();
     if (!words.length || words[0] === "for" || words[0] === "case" || /\(\)$/.test(words[0]!)) continue;
     if (words[0] === "cd") { if (words[1] && words[1] !== "-" && !words[1].startsWith("$")) directory = path.resolve(directory, words[1]); continue; }
-    if (words[0] === "export" || words[0] === "unset" || words.every(word => ASSIGNMENT.test(word))) { if (items[index + 1] !== "&") env = shellVariables(env, words); continue; }
-    const inherited = context.env;
-    context.env = env;
-    try { visit(context, words, directory, chain, depth + 1); } finally { context.env = inherited; }
+    visit(context, words, directory, chain, depth + 1);
   }
-}
-
-/**
- * The variables later commands of a shell string can rely on after `export`,
- * `unset`, or plain `NAME=value` assignments. The change may never run, behind
- * `&&`, `||`, a pipe, or a branch, so a variable it changes or removes stops
- * counting as set either way: anything it could have suppressed, such as the
- * sync `UV_NO_SYNC` skips, is reported. A variable it sets to its current value
- * keeps it.
- */
-function shellVariables(env: Context["env"], [command, ...args]: string[]): Context["env"] {
-  if (command === "unset" && args.includes("-f")) return env;
-  const removes = command === "unset" || (command === "export" && args.includes("-n"));
-  const next: Record<string, string> = { ...env };
-  for (const word of command === "export" || command === "unset" ? args.filter(arg => !arg.startsWith("-")) : [command!, ...args]) {
-    const equals = word.indexOf("=");
-    const name = equals === -1 ? word : word.slice(0, equals);
-    if (removes || (equals !== -1 && next[name] !== word.slice(equals + 1))) delete next[name];
-  }
-  return next;
 }
 
 export function splitShell(script: string): string[][] {
