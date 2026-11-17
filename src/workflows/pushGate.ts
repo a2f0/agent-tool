@@ -6,8 +6,8 @@ import path from "node:path";
 import { executeGroup, reraiseGroupSignal, type GroupRecord } from "../commands/group";
 import { loadConfig, PUSH_GATE_BUDGET_SECONDS, type AgentToolConfig } from "../config";
 import { gitEnvironment } from "../git/environment";
-import { checkPermissions, installedPermissionHarness, PERMISSIONS_MANIFEST } from "../permissions/install";
-import { checkSkills, checkSkillsManifest, installedSkillHarnesses, SKILLS_MANIFEST } from "../skills/install";
+import { checkInstalledPermissions, PERMISSIONS_MANIFEST } from "../permissions/install";
+import { checkInstalledSkills, SKILLS_MANIFEST } from "../skills/install";
 import { branchErrors, parsePrePushInput, pushedBranches, zeroOid, type PushTuple } from "./branch";
 import { binariesAddedByCommits, commitFindings, rejectedBinaries } from "./checks";
 import { assert, checkoutRoot, git, output } from "./core";
@@ -162,9 +162,8 @@ function runGuards(root: string, config: AgentToolConfig, tuples: PushTuple[], d
   guard(guards, "hooks", undefined, () => { const result = checkHooks(); return { ok: result.ok, details: { changes: result.changes.filter(change => change.status !== "unchanged"), blockers: result.blockers, configure: result.configure } }; });
   // A manifest that exists in any form gets its guard, which reports one it cannot read instead of ending the gate.
   const present = (file: string) => { try { lstatSync(path.join(root, file)); return true; } catch (error) { return !["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? ""); } };
-  // The shared skills manifest is checked once, apart from the harnesses it covers, even when it records none.
-  if (present(SKILLS_MANIFEST)) guard(guards, "skills", undefined, () => { const harnesses = installedSkillHarnesses(root) ?? []; const changes = [...harnesses.flatMap(harness => checkSkills(root, harness).filter(change => change.path !== SKILLS_MANIFEST)), checkSkillsManifest(root)].filter(change => change.status !== "unchanged"); return { ok: !changes.length, details: { harnesses, changes } }; });
-  if (present(PERMISSIONS_MANIFEST)) guard(guards, "permissions", undefined, () => { const harness = installedPermissionHarness(root) ?? "all"; const changes = checkPermissions(root, harness).filter(change => change.status !== "unchanged"); return { ok: !changes.length, details: { harness, changes } }; });
+  if (present(SKILLS_MANIFEST)) guard(guards, "skills", undefined, () => { const result = checkInstalledSkills(root); const changes = result?.changes.filter(change => change.status !== "unchanged") ?? []; return { ok: !changes.length, details: { harnesses: result?.harnesses ?? [], changes } }; });
+  if (present(PERMISSIONS_MANIFEST)) guard(guards, "permissions", undefined, () => { const result = checkInstalledPermissions(root); const changes = result?.changes.filter(change => change.status !== "unchanged") ?? []; return { ok: !changes.length, details: { harness: result?.harness ?? null, changes } }; });
   guard(guards, "branch", undefined, () => { const branches = pushedBranches(tuples).map(name => ({ name, errors: branchErrors(name, config) })).filter(branch => branch.errors.length); return { ok: !branches.length, details: { branches } }; });
   let refs: PushedRef[] = [];
   guard(guards, "ranges", undefined, () => { refs = pushedRefs(tuples, destination); return { ok: true }; });

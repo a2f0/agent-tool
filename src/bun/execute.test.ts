@@ -76,10 +76,12 @@ test("an executable that asks is refused while the generated rules predate its c
   writeFileSync(path.join(f.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
   expect(spawnSync(process.execPath, [cli, "permissions", "install", "--apply"], { cwd: f.project, encoding: "utf8" }).status).toBe(0);
   expect(JSON.parse(f.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
-  // Current rules recorded by another agent-tool release allow nothing extra, so only the rules decide.
+  // Current rules recorded by another agent-tool release, or with no usable version, allow nothing extra, so only the rules decide.
   const manifestFile = path.join(f.project, ".agent-tool-permissions.json"), manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
-  writeFileSync(manifestFile, JSON.stringify({ ...manifest, agentToolVersion: "0.0.1" }));
-  expect(JSON.parse(f.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
+  for (const agentToolVersion of ["0.0.1", undefined, 1, "0 1"]) {
+    writeFileSync(manifestFile, JSON.stringify({ ...manifest, agentToolVersion }));
+    expect(JSON.parse(f.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
+  }
 }, 30_000);
 
 test("--cwd cannot reach another checkout, and options must precede --", () => {

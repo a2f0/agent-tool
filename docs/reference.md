@@ -553,13 +553,15 @@ the committed diff shows the sync ran. Install output ends with the manifest's
 own change. `skills check` ends with an entry for the manifest that carries
 `recordedVersion` and `currentVersion`: `unchanged` when they match, `missing`
 without a manifest, and `outdated` when the manifest records another release or
-none, as manifests from releases before the field do. Run
-`skills install --apply` to fix it, as for other drift. A recorded version
-newer than the running one means the installed package is older than the pin:
-reinstall dependencies rather than the skills. The field is additive, so
-`schemaVersion` stays 1, older manifests remain readable, and older releases
-still read newer ones. `.agent-tool-permissions.json` records and checks the
-version the same way ([permissions](permissions.md#generated-rules)).
+no usable one, as manifests from releases before the field do. Rerun the
+install with `--apply` and the same `--harness` to fix it, as for other drift;
+a version is provenance, not ownership, so an unusable one never blocks that
+install. A recorded version newer than the running one means the installed
+package is older than the pin: reinstall dependencies rather than the skills.
+The field is additive, so `schemaVersion` stays 1, older manifests remain
+readable, and older releases still read newer ones.
+`.agent-tool-permissions.json` records and checks the version the same way
+([permissions](permissions.md#generated-rules)).
 
 ### Dependency upgrades
 

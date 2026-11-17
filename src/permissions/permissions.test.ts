@@ -224,11 +224,15 @@ test("install records the agent-tool version, and check requires the running one
     expect(readFileSync(path.join(root, ".claude/settings.json"), "utf8")).toBe(settings);
     expect(readFileSync(path.join(root, ".codex/rules/agent-tool.rules"), "utf8")).toBe(rules);
   }
-  for (const invalid of [1, "", "0.1 beta", null]) {
+  // An unusable version is provenance lost, not ownership: it reads as none, and the install replaces it.
+  for (const invalid of [1, "", "0.1 beta", null, { version: metadata.version }]) {
     writeFileSync(manifestFile, JSON.stringify({ ...manifest, agentToolVersion: invalid }));
-    expect(() => checkPermissions(root, "all")).toThrow("Invalid managed permissions manifest.");
-    expect(() => installPermissions(root, "all", true)).toThrow("Invalid managed permissions manifest.");
+    expect(checkPermissions(root, "all").at(-1)).toEqual({ path: ".agent-tool-permissions.json", status: "outdated", recordedVersion: null, currentVersion: metadata.version });
+    expect(installPermissions(root, "all", true).filter(item => item.status !== "unchanged")).toEqual([{ path: ".agent-tool-permissions.json", status: "update" }]);
+    expect(JSON.parse(readFileSync(manifestFile, "utf8"))).toEqual(manifest);
   }
+  writeFileSync(manifestFile, JSON.stringify({ ...manifest, schemaVersion: 2 }));
+  expect(() => checkPermissions(root, "all")).toThrow("Invalid managed permissions manifest.");
 });
 
 test("the CLI previews by default and rejects unknown harnesses", () => {

@@ -237,17 +237,11 @@ do not act on this one. It then runs, in order:
    the guard cannot read fails that guard alone. Both manifests record the
    agent-tool release whose install wrote them, and the guards compare it
    with the release running the gate, so once a pin bump is installed they
-   refuse the push until `skills install --apply` and
-   `permissions install --apply` record the new one, even when no managed
-   file changed. The skills guard checks the shared manifest once, however
-   many harnesses it records, none included
-   ([skill installation](reference.md#portable-skills)).
-
-The guards, like the steps, read the working tree with the agent-tool installed
-there. They cannot see a pin bump whose package is not yet installed, or
-regenerated files left uncommitted. The repository's CI is the authority: it
-installs the pinned release for the pushed commit and runs `skills check` and
-`permissions check` against what was committed.
+   refuse the push until both installs rerun with `--apply` and the
+   repository's existing `--harness` scopes, usually through its sync
+   script, and record the new one, even when no managed file changed. The
+   skills guard checks the shared manifest once, however many harnesses it
+   records, none included ([skill installation](reference.md#portable-skills)).
 2. The declared `steps`, through the run-group runner with the label
    `push-gate`, so every push leaves a source-bound report with per-step
    durations in `agent-tool runs list`. A failing step refuses the push with
@@ -275,7 +269,12 @@ parent, so a binary a merged base already carried is not charged to the push.
 Steps check the working tree. CI is the authority, so the gate does not refuse
 a push whose pushed commit is not the checked-out HEAD, or whose tree has
 uncommitted or untracked changes; it warns that the steps checked something
-other than what the push sends, and records it under `worktree`.
+other than what the push sends, and records it under `worktree`. The hooks,
+skills, and permissions guards read the working tree too, with the agent-tool
+installed there, so they cannot see a pin bump whose package is not yet
+installed, or regenerated files left uncommitted; CI, which installs the pinned
+release for the pushed commit and runs `skills check` and `permissions check`
+against what was committed, catches both.
 
 Steps that need the push itself, such as a per-commit message linter or a
 changed-path classifier, read `AGENT_TOOL_PUSH_GATE`, the path of a private

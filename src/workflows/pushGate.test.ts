@@ -516,8 +516,8 @@ test("the hooks, skills, and permissions guards use the shared drift checks", ()
   result = f.gate([["refs/heads/main", installed, "refs/heads/main", zero]]);
   expect(JSON.parse(result.stdout).guards[1]).toEqual(expect.objectContaining({ name: "skills", ok: false, details: { harnesses: [], changes: [{ path: ".agent-tool-skills.json", status: "outdated", recordedVersion: "0.0.1", currentVersion: version }] } }));
   // Unreadable manifests fail their own guards, and every other guard still runs and reports.
-  writeFileSync(path.join(f.root, ".agent-tool-skills.json"), JSON.stringify({ schemaVersion: 1, agentToolVersion: 1, files: {} }));
-  writeFileSync(path.join(f.root, ".agent-tool-permissions.json"), JSON.stringify({ schemaVersion: 1, agentToolVersion: "0 1" }));
+  writeFileSync(path.join(f.root, ".agent-tool-skills.json"), JSON.stringify({ schemaVersion: 2, files: {} }));
+  writeFileSync(path.join(f.root, ".agent-tool-permissions.json"), JSON.stringify({ schemaVersion: 1, codex: { file: ".codex/rules/agent-tool.rules", sha256: "edited" } }));
   result = f.gate([["refs/heads/main", installed, "refs/heads/main", zero]]);
   expect(result.status).toBe(1);
   const unreadable = JSON.parse(result.stdout).guards;

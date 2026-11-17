@@ -232,8 +232,9 @@ The manifest also records, as `agentToolVersion`, the agent-tool release that
 wrote it, so every upgrade changes it even when no rule changed, and the
 committed diff shows the regeneration ran. `check` fails until it does: its
 last entry is the manifest's, with `recordedVersion` and `currentVersion`, and
-is `outdated` when the manifest records another release or none, as manifests
-from releases before the field do. `agent-tool bun x` still refuses an
+is `outdated` when the manifest records another release or no usable one, as
+manifests from releases before the field do, until `install --apply` with the
+same `--harness` replaces it. `agent-tool bun x` still refuses an
 executable only while the rules themselves are stale, so a manifest that
 records another release refuses nothing more there. The skills
 manifest records the version the same way

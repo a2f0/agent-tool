@@ -125,11 +125,15 @@ test("install records the agent-tool version, and check requires the running one
     expect(checkSkills(root, "all").every(change => change.status === "unchanged")).toBe(true);
     for (const [relative, source] of Object.entries(files)) expect(readFileSync(path.join(root, relative), "utf8")).toBe(source);
   }
-  for (const invalid of [1, "", "0.1 beta", null]) {
+  // An unusable version is provenance lost, not ownership: it reads as none, and the install replaces it.
+  for (const invalid of [1, "", "0.1 beta", null, { version: metadata.version }]) {
     writeFileSync(manifestFile, JSON.stringify({ ...manifest, agentToolVersion: invalid }));
-    expect(() => checkSkills(root, "all")).toThrow("Invalid managed skill manifest.");
-    expect(() => installSkills(root, "all", true)).toThrow("Invalid managed skill manifest.");
+    expect(checkSkills(root, "all").at(-1)).toEqual({ path: MANIFEST, status: "outdated", recordedVersion: null, currentVersion: metadata.version });
+    expect(installSkills(root, "all", true).filter(change => change.status !== "unchanged")).toEqual([{ path: MANIFEST, status: "update" }]);
+    expect(JSON.parse(readFileSync(manifestFile, "utf8"))).toEqual(manifest);
   }
+  writeFileSync(manifestFile, JSON.stringify({ ...manifest, schemaVersion: 2 }));
+  expect(() => checkSkills(root, "all")).toThrow("Invalid managed skill manifest.");
 });
 
 test("the CLI check fails on a stale recorded version and passes once the install records the current one", () => {
