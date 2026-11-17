@@ -36,3 +36,25 @@ test("refuses a final symbolic link, a directory, and a FIFO without following o
     expect({ name, signal: probe.signal, read: JSON.parse(probe.stdout || "null") }).toEqual({ name, signal: null, read: { status: "irregular" } });
   }
 }, 30_000);
+
+test("a file replaced after the type check by a link or a FIFO is neither followed nor blocks", () => {
+  const root = fixture(), elsewhere = fixture();
+  writeFileSync(path.join(elsewhere, "target.json"), "outside\n");
+  const module = path.join(import.meta.dir, "files.ts");
+  // Each probe swaps the file between readRegularFile's lstat and its open, in a child process a
+  // hard timeout kills, since a read that blocked on the FIFO would outlast any test timeout.
+  const swaps = {
+    link: `symlinkSync(${JSON.stringify(path.join(elsewhere, "target.json"))}, file)`,
+    fifo: `if (spawnSync("mkfifo", [file]).status !== 0) throw new Error("mkfifo failed")`,
+  };
+  for (const [name, swap] of Object.entries(swaps)) {
+    const file = path.join(root, `${name}.json`);
+    writeFileSync(file, "inside\n");
+    const script = `import { rmSync, symlinkSync } from "node:fs"; import { spawnSync } from "node:child_process";
+const { readRegularFile } = await import(${JSON.stringify(module)});
+const file = ${JSON.stringify(file)};
+console.log(JSON.stringify(readRegularFile(file, () => { rmSync(file); ${swap}; })));`;
+    const probe = spawnSync(process.execPath, ["-e", script], { encoding: "utf8", timeout: 5_000 });
+    expect({ name, signal: probe.signal, stderr: probe.stderr, read: JSON.parse(probe.stdout || "null") }).toEqual({ name, signal: null, stderr: "", read: { status: "irregular" } });
+  }
+}, 30_000);

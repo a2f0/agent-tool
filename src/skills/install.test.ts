@@ -140,7 +140,7 @@ test("install records the agent-tool version, and check requires the running one
     for (const [relative, source] of Object.entries(files)) expect(readFileSync(path.join(root, relative), "utf8")).toBe(source);
   }
   // An unusable version is provenance lost, not ownership: it reads as none, and the install replaces it.
-  for (const invalid of [1, "", "0.1 beta", "banana", "1..0", "01.2.3", null, { version: metadata.version }]) {
+  for (const invalid of [1, "", "0.1 beta", "banana", "1..0", "01.2.3", "1.2.3-01", null, { version: metadata.version }]) {
     writeFileSync(manifestFile, JSON.stringify({ ...manifest, agentToolVersion: invalid }));
     expect(checkSkills(root, "all").at(-1)).toEqual({ path: MANIFEST, status: "outdated", recordedVersion: null, currentVersion: metadata.version });
     expect(installSkills(root, "all", true).filter(change => change.status !== "unchanged")).toEqual([{ path: MANIFEST, status: "update" }]);

@@ -277,8 +277,9 @@ skills, and permissions guards read the working tree too, with the agent-tool
 installed there, so they cannot see a pin bump whose package is not yet
 installed, or regenerated files left uncommitted. Only CI can catch those, so
 each repository configures a merge-gating CI job that installs the pinned
-release for the pushed commit and runs `skills check` and `permissions check`
-with the same `--harness` scopes as its installs.
+release for the pushed commit and, for each manifest it manages, runs
+`skills check` or `permissions check` with the same `--harness` scope as its
+install.
 
 Steps that need the push itself, such as a per-commit message linter or a
 changed-path classifier, read `AGENT_TOOL_PUSH_GATE`, the path of a private

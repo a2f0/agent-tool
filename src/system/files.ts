@@ -24,13 +24,15 @@ export type RegularFile = { status: "missing" } | { status: "irregular" } | { st
  * so a parent swapped between that walk and the open is outside this guard; only a concurrent
  * writer of the checkout could do it, and that writer already controls its hooks and packages.
  */
-export function readRegularFile(file: string): RegularFile {
+export function readRegularFile(file: string, afterCheck: () => void = () => {}): RegularFile {
   // Never open an existing special file: opening a device can block or act even without reading.
   try { if (!lstatSync(file).isFile()) return { status: "irregular" }; }
   catch (error) {
     if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return { status: "missing" };
     throw error;
   }
+  // Tests replace the file here, where only the descriptor's flags and check still guard the read.
+  afterCheck();
   let descriptor: number;
   try { descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
   catch (error) {

@@ -9,9 +9,13 @@ export const AGENT_TOOL_VERSION: string = metadata.version;
 export type CheckStatus = "missing" | "outdated" | "unmanaged" | "unchanged";
 export interface ManifestVersionCheck { path: string; status: CheckStatus; recordedVersion: string | null; currentVersion: string }
 
+// semver.org's grammar: numeric identifiers, prerelease ones included, have no leading zeros.
+const IDENTIFIER = "(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)";
+const SEMVER = new RegExp(`^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-${IDENTIFIER}(?:\\.${IDENTIFIER})*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`);
+
 /** A recorded version in the package's release format: semantic versioning, such as `0.1.64` or `1.0.0-rc.1`. */
 export function validVersion(value: unknown): value is string {
-  return typeof value === "string" && /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(value);
+  return typeof value === "string" && SEMVER.test(value);
 }
 
 /**
