@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { parseConfig } from "../config";
 import { PUSH_GATE_HOOK, redactUrl } from "./pushGate";
-import { resolveStep, splitShell } from "./pushGateSteps";
+import { resolveStep, splitShell, type StepFinding } from "./pushGateSteps";
 
 const cli = path.resolve(import.meta.dir, "../index.ts");
 const packageRoot = path.resolve(import.meta.dir, "../..");
@@ -189,6 +189,57 @@ test("bundlers, framework, native, and image builds are reported, and static che
   for (const command of checks) expect({ command, findings: resolveStep(root, command).findings }).toEqual({ command, findings: [] });
   // Option values are skipped for test runners too: a scheme or an excluded task named test runs no tests.
   for (const command of [["xcodebuild", "-scheme", "test", "-showBuildSettings"], ["./gradlew", "-x", "test", "lint"]]) expect({ command, findings: resolveStep(root, command).findings }).toEqual({ command, findings: [] });
+});
+
+test("Python runners, environment managers, and wrappers are followed to the command they run", () => {
+  const root = project({ "package.json": { scripts: { unit: "uv run --no-sync pytest", types: "uv run --no-sync mypy", gate: "UV_NO_SYNC=1 bun run synced", synced: "uv run mypy" } }, "build/package.json": { scripts: { test: "jest" } } });
+  const cases: [string[], StepFinding["kind"][]][] = [
+    // `uv run` syncs the environment first, even with --frozen or --locked, unless --no-sync, --no-project, a script, or UV_NO_SYNC says otherwise.
+    [["uv", "run", "pytest"], ["install", "test"]], [["uv", "run", "--frozen", "mypy"], ["install"]], [["uv", "run", "--locked", "--", "ruff", "check"], ["install"]],
+    [["uv", "run", "--no-sync", "pytest"], ["test"]], [["uv", "run", "--no-project", "pytest"], ["test"]], [["uv", "run", "--script", "tools/check.py"], []],
+    [["uv", "run", "--no-sync", "--with", "pytest-cov", "--", "pytest", "--cov"], ["test"]], [["uv", "run", "--no-sync", "-m", "pytest"], ["test"]], [["uv", "run", "--no-sync", "--module", "build"], ["build"]],
+    [["uv", "--directory", "build", "run", "--no-sync", "--with", "test", "mypy"], []], [["uv", "--directory", "build", "run", "--no-sync", "npm", "test"], ["test"]],
+    [["UV_NO_SYNC=1", "uv", "run", "pytest"], ["test"]], [["env", "UV_NO_SYNC=true", "uv", "run", "mypy"], []], [["UV_NO_SYNC=1", "env", "-u", "UV_NO_SYNC", "uv", "run", "mypy"], ["install"]], [["UV_NO_SYNC=0", "uv", "run", "mypy"], ["install"]],
+    [["uvx", "pytest"], ["test"]], [["uvx", "--from", "pytest", "py.test"], ["test"]], [["uv", "tool", "run", "--with", "build", "tox"], ["test"]], [["uvx", "ruff@0.6", "check"], []],
+    [["poetry", "run", "pytest"], ["test"]], [["poetry", "-C", "build", "run", "mypy"], []], [["poetry", "--directory=build", "run", "npm", "test"], ["test"]],
+    [["pdm", "run", "--venv", "test", "pytest"], ["test"]], [["pdm", "run", "-k", "post_lint", "flake8"], []], [["pdm", "run", "--working-dir", "build", "npm", "test"], ["test"]],
+    // `hatch run` creates and syncs the environment before running its command.
+    [["hatch", "run", "pytest"], ["install", "test"]], [["hatch", "run", "+py=3.12", "-version=9000", "test:pytest"], ["install", "test"]], [["hatch", "-e", "test", "run", "mypy"], ["install"]], [["hatch", "env", "run", "-e", "test", "--", "pytest"], ["install", "test"]],
+    [["pipenv", "run", "pytest"], ["test"]], [["pipx", "run", "--spec", "build", "tox"], ["test"]], [["pipx", "run", "black", "--check", "."], []],
+    [["python", "-m", "pytest"], ["test"]], [["python3", "-X", "dev", "-m", "pytest"], ["test"]], [["python3.12", "-Bm", "pytest"], ["test"]], [["python", "-mpytest"], ["test"]], [["python", "-W", "error", "-m", "mypy", "src"], []],
+    [["python", "-c", "import pytest"], []], [["python", "scripts/pytest.py"], []], [["python", "-m", "pip", "install", "-r", "requirements.txt"], ["install"]], [["python", "-m", "build"], ["build"]], [["python", "-m", "unittest", "discover"], ["test"]],
+    [["coverage", "run", "--source", "src", "-m", "pytest"], ["test"]], [["coverage", "run", "pytest.py"], []],
+    [["mise", "exec", "python@3.12", "--", "pytest"], ["test"]], [["mise", "x", "-C", "build", "--", "npm", "test"], ["test"]], [["mise", "-C", "build", "x", "--", "mypy"], []], [["mise", "x", "-c", "uv run --no-sync pytest"], ["test"]],
+    [["nice", "-n", "10", "pytest"], ["test"]], [["nice", "-5", "pytest"], ["test"]], [["time", "-p", "pytest"], ["test"]], [["timeout", "-k", "5", "60", "pytest"], ["test"]], [["nohup", "pytest"], ["test"]], [["stdbuf", "-o", "L", "pytest"], ["test"]],
+    [["env", "-i", "-C", "build", "PATH=/bin", "npm", "test"], ["test"]], [["/usr/bin/env", "-S", "uv run --no-sync pytest"], ["test"]], [["exec", "-a", "tests", "pytest"], ["test"]], [["command", "-v", "pytest"], []],
+    [["bun", "run", "unit"], ["test"]], [["bun", "run", "types"], []], [["bun", "run", "gate"], []], [["bun", "run", "synced"], ["install"]],
+  ];
+  for (const [command, kinds] of cases) expect({ command, kinds: resolveStep(root, command).findings.map(finding => finding.kind) }).toEqual({ command, kinds });
+  expect(resolveStep(root, ["bun", "run", "unit"]).findings).toEqual([{ kind: "test", runner: "pytest", chain: ["bun run unit", "package.json scripts.unit: uv run --no-sync pytest", "pytest"] }]);
+  expect(resolveStep(root, ["uv", "run", "pytest", "-q"]).findings).toEqual([{ kind: "install", runner: "uv run pytest -q", chain: ["uv run pytest -q"] }, { kind: "test", runner: "pytest -q", chain: ["uv run pytest -q", "pytest -q"] }]);
+});
+
+test("Python test runs, installs, and builds are classified, and Python static checks are not", () => {
+  const root = project({ "package.json": { scripts: {} } });
+  const kinds: Record<StepFinding["kind"], string[][]> = {
+    test: [["pytest", "-q"], ["py.test"], ["tox", "-e", "py312"], ["nox", "-s", "tests"], ["hatch", "test"], ["python", "-m", "tox"]],
+    install: [
+      ["pip", "install", "-e", "."], ["pip3", "--disable-pip-version-check", "install", "httpx"], ["pip", "--log", "build", "install", "."], ["pip3.12", "install", "-r", "requirements.txt"],
+      ["uv", "sync", "--frozen"], ["uv", "--project", "build", "sync"], ["uv", "pip", "install", "-r", "requirements.txt"], ["uv", "pip", "sync", "requirements.txt"], ["uv", "add", "httpx"], ["uv", "remove", "httpx"],
+      ["poetry", "install", "--no-root"], ["poetry", "sync"], ["poetry", "add", "httpx"], ["poetry", "update"], ["pdm", "install", "--prod"], ["pdm", "sync"], ["pdm", "update"], ["pipenv", "install", "--dev"], ["pipenv", "sync"],
+    ],
+    build: [["python", "-m", "build", "--wheel"], ["pyproject-build"], ["uv", "build"], ["uv", "--directory", "api", "build"], ["poetry", "build"], ["hatch", "build", "-t", "wheel"], ["pdm", "build"]],
+  };
+  for (const [kind, commands] of Object.entries(kinds) as [StepFinding["kind"], string[][]][]) for (const command of commands) expect({ command, kinds: resolveStep(root, command).findings.map(finding => finding.kind) }).toEqual({ command, kinds: [kind] });
+  const checks = [
+    ["ruff", "check"], ["ruff", "format", "--check"], ["mypy"], ["pyright"], ["black", "--check", "."], ["isort", "--check-only", "."], ["flake8"], ["pylint", "src"],
+    ["uv", "run", "--no-sync", "ruff", "check"], ["uv", "run", "--no-sync", "ruff", "format", "--check"], ["uv", "run", "--no-sync", "mypy"], ["uv", "run", "--no-sync", "pyright"], ["uvx", "black", "--check", "."],
+    ["poetry", "run", "flake8"], ["pdm", "run", "pylint", "src"], ["pipenv", "run", "isort", "--check-only", "."], ["python", "-m", "mypy"], ["hatch", "fmt", "--check"],
+    ["uv", "lock", "--check"], ["uv", "sync", "--check"], ["uv", "sync", "--dry-run"], ["uv", "pip", "install", "--dry-run", "httpx"], ["pip", "install", "--dry-run", "."], ["poetry", "install", "--dry-run"], ["uv", "pip", "list"], ["pip", "check"], ["poetry", "check"], ["poetry", "lock"], ["pdm", "lock", "--check"],
+    // Option values are never read as subcommands.
+    ["uv", "--project", "sync", "lock", "--check"], ["uv", "--directory", "build", "tree"], ["poetry", "-C", "install", "check"], ["pip", "--log", "install", "list"], ["hatch", "-e", "build", "fmt"], ["pdm", "run", "--venv", "build", "mypy"],
+  ];
+  for (const command of checks) expect({ command, findings: resolveStep(root, command).findings }).toEqual({ command, findings: [] });
 });
 
 test("turbo tasks are builds or test runs through what they depend on in turbo.json", () => {

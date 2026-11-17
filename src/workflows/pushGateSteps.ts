@@ -8,7 +8,12 @@ export interface StepResolution { findings: StepFinding[]; errors: string[] }
 
 const MAX_DEPTH = 32;
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
-const WRAPPERS = new Set(["exec", "command", "time", "nohup", "nice"]);
+/** Commands that run the command after them, with their options that take a separate value. */
+const WRAPPERS: ReadonlyMap<string, ReadonlySet<string>> = new Map(Object.entries({
+  exec: ["-a"], command: [], nohup: [], nice: ["-n", "--adjustment"], time: ["-o", "--output", "-f", "--format"],
+  timeout: ["-s", "--signal", "-k", "--kill-after"], stdbuf: ["-i", "-o", "-e", "--input", "--output", "--error"],
+  env: ["-u", "--unset", "-C", "--chdir", "-S", "--split-string", "-P", "-L", "-U"],
+}).map(([name, values]) => [name, new Set(values)]));
 const KEYWORDS = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "fi", "done", "esac"]);
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
@@ -30,18 +35,22 @@ const INSTALLS: Record<"bun" | "npm" | "pnpm" | "yarn", string[]> = {
   yarn: ["install", "add", "up", "upgrade", "upgrade-interactive"],
 };
 
-interface Context { root: string; seen: Set<string>; findings: StepFinding[]; errors: string[] }
+/** `env` holds the variables a command assigns for itself and its children, such as `UV_NO_SYNC=1`. */
+interface Context { root: string; seen: Set<string>; findings: StepFinding[]; errors: string[]; env: Readonly<Record<string, string>> }
 
 /**
  * Follow a declared push-gate step through package scripts, shell strings,
- * and `agent-tool run-group` plans to every test runner, build, or dependency
- * install it reaches. Executables and script files are leaves: their contents
- * are not inspected. Workspace filters resolve to every workspace package
- * declaring the script, which can over-report but never misses one. A command
- * that both builds and tests, such as `cargo test`, is reported once, as a test.
+ * command runners such as `env`, `uv run`, or `python -m`, and `agent-tool
+ * run-group` plans to every test runner, build, or dependency install it
+ * reaches. Executables and script files are leaves: their contents are not
+ * inspected. Workspace filters resolve to every workspace package declaring
+ * the script, which can over-report but never misses one. A command that both
+ * builds and tests, such as `cargo test`, is reported once, as a test; a runner
+ * that installs before running its command, such as `uv run pytest`, is
+ * reported as an install and its command as what it does.
  */
 export function resolveStep(root: string, command: string[]): StepResolution {
-  const context: Context = { root, seen: new Set(), findings: [], errors: [] };
+  const context: Context = { root, seen: new Set(), findings: [], errors: [], env: {} };
   visit(context, command, root, [display(command)], 0);
   return { findings: context.findings, errors: context.errors };
 }
@@ -148,12 +157,55 @@ function runScript(context: Context, name: string, args: string[], directory: st
   if (!found && fallback) visit(context, fallback, directory, chain, depth + 1);
 }
 
-function visit(context: Context, input: string[], cwd: string, chain: string[], depth: number): void {
-  if (depth > MAX_DEPTH) { context.errors.push(`Resolution deeper than ${MAX_DEPTH} levels: ${chain.join(" -> ")}`); return; }
+/**
+ * Strip what runs a command rather than being it: `NAME=value` assignments and
+ * wrappers such as `env -u NAME`, `nice -n 5`, or `timeout 60`, with their
+ * options. Returns the command, the directory it runs in (`env -C`), and the
+ * variables it sets, or null when nothing runs (`command -v`).
+ */
+function unwrap(input: string[], cwd: string, inherited: Context["env"]): { argv: string[]; cwd: string; env: Context["env"] } | null {
   const argv = [...input];
-  while (argv.length && (ASSIGNMENT.test(argv[0]!) || WRAPPERS.has(argv[0]!))) argv.shift();
-  if (argv[0] === "env") { argv.shift(); while (argv.length && (argv[0]!.startsWith("-") || ASSIGNMENT.test(argv[0]!))) argv.shift(); }
-  if (!argv.length) return;
+  let directory = cwd, env = inherited;
+  while (argv.length) {
+    const word = argv[0]!;
+    if (ASSIGNMENT.test(word)) { const equals = word.indexOf("="); env = { ...env, [word.slice(0, equals)]: word.slice(equals + 1) }; argv.shift(); continue; }
+    const wrapper = path.basename(word);
+    const takesValue = WRAPPERS.get(wrapper);
+    if (!takesValue) break;
+    argv.shift();
+    while (argv[0]?.startsWith("-")) {
+      const option = argv.shift()!;
+      if (option === "--") break;
+      const equals = option.startsWith("--") ? option.indexOf("=") : -1;
+      const name = equals > 0 ? option.slice(0, equals) : option;
+      const value = equals > 0 ? option.slice(equals + 1) : takesValue.has(name) ? argv.shift() : undefined;
+      // `command -v` and `command -V` only describe the command.
+      if (wrapper === "command" && /^-[pvV]*[vV]/.test(option)) return null;
+      if (wrapper !== "env") continue;
+      if (name === "-" || name === "-i" || name === "--ignore-environment") env = {};
+      else if (value === undefined) continue;
+      else if (name === "-u" || name === "--unset") env = Object.fromEntries(Object.entries(env).filter(([key]) => key !== value));
+      else if (name === "-C" || name === "--chdir") directory = path.resolve(directory, value);
+      // `env -S 'a b'` reads its words as if they were given separately.
+      else if (name === "-S" || name === "--split-string") argv.unshift(...splitShell(value).flat());
+    }
+    // `timeout` takes its duration before the command.
+    if (wrapper === "timeout") argv.shift();
+  }
+  return { argv, cwd: directory, env };
+}
+
+function visit(context: Context, input: string[], invokedIn: string, chain: string[], depth: number): void {
+  if (depth > MAX_DEPTH) { context.errors.push(`Resolution deeper than ${MAX_DEPTH} levels: ${chain.join(" -> ")}`); return; }
+  const unwrapped = unwrap(input, invokedIn, context.env);
+  if (!unwrapped?.argv.length) return;
+  // Variables a command sets reach every command it runs, and only those.
+  const outer = context.env;
+  context.env = unwrapped.env;
+  try { dispatch(context, unwrapped.argv, unwrapped.cwd, chain, depth); } finally { context.env = outer; }
+}
+
+function dispatch(context: Context, argv: string[], cwd: string, chain: string[], depth: number): void {
   // `npx vitest@4` names the runner with a version selector.
   const name = path.basename(argv[0]!).replace(/(?<=.)@[^@/]*$/, "");
   const args = argv.slice(1);
@@ -167,9 +219,15 @@ function visit(context: Context, input: string[], cwd: string, chain: string[], 
   else if (name === "bunx" || name === "npx") execute(context, args, cwd, chain, depth);
   else if (name === "npm" || name === "pnpm" || name === "yarn") packageManager(context, name, args, cwd, chain, depth, text);
   else if (name === "turbo") turbo(context, args, cwd, chain, text);
+  else if (name === "uv" || name === "uvx") uv(context, name === "uvx" ? ["tool", "run", ...args] : args, cwd, chain, depth, text);
+  else if (name === "poetry" || name === "pdm" || name === "hatch" || name === "pipenv" || name === "pipx") pythonProject(context, name, args, cwd, chain, depth, text);
+  else if (/^python[\d.]*$/.test(name)) python(context, args, cwd, chain, depth, text);
+  else if (name === "coverage") { if (args[0] === "run") coverageRun(context, args.slice(1), cwd, chain, depth, text); }
+  else if (name === "mise") mise(context, args, cwd, chain, depth);
   else if (testRunner(name, args)) report(context, "test", text, chain);
   else if (builds(name, args)) report(context, "build", text, chain);
-  else if (["pod", "bundle", "pip", "pip3"].includes(name) && args[0] === "install") report(context, "install", text, chain);
+  else if ((name === "pod" || name === "bundle") && args[0] === "install") report(context, "install", text, chain);
+  else if (/^pip[\d.]*$/.test(name) && options(args, PYTHON_TOOLS.pip).rest[0] === "install" && !previews(args)) report(context, "install", text, chain);
   else if (name === "bundle" && args[0] === "exec") visit(context, args.slice(1), cwd, chain, depth + 1);
 }
 
@@ -217,14 +275,13 @@ const GRADLE_TEST = gradleTask("test\\w*");
 const GRADLE_BUILD = gradleTask("assemble\\w*|build(?:Needed|Dependents)?|bundle\\w*|install\\w*");
 
 function testRunner(name: string, args: string[]): boolean {
-  if (["jest", "vitest", "mocha", "ava", "maestro", "detox", "pytest", "rspec"].includes(name)) return true;
+  if (["jest", "vitest", "mocha", "ava", "maestro", "detox", "pytest", "py.test", "tox", "nox", "rspec"].includes(name)) return true;
   const first = subcommand(name, args);
   if (name === "node") return args.some(arg => arg === "--test" || arg.startsWith("--test="));
   if (["playwright", "deno", "go", "swift"].includes(name)) return first === "test";
   if (name === "cargo") return first === "test" || first === "nextest";
   if (name === "gradle" || name === "gradlew") return positionals(args, GRADLE_VALUES).some(task => GRADLE_TEST.test(task));
   if (name === "xcodebuild") return xcodebuildActions(args).some(action => action === "test" || action === "test-without-building");
-  if (/^python[\d.]*$/.test(name)) return args[0] === "-m" && args[1] === "pytest";
   return false;
 }
 
@@ -234,12 +291,12 @@ const WEBPACK_OTHER = new Set(["serve", "server", "s", "info", "i", "configtest"
 const XCODEBUILD_OTHER = new Set(["-list", "-showBuildSettings", "-showBuildSettingsForIndex", "-showsdks", "-showdestinations", "-showTestPlans", "-version", "-usage", "-help", "-license", "-checkFirstLaunchStatus", "-runFirstLaunch", "-resolvePackageDependencies", "-exportArchive", "-create-xcframework", "-find-executable", "-find-library", "-downloadPlatform", "-downloadAllPlatforms", "-importPlatform"]);
 
 /**
- * Bundlers, framework builds, native compilers, and image builds. Static
- * checks are not builds: `tsc` (whether `--noEmit` or `-b`), `cargo
- * check|clippy|fmt`, linters, and formatters.
+ * Bundlers, framework builds, native compilers, image builds, and Python
+ * package builds. Static checks are not builds: `tsc` (whether `--noEmit` or
+ * `-b`), `cargo check|clippy|fmt`, linters, formatters, and type checkers.
  */
 function builds(name: string, args: string[]): boolean {
-  if (name === "rollup" || name === "tsup") return true;
+  if (name === "rollup" || name === "tsup" || name === "pyproject-build") return true;
   if (name === "esbuild") return args.some(arg => arg === "--bundle" || /^--out(?:file|dir)(?:=|$)/.test(arg));
   const first = subcommand(name, args);
   if (name === "webpack" || name === "webpack-cli") return !WEBPACK_OTHER.has(first ?? "");
@@ -394,8 +451,8 @@ function bun(context: Context, args: string[], cwd: string, chain: string[], dep
   else runScript(context, sub, rest.slice(1), directory, workspaceScoped(seen, TOOLS.bun), chain, depth, null);
 }
 
-/** npm reads its own options anywhere before `--`, so `npm run check --workspaces` selects workspaces. */
-function npmOptions(args: string[]): { rest: string[]; seen: Map<string, string | true> } {
+/** Options read anywhere before `--`, as npm reads `npm run check --workspaces` and mise `mise x node@24 -C dir -- …`; returns the positional words, then `--` and what follows it. */
+function scatteredOptions(args: string[], spec: Tool): { rest: string[]; seen: Map<string, string | true> } {
   const separator = args.indexOf("--");
   const before = separator === -1 ? args : args.slice(0, separator);
   const seen = new Map<string, string | true>(), positional: string[] = [];
@@ -404,7 +461,7 @@ function npmOptions(args: string[]): { rest: string[]; seen: Map<string, string 
     if (!value.startsWith("-")) { positional.push(value); continue; }
     const equals = value.indexOf("=");
     if (equals > 0) seen.set(value.slice(0, equals), value.slice(equals + 1));
-    else if (TOOLS.npm.values.has(value) && index + 1 < before.length) seen.set(value, before[++index]!);
+    else if (spec.values.has(value) && index + 1 < before.length) seen.set(value, before[++index]!);
     else seen.set(value, true);
   }
   return { rest: separator === -1 ? positional : [...positional, ...args.slice(separator)], seen };
@@ -412,7 +469,7 @@ function npmOptions(args: string[]): { rest: string[]; seen: Map<string, string 
 
 function packageManager(context: Context, manager: "npm" | "pnpm" | "yarn", args: string[], cwd: string, chain: string[], depth: number, text: string): void {
   const spec = TOOLS[manager];
-  const { rest, seen } = manager === "npm" ? npmOptions(args) : options(args, spec);
+  const { rest, seen } = manager === "npm" ? scatteredOptions(args, spec) : options(args, spec);
   const directory = directoryOption(cwd, seen);
   const workspaces = workspaceScoped(seen, spec);
   const sub = rest[0];
@@ -433,6 +490,139 @@ function packageManager(context: Context, manager: "npm" | "pnpm" | "yarn", args
   }
   // pnpm and yarn run a script by its bare name, else an installed executable of that name.
   else if (manager !== "npm") runScript(context, sub, rest.slice(1), directory, workspaces, chain, depth, rest);
+}
+
+/** Options that take a separate value, for each Python runner and project manager, before and after its subcommand. */
+const PYTHON_TOOLS = {
+  uv: tool([
+    "--directory", "--project", "--cache-dir", "--color", "--config-file", "--allow-insecure-host",
+    "-w", "--with", "--with-editable", "--with-requirements", "--from", "-c", "--constraints", "-b", "--build-constraints", "--overrides",
+    "--extra", "--no-extra", "--group", "--no-group", "--only-group", "--package", "--env-file", "-p", "--python", "--python-platform", "--torch-backend",
+    "--index", "--default-index", "-i", "--index-url", "--extra-index-url", "-f", "--find-links", "--index-strategy", "--keyring-provider",
+    "-P", "--upgrade-package", "--resolution", "--prerelease", "--fork-strategy", "--exclude-newer", "--exclude-newer-package", "--no-sources-package",
+    "--reinstall-package", "--link-mode", "-C", "--config-setting", "--config-settings-package", "--no-build-isolation-package", "--no-build-package",
+    "--no-binary-package", "--refresh-package",
+  ]),
+  poetry: tool(["-C", "--directory", "-P", "--project"]),
+  pdm: tool(["-p", "--project", "-k", "--skip", "--venv", "--env", "--env-file", "--working-dir"]),
+  hatch: tool(["-e", "--env", "-p", "--project", "--data-dir", "--cache-dir", "--config"]),
+  hatchEnvRun: tool(["-e", "--env", "-i", "--include", "-x", "--exclude", "-f", "--filter"]),
+  pipenv: tool(["--python", "--pypi-mirror"]),
+  pipx: tool(["--python-args", "--with", "--spec", "--python", "--fetch-python", "--index-url", "--pip-args", "--cooldown", "--backend"]),
+  pip: tool(["--python", "--log", "--log-file", "--proxy", "--retries", "--resume-retries", "--timeout", "--exists-action", "--trusted-host", "--cert", "--client-cert", "--cache-dir", "--use-feature", "--use-deprecated", "--keyring-provider"]),
+  coverage: tool(["--rcfile", "--source", "--include", "--omit", "--context", "--concurrency", "--data-file", "--debug"]),
+} as const;
+const MISE = tool(["-C", "--cd", "-E", "--env", "-j", "--jobs", "-c", "--command", "--allow-env", "--allow-net", "--allow-read", "--allow-write", "--secrets"]);
+/** Subcommands that install a Python project's dependencies into its environment. */
+const PYTHON_INSTALLS: Partial<Record<keyof typeof PYTHON_TOOLS, readonly string[]>> = {
+  uv: ["sync", "add", "remove"], poetry: ["install", "sync", "add", "remove", "update"], pdm: ["install", "sync", "add", "remove", "update"], pipenv: ["install", "sync", "update", "upgrade"],
+};
+/** A Python install that only reports what it would change. */
+const previews = (args: string[]) => args.some(arg => arg === "--dry-run" || arg === "--check");
+const truthy = (value: string | undefined) => /^(?:1|t|true|y|yes|on)$/i.test(value ?? "");
+
+/** The directory a command runs in after options such as `--directory` or `-C`, applied in order. */
+function movedTo(cwd: string, names: string[], ...seen: Map<string, string | true>[]): string {
+  let directory = cwd;
+  for (const options of seen) for (const name of names) { const value = options.get(name); if (typeof value === "string") directory = path.resolve(directory, value); }
+  return directory;
+}
+
+/**
+ * `uv run` syncs the project's environment before its command, even with
+ * `--frozen` or `--locked`, unless `--no-sync`, `--no-project`, a script
+ * (`--script`, `--gui-script`), or a true `UV_NO_SYNC` skips it; `-m` runs a
+ * module. `uvx` is `uv tool run`, whose cached tool environment, like `npx`'s
+ * download, is not counted as an install; neither are `--with` requirements.
+ */
+function uv(context: Context, args: string[], cwd: string, chain: string[], depth: number, text: string): void {
+  const spec = PYTHON_TOOLS.uv;
+  const { rest, seen } = options(args, spec);
+  const sub = rest[0], words = rest.slice(1);
+  if (sub === "run" || (sub === "tool" && words[0] === "run")) {
+    const run = scriptOptions(sub === "run" ? words : words.slice(1), spec);
+    if (!run.rest.length) return;
+    const flags = new Set([...seen.keys(), ...run.seen.keys()]);
+    if (sub === "run" && !["--no-sync", "--no-project", "-s", "--script", "--gui-script"].some(flag => flags.has(flag)) && !truthy(context.env.UV_NO_SYNC)) report(context, "install", text, chain);
+    const module = sub === "run" && (run.seen.has("-m") || run.seen.has("--module"));
+    visit(context, module ? ["python", "-m", ...run.rest] : run.rest, movedTo(cwd, ["--directory"], seen, run.seen), chain, depth + 1);
+  } else if ((PYTHON_INSTALLS.uv!.includes(sub ?? "") || (sub === "pip" && ["install", "sync"].includes(options(words, spec).rest[0] ?? ""))) && !previews(words)) report(context, "install", text, chain);
+  else if (sub === "build") report(context, "build", text, chain);
+}
+
+/**
+ * `poetry run`, `pdm run`, `pipenv run`, and `pipx run` run their command as
+ * given; `hatch run` and `hatch env run` first create and sync the
+ * environment, and `hatch run` takes leading `+`/`-` matrix selectors and an
+ * `env:` prefix. Script names they look up in `pyproject.toml`, `hatch.toml`,
+ * or `Pipfile` are leaves.
+ */
+function pythonProject(context: Context, name: "poetry" | "pdm" | "hatch" | "pipenv" | "pipx", args: string[], cwd: string, chain: string[], depth: number, text: string): void {
+  const spec = PYTHON_TOOLS[name];
+  const { rest, seen } = options(args, spec);
+  const sub = rest[0], words = rest.slice(1);
+  if (sub === "run" || (name === "hatch" && sub === "env" && words[0] === "run")) {
+    let run: { rest: string[]; seen: Map<string, string | true> };
+    if (name === "hatch" && sub === "run") {
+      let at = 0;
+      while (at < words.length && /^[+-]/.test(words[at]!) && words[at] !== "--") at++;
+      const command = words[at] === "--" ? words.slice(at + 1) : words.slice(at);
+      const prefix = command[0]?.indexOf(":") ?? -1;
+      run = { rest: prefix === -1 ? command : [command[0]!.slice(prefix + 1), ...command.slice(1)], seen: new Map() };
+    } else run = scriptOptions(sub === "run" ? words : words.slice(1), name === "hatch" ? PYTHON_TOOLS.hatchEnvRun : spec);
+    if (!run.rest.length) return;
+    if (name === "hatch") report(context, "install", text, chain);
+    visit(context, run.rest, movedTo(cwd, name === "poetry" ? ["-C", "--directory"] : name === "pdm" ? ["--working-dir"] : [], seen, run.seen), chain, depth + 1);
+  } else if (PYTHON_INSTALLS[name]?.includes(sub ?? "")) { if (!previews(words)) report(context, "install", text, chain); }
+  else if (sub === "build" && name !== "pipenv" && name !== "pipx") report(context, "build", text, chain);
+  else if (name === "hatch" && sub === "test") report(context, "test", text, chain);
+}
+
+/**
+ * `python [options] -m <module> [args]` runs the module as its command would:
+ * `-m pytest` is a test run and `-m pip install` an install. `-m unittest`
+ * tests and `-m build` builds. Code (`-c`), standard input, and script files
+ * are leaves.
+ */
+function python(context: Context, args: string[], cwd: string, chain: string[], depth: number, text: string): void {
+  for (let index = 0; index < args.length; index++) {
+    const word = args[index]!;
+    if (word === "--check-hash-based-pycs") { index++; continue; }
+    // A script file, `-` for standard input, or a long option such as `--version`.
+    if (!/^-[^-]/.test(word)) return;
+    for (let at = 1; at < word.length; at++) {
+      const flag = word[at]!;
+      if (!"cmWX".includes(flag)) continue;
+      // An option that takes a value takes the rest of its word, else the next word.
+      const value = at + 1 < word.length ? word.slice(at + 1) : args[++index];
+      if (flag === "c" || value === undefined) return;
+      if (flag === "m") {
+        if (value === "build") report(context, "build", text, chain);
+        else if (value === "unittest") report(context, "test", text, chain);
+        else visit(context, [value, ...args.slice(index + 1)], cwd, chain, depth + 1);
+        return;
+      }
+      break;
+    }
+  }
+}
+
+/** `coverage run -m <module>` runs the module as `python -m` does; a program file is a leaf. */
+function coverageRun(context: Context, args: string[], cwd: string, chain: string[], depth: number, text: string): void {
+  const { rest, seen } = options(args, PYTHON_TOOLS.coverage);
+  if ((seen.has("-m") || seen.has("--module")) && rest.length) python(context, ["-m", ...rest], cwd, chain, depth, text);
+}
+
+/** `mise exec|x [tool@version...] -- <command>` runs its command, and `-c` a shell string, in the directory `-C` names. */
+function mise(context: Context, args: string[], cwd: string, chain: string[], depth: number): void {
+  const { rest, seen } = options(args, MISE);
+  if (rest[0] !== "exec" && rest[0] !== "x") return;
+  const exec = scatteredOptions(rest.slice(1), MISE);
+  const directory = movedTo(cwd, ["-C", "--cd"], seen, exec.seen);
+  const call = exec.seen.get("-c") ?? exec.seen.get("--command");
+  if (typeof call === "string") visitShell(context, call, directory, chain, depth + 1);
+  const separator = exec.rest.indexOf("--");
+  if (separator !== -1 && separator + 1 < exec.rest.length) visit(context, exec.rest.slice(separator + 1), directory, chain, depth + 1);
 }
 
 /** The checkout holding `directory`: this repository's root when it is inside it, else the nearest directory with a `.git`. */
