@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync, type StdioOptions } from "node:child_process";
+import { chmodSync, closeSync, constants, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DEFAULT_CONFIG, parseConfig } from "../config";
@@ -16,7 +16,7 @@ function fixture(config: Record<string, unknown> = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "workflow-tests-")); directories.push(root);
   const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_COUNT: "0", AGENT_TOOL_CONFIG: "" };
   const git = (args: string[]) => execFileSync("git", args, { cwd: root, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-  const run = (args: string[], extra: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [cli, ...args], { cwd: root, env: { ...env, ...extra }, encoding: "utf8", timeout: 15000 });
+  const run = (args: string[], extra: NodeJS.ProcessEnv = {}, stdio: StdioOptions = "pipe") => spawnSync(process.execPath, [cli, ...args], { cwd: root, env: { ...env, ...extra }, encoding: "utf8", timeout: 15000, stdio });
   git(["init", "-b", "main"]); git(["config", "user.name", "Test"]); git(["config", "user.email", "test@example.com"]); git(["config", "commit.gpgsign", "false"]);
   writeFileSync(path.join(root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, ...config }));
   writeFileSync(path.join(root, "tracked"), "baseline\n"); git(["add", "."]); git(["commit", "-m", "chore: initialize"]);
@@ -62,6 +62,8 @@ test("branch creation pins remote base and avoids local upstream settings", () =
   f.git(["init", "--bare", remote]); f.git(["remote", "add", "origin", remote]); f.git(["push", "origin", "main"]); f.git(["config", "branch.autoSetupMerge", "always"]);
   writeFileSync(path.join(f.root, ".git/info/exclude"), "remote.git/\n");
   const result = f.run(["branch", "create", "chore/task", "--base", "main"]); expect(result.status).toBe(0);
+  // stdout carries only the JSON result, and Git's progress stays off stderr.
+  expect(JSON.parse(result.stdout).branch).toBe("chore/task"); expect(result.stderr).toBe("");
   expect(f.git(["branch", "--show-current"])).toBe("chore/task");
   expect(spawnSync("git", ["rev-parse", "--abbrev-ref", "@{upstream}"], { cwd: f.root, env: f.env }).status).not.toBe(0);
   expect(f.run(["branch", "create", "chore/task", "--base", "main"]).status).toBe(1);
@@ -153,8 +155,22 @@ else if(a[0]==='api' && a[1]==='graphql'){
 }else {console.error('unexpected gh call '+a.join(' '));process.exit(1);}
 `;
   writeFileSync(path.join(bin, "gh"), script); chmodSync(path.join(bin, "gh"), 0o755);
-  const run = (args: string[], extra: NodeJS.ProcessEnv = {}) => f.run(args, { PATH: bin + path.delimiter + process.env.PATH, API_STATE: stateFile, ...extra });
+  const run = (args: string[], extra: NodeJS.ProcessEnv = {}, stdio: StdioOptions = "pipe") => f.run(args, { PATH: bin + path.delimiter + process.env.PATH, API_STATE: stateFile, ...extra }, stdio);
   return { ...f, run, save, stateFile, commit, bin };
+}
+/**
+ * The write end of a pipe whose only reader already exited, as stderr is under
+ * `2>&1 | jq` once jq rejects Git's progress text and quits: any write to it
+ * raises SIGPIPE. Opening the FIFO's reader first lets the writer open without
+ * blocking; closing the reader leaves the writer with no reader.
+ */
+function pipeWithoutReader(directory: string): number {
+  const fifo = path.join(directory, "stderr-without-reader");
+  execFileSync("mkfifo", [fifo]);
+  const reader = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+  const writer = openSync(fifo, constants.O_WRONLY);
+  closeSync(reader);
+  return writer;
 }
 
 test("CI waiter does not pass no-check races, duplicate pending jobs, or head drift", () => {
@@ -281,7 +297,7 @@ test("cleanup previews without changes, then deletes only exact shipped refs thr
   const f = githubFixture(); f.save({ status: "MERGED" });
   expect(f.run(["repo", "cleanup", "1", f.commit]).status).toBe(0); expect(f.git(["branch", "--show-current"])).toBe("chore/workflow"); expect(existsSync(f.stateFile + ".deleted")).toBe(false);
   const result = f.run(["repo", "cleanup", "1", f.commit, "--apply"]); expect(result.status).toBe(0);
-  expect(JSON.parse(result.stdout).completed).toEqual(["updated-default", "deleted-local-branch", "deleted-remote-branch"]);
+  expect(JSON.parse(result.stdout).completed).toEqual(["updated-default", "deleted-local-branch", "deleted-remote-branch"]); expect(result.stderr).toBe("");
   expect(f.git(["branch", "--show-current"])).toBe("main"); expect(f.git(["branch", "--list", "chore/workflow"])).toBe(""); expect(existsSync(f.stateFile + ".deleted")).toBe(true);
   const again = f.run(["repo", "cleanup", "1", f.commit, "--apply"]);
   expect(again.status).toBe(0); expect(JSON.parse(again.stdout).completed).toEqual(["updated-default"]);
@@ -305,6 +321,8 @@ test("cleanup preserves a shipped branch checked out in another worktree", () =>
   const linked = path.join(f.root, ".git/linked"); f.git(["worktree", "add", linked, "chore/workflow"]);
   const result = f.run(["repo", "cleanup", "1", f.commit, "--apply"]);
   expect(result.status).toBe(1); expect(JSON.parse(result.stdout).completed).toEqual(["updated-default"]);
+  // The JSON error carries Git's own reason rather than only its exit status.
+  expect(JSON.parse(result.stdout).error).toMatch(/^git branch failed \(1\): .*cannot delete branch 'chore\/workflow'/is);
   expect(f.git(["rev-parse", "refs/heads/chore/workflow"])).toBe(f.commit);
   expect(existsSync(f.stateFile + ".deleted")).toBe(false);
   expect(execFileSync("git", ["branch", "--show-current"], { cwd: linked, env: f.env, encoding: "utf8" }).trim()).toBe("chore/workflow");
@@ -324,6 +342,23 @@ test("cleanup keeps branches on request and rejects unmerged or moved HEAD", () 
   expect(f.run(["repo", "cleanup", "1", f.commit, "--apply", "--keep-branch"]).status).toBe(0); expect(f.git(["rev-parse", "refs/heads/chore/workflow"])).toBe(f.commit); expect(existsSync(f.stateFile + ".deleted")).toBe(false);
   f.git(["switch", "chore/workflow"]); f.git(["commit", "--allow-empty", "-m", "chore: additional work"]); expect(f.run(["repo", "cleanup", "1", f.commit, "--apply"]).status).toBe(1);
 }, 20_000);
+test("cleanup and branch creation finish when the caller's stderr pipe has no reader", () => {
+  const f = githubFixture();
+  writeFileSync(path.join(f.root, "tracked"), "shipped change\n"); f.git(["commit", "-am", "feat: shipped change"]);
+  const shipped = f.git(["rev-parse", "HEAD"]); f.git(["push", "origin", "chore/workflow", `${shipped}:refs/heads/main`]);
+  // Local main stays behind the merge, so cleanup must switch, fast-forward, and delete.
+  f.save({ status: "MERGED", apiHead: shipped, commit: shipped, liveBase: shipped });
+  const stderr = pipeWithoutReader(path.join(f.root, ".git"));
+  try {
+    const cleanup = f.run(["repo", "cleanup", "1", shipped, "--apply"], {}, ["ignore", "pipe", stderr]);
+    expect(JSON.parse(cleanup.stdout)).toMatchObject({ applied: true, completed: ["updated-default", "deleted-local-branch", "deleted-remote-branch"], branch: "main", headOid: shipped });
+    expect(cleanup.status).toBe(0);
+    expect(f.git(["rev-parse", "refs/heads/main"])).toBe(shipped); expect(f.git(["branch", "--list", "chore/workflow"])).toBe("");
+    const create = f.run(["branch", "create", "chore/next", "--base", "main"], {}, ["ignore", "pipe", stderr]);
+    expect(JSON.parse(create.stdout)).toMatchObject({ branch: "chore/next", headOid: shipped });
+    expect(create.status).toBe(0); expect(f.git(["branch", "--show-current"])).toBe("chore/next");
+  } finally { closeSync(stderr); }
+}, 30_000);
 
 test("private source release plans require explicit opt-in and pin the scoped registry", () => {
   const f = fixture(); const bin = path.join(f.root, ".git/bin"); mkdirSync(bin);

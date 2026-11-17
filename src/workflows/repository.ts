@@ -4,7 +4,7 @@ import path from "node:path";
 import { loadConfig } from "../config";
 import { remoteBranchHead, resolveFreshBaseRef, resolveRepositoryGitUrl } from "../git/prContext";
 import { viewCurrentBranchPr } from "../git/currentBranchPr";
-import { assert, clean, currentBranch, flag, git, head, mutateGit, oid, output, read, repository } from "./core";
+import { assert, clean, currentBranch, flag, git, head, mutateGitCaptured, oid, output, read, repository } from "./core";
 import { pullRequest } from "./pr";
 import { assertStrictBaseFreshness } from "../pr/baseFreshness";
 import { baseHealthCommand } from "./baseHealth";
@@ -55,15 +55,15 @@ export function repoCommand(args: string[]): number {
     const localDefault = spawnSync("git", ["rev-parse", "--verify", `refs/heads/${defaultBranch}`], { encoding: "utf8" });
     if (localDefault.status === 0) {
       assert(git(["merge-base", localDefault.stdout.trim(), defaultOid]) === localDefault.stdout.trim(), "Local default branch diverged; preserve it for inspection.");
-      mutateGit(["switch", defaultBranch]);
-      mutateGit(["merge", "--ff-only", defaultOid]);
-    } else { assert(localDefault.status === 128, "Could not inspect local default branch."); mutateGit(["switch", "--no-track", "-c", defaultBranch, defaultOid]); }
+      mutateGitCaptured(["switch", defaultBranch]);
+      mutateGitCaptured(["merge", "--ff-only", defaultOid]);
+    } else { assert(localDefault.status === 128, "Could not inspect local default branch."); mutateGitCaptured(["switch", "--no-track", "-c", defaultBranch, defaultOid]); }
     assert(currentBranch() === defaultBranch && head() === defaultOid, "Checkout changed during default-branch update.");
     clean(); completed.push("updated-default");
     if (!keep) {
       if (feature.status === 0) {
         assert(git(["rev-parse", `refs/heads/${pr.headRefName}`]) === shipped, "Local feature branch changed before deletion.");
-        mutateGit(["branch", "-D", "--", pr.headRefName]); completed.push("deleted-local-branch");
+        mutateGitCaptured(["branch", "-D", "--", pr.headRefName]); completed.push("deleted-local-branch");
       }
       const live = remoteBranchHead(url, pr.headRefName);
       assert(!live || live === shipped, "Remote feature branch changed before deletion.");

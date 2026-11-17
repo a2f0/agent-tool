@@ -12,11 +12,35 @@ export function read(command: string, args: string[], cwd = process.cwd()): stri
 }
 export function git(args: string[], cwd = process.cwd()): string { return read("git", args, cwd); }
 export function json<T>(args: string[]): T { return JSON.parse(read("gh", args)) as T; }
-/** Mutating Git commands deliberately retain normal hooks and their environment. */
+/**
+ * Mutating Git commands deliberately retain normal hooks and their environment.
+ * This one streams Git's and its hooks' output to stderr for commands people
+ * watch live, such as a push and its push gate.
+ */
 export function mutateGit(args: string[]): void {
   const result = spawnSync("git", args, { stdio: ["inherit", 2, 2], env: process.env });
   if (result.error) throw result.error;
   assert(result.status === 0, `git ${args[0]} failed (${result.signal ?? result.status}). Inspect checkout state before retrying.`);
+}
+/**
+ * A local Git mutation whose output nobody reads live, with the same hooks and
+ * environment as `mutateGit`. Its output and its hooks' are captured rather than
+ * inherited: a caller whose stderr pipe lost its reader (`2>&1 | jq` once jq
+ * quits) would otherwise kill Git with SIGPIPE part-way through a multi-step
+ * mutation. Stdin is closed, since a prompt could not be seen. On failure the
+ * error carries Git's exit status or signal and the tail of its stderr.
+ */
+export function mutateGitCaptured(args: string[]): void {
+  const result = spawnSync("git", args, { stdio: ["ignore", "pipe", "pipe"], env: process.env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  if (result.error) throw result.error;
+  if (result.status === 0) return;
+  const detail = outputTail(result.stderr || result.stdout || "");
+  throw new Error(`git ${args[0]} failed (${result.signal ?? result.status})${detail ? `: ${detail}` : "."} Inspect checkout state before retrying.`);
+}
+/** The last lines of a command's output, bounded for an error message. */
+export function outputTail(text: string, lines = 20, characters = 2000): string {
+  const tail = text.trim().split("\n").slice(-lines).join("\n");
+  return tail.length > characters ? `…${tail.slice(-characters)}` : tail;
 }
 export function clean(): void { assert(!git(["status", "--porcelain=v1", "--untracked-files=all"]), "Checkout has local changes; preserve them before continuing."); }
 export function head(): string { return oid(git(["rev-parse", "HEAD"])); }

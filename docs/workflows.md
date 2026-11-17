@@ -60,7 +60,11 @@ stashing or branch replacement occurs. `push` requires a full expected HEAD,
 a clean feature branch, and one explicit remote push destination. It runs normal
 Git hooks and verifies local branch, local HEAD, and remote HEAD afterward. A
 hook-created commit invalidates the result and requires review. Neither command
-uses a force push.
+uses a force push. Both print their result as JSON on stdout. `create` captures
+the output of Git and its hooks, so nothing reaches stderr on success; a
+failure's error names Git's exit status or signal and the tail of its stderr.
+`push` streams Git's and its hooks' output to stderr so the push gate can be
+watched.
 
 ## Commit and binary checks
 
@@ -617,7 +621,16 @@ PR and exact shipped commit rather than Git's ancestry-based merged-branch test.
 If the feature branch is checked out in another worktree, cleanup fails after
 updating the default branch and preserves both feature refs. GitHub's DELETE ref
 API has no atomic expected-OID argument: the ref is rechecked before deletion,
-but a concurrent update between those calls remains a limitation. Cleanup
+but a concurrent update between those calls remains a limitation.
+
+The result is JSON on stdout, and so is a failure once `--apply` starts
+changing the checkout; a guard that refuses before any change reports on
+stderr, so keep stderr out of pipes that parse the result. The switch,
+fast-forward, and local branch deletion capture the output of Git and its
+hooks, so nothing reaches stderr on success, and a caller whose stderr pipe
+lost its reader, as with `2>&1 | jq` once `jq` rejects non-JSON text, cannot
+kill Git between steps with SIGPIPE. A failed step's `error` names Git's exit
+status or signal and the tail of its stderr. Cleanup
 reports completed steps if a later step fails; `deleted-local-branch` records a
 local deletion, while an already absent branch needs no deletion step. Verify the
 local feature ref is absent before reporting pruning complete. Dependency/hook
