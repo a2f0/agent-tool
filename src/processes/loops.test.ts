@@ -3,7 +3,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { definesAny, failsTeardown, findLoops, loopTransition, pathAfter, programOf, resolveIn, runningLoop, runsShell, sessionProcesses, stopLoop, stopTransition, stuckLoops, withSources, type LoopFacts, type LoopState, type StopState } from "./loops";
+import { definesAny, failsTeardown, findLoops, loopTransition, pathAfter, programOf, resolveIn, runningLoop, runsShell, sessionProcesses, stopLoop, stopTransition, stuckLoops, TRAP_HANDLER, withSources, type LoopFacts, type LoopState, type StopState } from "./loops";
 import { analyzeScript, definedNames, parseScript, shellArgvScript, shellScript, wordsInOrder, type WaitLoop } from "./shell";
 import { processTable, type ProcessRow } from "./table";
 
@@ -137,6 +137,9 @@ test("proves which loop a shell is running from its children", () => {
   expect(runningLoop(analyzeScript("for i in $(sleep 5); do :; done; until ! pgrep -f x; do sleep 5; done")!, [child("sleep 5")])).toBeUndefined();
   expect(runningLoop(analyzeScript("{ :; } > \"$(sleep 5)\"; until ! pgrep -f x; do sleep 5; done")!, [child("sleep 5")])).toBeUndefined();
   expect(runningLoop(analyzeScript("for i in 1 2; do :; done; until ! pgrep -f x; do sleep 5; done")!, [child("sleep 5")])).toBeDefined();
+  // So could an alias or function the script defines.
+  const aliased = analyzeScript("alias w='sleep 5'; w; until ! pgrep -f x; do sleep 5; done", "zsh")!;
+  expect(runningLoop(aliased, [child("sleep 5")], aliased.defines)).toBeUndefined();
   // So could a function defined around the script, such as in a sourced shell snapshot.
   expect(runningLoop(analyzeScript("mise use node; until ! pgrep -f x; do sleep 5; done")!, [child("sleep 5")], new Set(["mise"]))).toBeUndefined();
   expect(runningLoop(analyzeScript("mise use node; until ! pgrep -f x; do sleep 5; done")!, [child("sleep 5")])).toBeDefined();
@@ -226,7 +229,12 @@ test("reads the PATH a loop's shell searches", () => {
   // Literal assignments and sources are recorded where they run; nested or expanded ones are unknown.
   expect(analyzeScript(`PATH=/usr/bin:/bin; source /tmp/snap.sh; export PATH="$HOME/bin"; if true; then PATH=/x; fi; until [ -f "" ]; do sleep 5; done`)!.path.map(event => event.kind === "assign" ? event.value : event.kind)).toEqual(["/usr/bin:/bin", "source", "unknown", "unknown"]);
   // A quoted value is still an assignment.
-  expect(analyzeScript(`PATH="/custom/bin:/usr/bin:/bin"; until [ -f "" ]; do sleep 5; done`)!.path).toEqual([{ at: 0, kind: "assign", value: "/custom/bin:/usr/bin:/bin" }]);
+  expect(analyzeScript(`PATH="/custom/bin:/usr/bin:/bin"; until [ -f "" ]; do sleep 5; done`)!.path).toEqual([{ at: 0, guards: [], kind: "assign", value: "/custom/bin:/usr/bin:/bin" }]);
+  // A change in an eval the shell may skip counts only for a loop inside that eval.
+  const skipped = analyzeScript(`false && eval 'PATH=/x'; until [ -f "" ]; do sleep 5; done`)!;
+  expect(skipped.path).toEqual([{ at: 2, guards: [1], kind: "assign", value: "/x" }]);
+  expect(skipped.loops[0]!.scopes).toEqual([0]);
+  expect(analyzeScript(`true && eval 'PATH=/x; until [ -f "" ]; do sleep 5; done'`)!.loops[0]!.scopes).toEqual([0, 1]);
   // A quoted name is a command named `PATH=/x`, which changes nothing.
   expect(analyzeScript(`"PATH=/x"; until [ -f "" ]; do sleep 5; done`)!.path).toEqual([]);
   // So are ones that may not run: after `&&` or `||`, in a pipeline, or in the background.
@@ -257,6 +265,29 @@ test.each([
 ] as const)("stop %o + %o", (state, event, next) => {
   expect(stopTransition(state as StopState, event as never)).toEqual(next as StopState);
 });
+
+test("trap handlers in files around a script are noticed", () => {
+  for (const text of ["trap 'sleep 30; rm -f lock' TERM", 'trap "exit" INT', "trap -- 'x' EXIT", "TRAPTERM() { sleep 30; }", "function TRAPINT {\n}"]) expect(TRAP_HANDLER.test(text)).toBe(true);
+  // Text is read as words, so prose that mentions a trap counts too; that only leaves a loop unjudged.
+  for (const text of ["trap '' TERM", "trap - TERM", "trap -l", "untrap x"]) expect(TRAP_HANDLER.test(text)).toBe(false);
+});
+
+test("a held shell is resumed when teardown is cancelled", async () => {
+  const shell = spawn("sh", ["-c", "sleep 300; :"], { detached: true, stdio: "ignore" });
+  children.push(shell);
+  await sleep(300);
+  process.kill(shell.pid!, "SIGSTOP");
+  // A process that holds the shell, as a stop does, until it is cancelled.
+  const holder = spawn(process.execPath, ["-e", `const { resumeOnCancel } = require(${JSON.stringify(path.join(import.meta.dir, "loops.ts"))}); resumeOnCancel(() => process.kill(${shell.pid}, "SIGCONT")); console.log("ready"); setInterval(() => {}, 1000)`], { stdio: ["ignore", "pipe", "ignore"] });
+  children.push(holder);
+  await new Promise(resolve => holder.stdout!.once("data", resolve));
+  const stat = () => spawnSync("ps", ["-o", "stat=", "-p", String(shell.pid)], { encoding: "utf8" }).stdout.trim();
+  expect(stat()).toMatch(/^T/);
+  holder.kill("SIGTERM");
+  const exited = await new Promise<NodeJS.Signals | null>(resolve => holder.once("exit", (_code, signal) => resolve(signal)));
+  expect(exited).toBe("SIGTERM");
+  expect(await until(() => !stat().startsWith("T"), 5_000)).toBe(true);
+}, 30_000);
 
 test("a process is judged as a shell only when it runs one", () => {
   const sh = realpathSync(spawnSync("sh", ["-c", "command -v sh"], { encoding: "utf8" }).stdout.trim());

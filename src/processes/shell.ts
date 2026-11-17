@@ -382,6 +382,8 @@ export interface WaitLoop {
   commands: string[];
   /** Indexes into the analysis's `commands` of the loop's own simple commands. */
   own: number[];
+  /** The `eval` scopes enclosing the loop, by number: the script itself is 0. */
+  scopes: number[];
 }
 
 export interface Analysis {
@@ -411,7 +413,14 @@ export interface Analysis {
  */
 export const STEP_TRAP = /\btrap\b[^\n]*(?<![\w-])(?:SIG)?(?:DEBUG|ERR|RETURN|ZERR)\b|\bTRAP(?:DEBUG|ZERR)\b/;
 
-export type PathEvent = { at: number } & ({ kind: "assign"; value: string } | { kind: "source"; file: string } | { kind: "unknown" });
+/**
+ * A change to PATH. `guards` numbers the `eval` scopes around it that the shell may have skipped
+ * (an `eval` after `&&` or `||`, in a pipeline, in the background or in a compound command): it
+ * counts for a loop only inside every one of them.
+ */
+export type PathEvent = { at: number; guards: number[] } & ({ kind: "assign"; value: string } | { kind: "source"; file: string } | { kind: "unknown" });
+
+interface Scope { id: number; scopes: number[]; guards: number[] }
 
 type Simple = Extract<Command, { kind: "simple" }>;
 
@@ -538,33 +547,34 @@ function describe(command: Simple): CommandInfo {
  */
 export function analyzeScript(text: string, shell = "sh"): Analysis | undefined {
   const analysis: Analysis = { loops: [], commands: [], defines: new Set(), sourced: [], path: [], traps: false };
-  return collect(text, shell, analysis, 0) ? analysis : undefined;
+  let scopes = 0;
+  return collect(text, shell, analysis, 0, { id: 0, scopes: [0], guards: [] }, () => (scopes += 1)) ? analysis : undefined;
 }
 
 // Stands for `eval`ed text that could not be read: it may run anything.
 const OPAQUE: CommandInfo = { text: "eval", args: [], expands: true, substitutes: true };
 
 /** What a simple command defines, sources, or does to `PATH`. */
-function definitions(command: Simple, info: CommandInfo, at: number, analysis: Analysis, nested: boolean): void {
-  const path = (event: PathEvent) => analysis.path.push(nested ? { at, kind: "unknown" } : event);
+function definitions(command: Simple, info: CommandInfo, at: number, analysis: Analysis, nested: boolean, scope: Scope): void {
+  const path = (event: { kind: "assign"; value: string } | { kind: "source"; file: string } | { kind: "unknown" }) => analysis.path.push({ at, guards: scope.guards, ...(nested ? { kind: "unknown" as const } : event) });
   const operands = info.args.filter(arg => !arg.startsWith("-") && !arg.startsWith("+"));
   if (info.program === "alias") for (const arg of operands) { const name = /^([^=]+)=/.exec(arg)?.[1]; if (name) analysis.defines.add(name); }
   if (info.program === "trap" && (info.expands || (info.args[0] !== undefined && info.args[0] !== "" && info.args[0] !== "-" && !/^-[lp]$/.test(info.args[0])))) analysis.traps = true;
   if (info.program === "autoload" || info.program === "functions") for (const arg of operands) analysis.defines.add(arg.replace(/=.*$/, ""));
   if ((info.program === "source" || info.program === ".") && operands[0] && !info.expands) {
     analysis.sourced.push(operands[0]);
-    path({ at, kind: "source", file: operands[0] });
+    path({ kind: "source", file: operands[0] });
   }
   // `PATH=...` alone sets it in the shell; before a program it sets it for that program only.
   const words = command.words.slice(command.assignments);
   const exported = info.program !== undefined && ["export", "typeset", "declare", "readonly", "local"].includes(info.program) ? words.slice(1) : words.length === 0 ? command.words : [];
   for (const word of exported) {
-    if (/^PATH\+?=/.test(word.text)) path(word.literal && !word.text.startsWith("PATH+=") ? { at, kind: "assign", value: word.text.slice(5) } : { at, kind: "unknown" });
+    if (/^PATH\+?=/.test(word.text)) path(word.literal && !word.text.startsWith("PATH+=") ? { kind: "assign", value: word.text.slice(5) } : { kind: "unknown" });
   }
-  if (info.program === "hash" || info.program === "rehash" || (info.program === undefined && words.length > 0)) path({ at, kind: "unknown" });
+  if (info.program === "hash" || info.program === "rehash" || (info.program === undefined && words.length > 0)) path({ kind: "unknown" });
 }
 
-function collect(text: string, shell: string, analysis: Analysis, depth: number): boolean {
+function collect(text: string, shell: string, analysis: Analysis, depth: number, scope: Scope, next: () => number): boolean {
   const list = parseScript(text, shell);
   if (!list) return false;
   // Commands are numbered in the order the shell meets them, `eval`ed text where the `eval` is.
@@ -592,6 +602,7 @@ function collect(text: string, shell: string, analysis: Analysis, depth: number)
           pure: harmless(command.redirects) && [...commandsOf(command.body)].every(inner => inner.kind === "simple") && body.every(inner => inner.assignments === 0 && harmless(inner.redirects) && inner.words.length === 2 && inner.words[0]!.text === "sleep" && inner.words.every(word => word.literal) && SLEEP.test(inner.words[1]!.text)),
           commands: inside.map(inner => commandText(inner.words)),
           own: inside.map(inner => index.get(inner)!),
+          scopes: scope.scopes,
         });
       } else if (command.kind === "compound") {
         if (command.defines) analysis.defines.add(command.defines);
@@ -602,13 +613,16 @@ function collect(text: string, shell: string, analysis: Analysis, depth: number)
         const at = analysis.commands.length, info = describe(command);
         index.set(command, at);
         analysis.commands.push(info);
-        definitions(command, info, at, analysis, conditional);
+        definitions(command, info, at, analysis, conditional, scope);
         const evaluatedText = evaluated(command);
-        if (evaluatedText !== undefined && !(depth < 3 && collect(evaluatedText, shell, analysis, depth + 1))) {
-          analysis.commands.push(OPAQUE);
-          analysis.path.push({ at, kind: "unknown" });
+        if (evaluatedText !== undefined) {
+          const id = next(), inner = { id, scopes: [...scope.scopes, id], guards: conditional ? [...scope.guards, id] : scope.guards };
+          if (!(depth < 3 && collect(evaluatedText, shell, analysis, depth + 1, inner, next))) {
+            analysis.commands.push(OPAQUE);
+            analysis.path.push({ at, guards: scope.guards, kind: "unknown" });
+          }
         }
-        if (info.expands && info.program !== undefined && RUNNERS.has(path.basename(info.program))) analysis.path.push({ at, kind: "unknown" });
+        if (info.expands && info.program !== undefined && RUNNERS.has(path.basename(info.program))) analysis.path.push({ at, guards: scope.guards, kind: "unknown" });
       }
     }
   };

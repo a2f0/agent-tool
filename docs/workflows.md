@@ -763,8 +763,9 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
   elsewhere (past assignments and modifiers such as `command` or `exec`), a
   command naming one of the loop's programs as an argument (`nohup sleep 15`),
   a shell, exec wrapper or interpreter, by name or path, that could turn into
-  one in place (`/bin/sh -c 'exec sleep 15'`, `env`, `python3`), a call of a
-  function that a sourced or startup file defines, a command substitution
+  one in place (`/bin/sh -c 'exec sleep 15'`, `env`, `python3`), a call of an
+  alias or function that the script, a sourced file or a startup file defines,
+  a command substitution
   (`x=$(...)`, whose subshell may run its command in place, including in a
   `for` header or a redirection), `eval`ed text
   that cannot be read, and a command whose words are expanded when its program
@@ -775,8 +776,8 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
   shell. The script sets no trap with a handler (`trap '' TERM` and
   `trap - TERM` set none), nor one teardown cannot read, since a handler can
   leave the loop or run the loop's own commands once teardown signals the
-  shell; and no file around it sets one that runs between commands or on
-  failures (`DEBUG`, `ERR`, `RETURN`, zsh's `ZERR` and `TRAPDEBUG`).
+  shell; nor does any file around it (a `trap` with a handler, or a zsh `TRAP`
+  function, read as words).
 - The loop's commands run as what their names say, read without running
   anything: the script defines none of them as a function or alias; nor does
   any file it sources by literal path (nested sources are read the same way,
@@ -800,8 +801,9 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
   snapshot ends by setting it) finds each of `pgrep`, `grep` and `sleep` at the
   same file teardown finds outside the repository. A PATH step teardown cannot
   read (an `eval`, a function, an expanded assignment, `hash`, or one that may
-  not run: after `&&` or `||`, in a pipeline, in the background or inside a
-  compound command) leaves the loop unjudged.
+  not run: after `&&` or `||`, in a pipeline, in the background, inside a
+  compound command, or inside an `eval` in one of those places that does not
+  also hold the loop) leaves the loop unjudged.
 - The condition is one `&&`/`||` list, optionally negated with `!`, of checks
   that all settle for good; any other command in it could leave the loop some
   other way, such as `break`. Two checks settle:
@@ -839,7 +841,8 @@ another that waited on it); otherwise it is resumed and nothing is signalled.
 Then its children are killed, and the shell gets SIGTERM and is resumed to act
 on it; a shell that outlives two seconds is held again and killed with any loop
 command it started since. Whatever fails, a shell teardown suspended is
-resumed. Every signal goes only to a process that a fresh snapshot shows is
+resumed, and so is one held when SIGINT, SIGTERM or SIGHUP ends teardown (only
+SIGKILL, which no process can catch, would leave it suspended). Every signal goes only to a process that a fresh snapshot shows is
 still the same one; between that snapshot and the signal, a pid can only name
 another process if the system's pids wrap around, as for `proc stop`. After
 each stop the loops are judged again, and a released loop is left to finish. A

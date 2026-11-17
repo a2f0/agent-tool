@@ -209,6 +209,10 @@ function pgrepMatches(pgrep: string, pattern: string): Set<number> | undefined {
   return new Set(result.stdout.split("\n").map(line => line.trim()).filter(line => /^\d+$/.test(line)).map(Number));
 }
 
+// A trap with a handler, or a zsh TRAP function, in text around the script: `trap '' TERM` and
+// `trap - TERM` set none.
+export const TRAP_HANDLER = /\btrap[ \t]+(?!(?:''|""|-[lp]?)(?:[ \t]|$))\S|(?:^|[\s;{])(?:function[ \t]+)?TRAP[A-Z]+[ \t]*(?:\([ \t]*\)|\{)/m;
+
 // What a wait loop looks like in a script the reader cannot parse: reported as waiting, never judged.
 const UNPARSED_LOOP = ["until|while", "do", "sleep", "done"];
 const TIMEOUTS = new Set(["timeout", "gtimeout"]);
@@ -382,7 +386,9 @@ function pathOf(analysis: Analysis, loop: WaitLoop, context: Context): string | 
   for (const text of context.startup) current = pathAfter(text, current);
   const start = Math.min(...loop.own);
   for (const event of analysis.path.filter(item => item.at < start)) {
-    if (event.kind === "assign") current = event.value;
+    // A change in an `eval` the shell may have skipped counts only for a loop inside that `eval`.
+    if (!event.guards.every(guard => loop.scopes.includes(guard))) current = undefined;
+    else if (event.kind === "assign") current = event.value;
     else if (event.kind === "unknown") current = undefined;
     else {
       const text = context.sourced.get(event.file);
@@ -458,12 +464,12 @@ export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number
     const owned = !verified || args!.environment?.has("AGENT_TOOL_PROCESS") || (!candidate.session && !args!.environment);
     const context = owned ? undefined : contextOf(analysis, exact!.shell, exact!.login, args!.environment);
     // A call of a function defined around the script runs code teardown has not judged.
-    const functions = new Set((context?.all ?? []).flatMap(text => [...definedNames(text)]));
+    const functions = new Set([...analysis.defines, ...(context?.all ?? []).flatMap(text => [...definedNames(text)])]);
     const loop = context ? runningLoop(analysis, kids, functions) : undefined;
     found.push({ ...base, script: (loop ?? runningLoop(analysis, kids) ?? analysis.loops[0]!).script, ...(loop ? { loop } : {}) });
     const above = ancestors(table, pid);
     // A trap that runs between commands or on failures can leave the loop, and so can unknown ones.
-    const trapped = analysis.traps || !context || context.all.some(text => STEP_TRAP.test(text));
+    const trapped = analysis.traps || !context || context.all.some(text => STEP_TRAP.test(text) || TRAP_HANDLER.test(text));
     if (trapped || !context || !loop?.pure || !loop.condition || [...above].some(other => TIMEOUTS.has(program(table.get(other)))) || !plainCommands(analysis, loop, exact!.shell, context)) continue;
     const programs = samePrograms(loop, pathOf(analysis, loop, context), root);
     if (!programs) continue;
@@ -553,6 +559,23 @@ export function stopTransition(state: StopState, event: StopEvent): StopState {
 }
 
 const SKIPPED = { outcome: "skipped" as const, gone: [], remaining: [] };
+const CANCELS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+
+/**
+ * While teardown holds a shell suspended, a signal that ends teardown would skip its cleanup: on
+ * SIGINT, SIGTERM or SIGHUP, `resume` runs first, then the signal is raised again with its default
+ * action. Returns the function that removes the handlers. SIGKILL cannot be caught.
+ */
+export function resumeOnCancel(resume: () => void): () => void {
+  const handlers = CANCELS.map(signal => [signal, () => {
+    remove();
+    resume();
+    process.kill(process.pid, signal);
+  }] as const);
+  const remove = () => { for (const [signal, handler] of handlers) process.removeListener(signal, handler); };
+  for (const [signal, handler] of handlers) process.once(signal, handler);
+  return remove;
+}
 
 /**
  * Stops a stuck loop's shell and the sleep or check it is running. The shell is suspended first
@@ -565,7 +588,7 @@ const SKIPPED = { outcome: "skipped" as const, gone: [], remaining: [] };
  */
 export async function stopLoop(item: FoundLoop, recheck: () => boolean, grace = 2000): Promise<{ outcome: "stopped" | "skipped" | "survived"; gone: number[]; remaining: number[] }> {
   const commands = new Set(item.loop?.commands ?? []), signalled = new Map<number, ProcessRow>();
-  let state: StopState = { status: "ready" };
+  let state: StopState = { status: "ready" }, removeCancel = () => {};
   const send = (table: Map<number, ProcessRow>, targets: ProcessRow[], signal: NodeJS.Signals) => {
     for (const target of targets) {
       if (!same(table, target)) continue;
@@ -598,6 +621,7 @@ export async function stopLoop(item: FoundLoop, recheck: () => boolean, grace = 
     // A shell someone else suspended is theirs to resume: leave it alone.
     if (!same(first, item.row) || first.get(item.row.pid)?.stat?.startsWith("T")) { state = stopTransition(state, { type: "declined" }); return SKIPPED; }
     state = stopTransition(state, { type: "suspended" });
+    removeCancel = resumeOnCancel(() => { if (state.status === "holding") resume(); });
     const table = await hold();
     const children = table ? kids(table) : [];
     if (!table || children.length === 0 || children.some(row => !commands.has(row.command)) || !recheck()) {
@@ -630,6 +654,7 @@ export async function stopLoop(item: FoundLoop, recheck: () => boolean, grace = 
   } finally {
     // Never leave a shell teardown suspended frozen, whatever failed.
     if (state.status === "holding" || (state.status === "finished" && state.remaining.includes(item.row.pid))) resume();
+    removeCancel();
   }
 }
 
