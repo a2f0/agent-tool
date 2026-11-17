@@ -197,9 +197,9 @@ function unwrap(input: string[], cwd: string, inherited: Context["env"]): { argv
       for (const [name, value] of optionWords(option, takesValue, () => argv.shift())) {
         // `command -v` and `command -V` only describe the command.
         if (wrapper === "command" && (name === "-v" || name === "-V")) return null;
-        if (wrapper !== "env") continue;
-        if (name === "-" || name === "-i" || name === "--ignore-environment") env = {};
-        else if (value === undefined) continue;
+        // `exec -c` and `env -i` start the command with an empty environment.
+        if ((wrapper === "exec" && name === "-c") || (wrapper === "env" && (name === "-" || name === "-i" || name === "--ignore-environment"))) env = {};
+        else if (wrapper !== "env" || value === undefined) continue;
         else if (name === "-u" || name === "--unset") env = Object.fromEntries(Object.entries(env).filter(([key]) => key !== value));
         else if (name === "-C" || name === "--chdir") directory = path.resolve(directory, value);
         // `env -S 'a b'` reads its words as if they were given separately.
@@ -244,7 +244,7 @@ function dispatch(context: Context, argv: string[], cwd: string, chain: string[]
   else if (testRunner(name, args)) report(context, "test", text, chain);
   else if (builds(name, args)) report(context, "build", text, chain);
   else if ((name === "pod" || name === "bundle") && args[0] === "install") report(context, "install", text, chain);
-  else if (/^pip[\d.]*$/.test(name) && options(args, PYTHON_TOOLS.pip).rest[0] === "install" && !previews("pip", "install", args)) report(context, "install", text, chain);
+  else if (/^pip[\d.]*$/.test(name) && options(args, PYTHON_TOOLS.pip).rest[0] === "install" && !previews(context, "pip", "install", args)) report(context, "install", text, chain);
   else if (name === "bundle" && args[0] === "exec") visit(context, args.slice(1), cwd, chain, depth + 1);
 }
 
@@ -535,9 +535,24 @@ const PYTHON_INSTALLS: Partial<Record<keyof typeof PYTHON_TOOLS, readonly string
   // `pipenv upgrade` only updates the lockfile; `pipenv update` also syncs.
   pipenv: ["install", "sync", "update"],
 };
-/** A Python install that only previews or locks: `--dry-run`, `uv sync --check`, or poetry's `--lock`. `pdm install --check` checks the lockfile and then installs. */
-const previews = (tool: string, sub: string | undefined, args: string[]) => args.some(arg => arg === "--dry-run" || (arg === "--check" && tool === "uv" && sub === "sync") || (arg === "--lock" && tool === "poetry"));
+/**
+ * A Python install that only previews or changes declarations and locks:
+ * `--dry-run`, `uv sync --check`, `uv add|remove` with `--no-sync`,
+ * `--frozen`, or a true `UV_NO_SYNC` or `UV_FROZEN`, `pdm add|remove|update
+ * --no-sync`, or poetry's `--lock`. `pdm install --check` checks the lockfile
+ * and then installs.
+ */
+function previews(context: Context, tool: string, sub: string | undefined, args: string[]): boolean {
+  if (tool === "uv" && (sub === "add" || sub === "remove") && (truthy(context.env.UV_NO_SYNC) || truthy(context.env.UV_FROZEN))) return true;
+  return args.some(arg => arg === "--dry-run"
+    || (tool === "uv" && sub === "sync" && arg === "--check")
+    || (tool === "uv" && (sub === "add" || sub === "remove") && (arg === "--no-sync" || arg === "--frozen"))
+    || (tool === "pdm" && (sub === "add" || sub === "remove" || sub === "update") && arg === "--no-sync")
+    || (tool === "poetry" && arg === "--lock"));
+}
 const truthy = (value: string | undefined) => /^(?:1|t|true|y|yes|on)$/i.test(value ?? "");
+/** `uvx` and `pipx run` take a requirement for the command they run, such as `ruff==0.6`, `ruff>=0.6`, or `ruff[all]`; the command is its name. */
+const requirement = ([first, ...rest]: string[]) => first === undefined ? [] : [first.replace(/^([A-Za-z0-9][\w.-]*)\s*(?:\[[^\]]*\])?\s*(?:[=<>!~].*)?$/s, "$1"), ...rest];
 
 /** The directory a command runs in after options such as `--directory` or `-C`, applied in order. */
 function movedTo(cwd: string, names: string[], ...seen: Map<string, string | true>[]): string {
@@ -566,8 +581,8 @@ function uv(context: Context, args: string[], cwd: string, chain: string[], dept
     if (sub === "run" && !["--no-sync", "--no-project", "-s", "--script", "--gui-script"].some(flag => flags.has(flag)) && !truthy(context.env.UV_NO_SYNC)) report(context, "install", text, chain);
     if (!run.rest.length) return;
     const module = sub === "run" && (run.seen.has("-m") || run.seen.has("--module"));
-    visit(context, module ? ["python", "-m", ...run.rest] : run.rest, movedTo(cwd, ["--directory"], seen, tool.seen, run.seen), chain, depth + 1);
-  } else if ((PYTHON_INSTALLS.uv!.includes(sub ?? "") || (sub === "pip" && ["install", "sync"].includes(options(words, spec).rest[0] ?? ""))) && !previews("uv", sub, words)) report(context, "install", text, chain);
+    visit(context, module ? ["python", "-m", ...run.rest] : sub === "run" ? run.rest : requirement(run.rest), movedTo(cwd, ["--directory"], seen, tool.seen, run.seen), chain, depth + 1);
+  } else if ((PYTHON_INSTALLS.uv!.includes(sub ?? "") || (sub === "pip" && ["install", "sync"].includes(options(words, spec).rest[0] ?? ""))) && !previews(context, "uv", sub, words)) report(context, "install", text, chain);
   else if (sub === "build") report(context, "build", text, chain);
 }
 
@@ -601,8 +616,8 @@ function pythonProject(context: Context, name: "poetry" | "pdm" | "hatch" | "pip
       const project = run.seen.get("--project") ?? run.seen.get("-p") ?? seen.get("--project") ?? seen.get("-p");
       directory = path.resolve(typeof project === "string" ? path.resolve(cwd, project) : packageRoot(context, cwd, "pyproject.toml"), working);
     }
-    visit(context, run.rest, directory, chain, depth + 1);
-  } else if (PYTHON_INSTALLS[name]?.includes(sub ?? "")) { if (!previews(name, sub, words)) report(context, "install", text, chain); }
+    visit(context, name === "pipx" ? requirement(run.rest) : run.rest, directory, chain, depth + 1);
+  } else if (PYTHON_INSTALLS[name]?.includes(sub ?? "")) { if (!previews(context, name, sub, words)) report(context, "install", text, chain); }
   else if (sub === "build" && name !== "pipenv" && name !== "pipx") report(context, "build", text, chain);
   else if (name === "hatch" && sub === "test") report(context, "test", text, chain);
 }
