@@ -82,6 +82,13 @@ test("an executable that asks is refused while the generated rules predate its c
     writeFileSync(manifestFile, JSON.stringify({ ...manifest, agentToolVersion }));
     expect(JSON.parse(f.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
   }
+  // Only recorded harnesses are checked: a manifest that records none requires no rule files.
+  rmSync(path.join(f.project, ".claude"), { recursive: true }); rmSync(path.join(f.project, ".codex"), { recursive: true });
+  writeFileSync(manifestFile, JSON.stringify({ schemaVersion: 1 }));
+  expect(JSON.parse(f.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
+  // A recorded harness whose rules are gone is stale.
+  writeFileSync(manifestFile, JSON.stringify({ schemaVersion: 1, codex: manifest.codex }));
+  expect(f.run(["x", "wrangler"]).stderr).toMatch(/Permission rules predate the current class of 'bun x wrangler'/);
 }, 30_000);
 
 test("--cwd cannot reach another checkout, and options must precede --", () => {

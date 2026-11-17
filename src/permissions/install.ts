@@ -138,9 +138,9 @@ export function installPermissions(rootDir: string, target: string, apply = fals
 }
 
 /** Each generated file, then the manifest's own entry, against one reading of the manifest. */
-function checks(root: string, target: string, { raw, manifest }: Recorded): PermissionCheck[] {
+function checks(root: string, targets: Harness[], { raw, manifest }: Recorded): PermissionCheck[] {
   const project = projectCommands(root);
-  const files = pending(root, harnesses(target), manifest, project).map((change): PermissionCheck => {
+  const files = pending(root, targets, manifest, project).map((change): PermissionCheck => {
     if (change.status === "create") return { path: change.relative, status: "missing" };
     if (change.status === "update") return { path: change.relative, status: "outdated" };
     const managed = change.harness === "claude" ? JSON.stringify(manifest.claude) === JSON.stringify(claudePermissions(project)) : manifest.codex?.sha256 === hash(change.contents);
@@ -152,7 +152,7 @@ function checks(root: string, target: string, { raw, manifest }: Recorded): Perm
 /** Read-only CI gate: generated rules are current, recorded as managed, and by the running version. */
 export function checkPermissions(rootDir: string, target: string): PermissionCheck[] {
   const root = realpathSync(rootDir);
-  return checks(root, target, readManifest(root));
+  return checks(root, harnesses(target), readManifest(root));
 }
 
 /**
@@ -165,7 +165,18 @@ export function checkInstalledPermissions(rootDir: string): { harness: string; c
   if (recorded.raw === undefined) return null;
   const { claude, codex } = recorded.manifest;
   const harness = claude && !codex ? "claude" : codex && !claude ? "codex" : "all";
-  return { harness, changes: checks(root, harness, recorded) };
+  return { harness, changes: checks(root, harnesses(harness), recorded) };
+}
+
+/**
+ * `bun x`'s check, or null without a manifest: only the harnesses whose rules the manifest
+ * records, none when it records none, then the manifest's own entry, from one reading of it.
+ */
+export function checkRecordedPermissions(rootDir: string): PermissionCheck[] | null {
+  const root = realpathSync(rootDir);
+  const recorded = readManifest(root);
+  if (recorded.raw === undefined) return null;
+  return checks(root, HARNESSES.filter(harness => recorded.manifest[harness] !== undefined), recorded);
 }
 
 export function showPermissions(rootDir: string, target: string): string {
