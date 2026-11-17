@@ -336,11 +336,41 @@ is ignored, and a `--call` string is split like a script), and `agent-tool
 `agent-tool run-group <plan>` plans. Workspace filters (`--filter`, `-r`,
 `--workspace`) resolve to every workspace package, from `package.json`
 workspaces or `pnpm-workspace.yaml`, that declares the script.
+Commands are also followed through what runs them, as the command it runs
+would be classified directly: `NAME=value` assignments; the wrappers `env`
+(whose `-C` moves the command and whose `-S` string is split into words),
+`nice`, `time`, `timeout`, `nohup`, `exec`, `stdbuf`, `xargs`, and `command`
+(but not `command -v`), with their options; the Python runners `uv run`, `uvx`
+and `uv tool run`, `poetry run`, `pdm run`, `pipenv run`, `pipx run` (where a
+requirement such as `pytest==8` or `tox[uv]` names its command, as for `uvx`),
+`hatch run` (after its `+`/`-` matrix selectors and an `env:` prefix) and
+`hatch env run`, `python -m <module>` (also `python3` and versioned names,
+after interpreter options such as `-X dev`), and `coverage run -m <module>`;
+and `mise exec` or `mise x` with the command after `--` or a `-c` string.
+Their option values, whether separate (`uv --directory build`, `pdm run --venv
+test`) or attached to a short option as getopt reads it (`env -Cbuild`, `env
+-iu NAME`), are never read as the command. `uv --directory`, `poetry -C`, and
+`mise -C` move the command; `pdm run` keeps its directory unless
+`--working-dir` names one, relative to the project root (`-p`, else the
+nearest `pyproject.toml`). Scripts that `pdm run`, `hatch run`, or `pipenv
+run` look up by name in `pyproject.toml`, `hatch.toml`, or `Pipfile` are
+leaves, and so are `mise run` tasks. `uv run` is also an install, because it
+syncs the project's environment before running its command, even with
+`--frozen` or `--locked`; `--no-sync`, `--no-project`, `--script`, or
+`--gui-script` skips the sync, so `uv run --no-sync mypy` reports nothing. The
+`UV_NO_SYNC` variable does not count, since whether a command sees it cannot
+be told from the step; pass the flag. `hatch run` and `hatch env run` are
+installs too, since they create and sync the environment. A runner that
+installs before its command, such as `uv run pytest`, reports both the install
+and what its command does. Cached tool environments (`uvx`, `pipx run`, `uv
+run --with`) and the tools `mise exec` installs are not dependency installs,
+like the packages `npx` fetches.
 Test runs are `bun test`, `jest`, `vitest`, `mocha`, `ava`, `playwright
-test`, `maestro`, `detox`, `node --test`, `pytest`, `python -m pytest`,
-`rspec`, `go test`, `cargo test`, `deno test`, `swift test`, `xcodebuild
-test`, Gradle `test` tasks, and `turbo` or `turbo run` with a task named
-`test*`. Builds are bundlers and framework builds (`vite build`, `bun build`,
+test`, `maestro`, `detox`, `node --test`, `pytest`, `py.test`, `python -m
+pytest`, `python -m unittest`, `tox`, `nox`, `hatch test`, `rspec`, `go
+test`, `cargo test`, `deno test`, `swift test`, `xcodebuild test`, Gradle
+`test` tasks, and `turbo` or `turbo run` with a task named `test*`. Builds are
+bundlers and framework builds (`vite build`, `bun build`,
 `next build`, `astro build`, `webpack` other than `serve`, `info`, or
 `configtest`, `rollup`, `tsup`, `esbuild` with `--bundle`, `--outfile`, or
 `--outdir`, `electrobun build`, and `expo export` or `expo run:<platform>`);
@@ -348,11 +378,14 @@ test`, Gradle `test` tasks, and `turbo` or `turbo run` with a task named
 build|run`, `swift build`, `go build`, `xcodebuild` without `-list`,
 `-showBuildSettings`, or another listing option and with an action other
 than `clean`, and Gradle `assemble*`, `build`, `bundle*`, or `install*`
-tasks); and image builds (`docker build`, `docker image|builder|compose
-build`, `docker buildx build|bake`, and `docker-compose build`). Static checks
-are not builds: `tsc` (with `--noEmit` or `-b`), `cargo check|clippy|fmt`,
-`swift-format`, `swiftlint`, `ktlint`, `detekt`, linters, formatters, `knip`,
-and dependency-cruiser. A turbo task also counts as a test run or build when it
+tasks); image builds (`docker build`, `docker image|builder|compose
+build`, `docker buildx build|bake`, and `docker-compose build`); and Python
+package builds (`python -m build`, `pyproject-build`, `uv build`, `poetry
+build`, `hatch build`, and `pdm build`). Static checks are not builds: `tsc`
+(with `--noEmit` or `-b`), `cargo check|clippy|fmt`, `swift-format`,
+`swiftlint`, `ktlint`, `detekt`, `knip`, dependency-cruiser, and other linters,
+formatters, and type checkers, such as `ruff`, `black`, `isort`, `flake8`,
+`pylint`, `mypy`, and `pyright`. A turbo task also counts as a test run or build when it
 depends, through `dependsOn` in the root `turbo.json` (or `turbo.jsonc`, the
 file `--root-turbo-json` names, or turbo 1's `pipeline`) or a workspace
 package's own, on a task named `test*` or
@@ -363,9 +396,16 @@ reported once, as a test run. Option values are never read as subcommands or
 tasks, so `gradlew -x test lint` runs no tests and `cargo --config build.x
 check` builds nothing. Installs are `bun install|add|update|remove`, `npm
 install|ci|update`, `pnpm install|add|update`, `yarn` alone or `yarn
-install|add|up`, `agent-tool bun install`, and `pod`, `bundle`, or `pip
-install`. Executables and script files are leaves: their contents are not
-inspected. The report is:
+install|add|up`, `agent-tool bun install`, `pod` or `bundle install`, the
+environment syncs of `uv run` and `hatch run`, and the Python installs `pip
+install` (also `pip3` and `python -m pip`), `uv sync|add|remove`, `uv pip
+install|sync`, `poetry install|sync|add|remove|update`, `pdm
+install|sync|add|remove|update`, and `pipenv install|sync|update` (not
+`pipenv upgrade`, which only relocks), unless they only preview or change
+declarations and locks: `--dry-run`, `uv sync --check`, `uv add|remove` with
+`--no-sync` or `--frozen`, `pdm add|remove|update --no-sync`, or poetry's
+`--lock` (`pdm install --check` still installs). Executables and script files are leaves: their contents are
+not inspected. The report is:
 
 ```json
 {
