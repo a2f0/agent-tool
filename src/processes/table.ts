@@ -5,7 +5,7 @@ import { dlopen, FFIType, ptr } from "bun:ffi";
 import { execFileSync } from "node:child_process";
 import { readFileSync, readlinkSync } from "node:fs";
 
-export interface ProcessRow { pid: number; ppid: number; pgid: number; uid: number; started: string; command: string }
+export interface ProcessRow { pid: number; ppid: number; pgid: number; uid: number; started: string; command: string; /** `ps` state, such as `S` or `T` (stopped). */ stat?: string }
 
 // One locale and time zone, so start times read the same in every shell that compares them.
 const C_LOCALE = { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" };
@@ -20,7 +20,7 @@ export function parseRows(text: string): ProcessRow[] {
   return text.split("\n").flatMap(line => {
     const match = ROW.exec(line);
     if (!match || match[5]!.startsWith("Z")) return [];
-    return [{ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), uid: Number(match[4]), started: match[6]!.replace(/\s+/g, " "), command: match[7]!.trim() }];
+    return [{ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), uid: Number(match[4]), started: match[6]!.replace(/\s+/g, " "), command: match[7]!.trim(), stat: match[5]! }];
   });
 }
 
@@ -151,7 +151,7 @@ function darwinSysctl(): Sysctl | null {
 
 // KERN_PROCARGS2: argc, the executable path, padding, each argument, then each environment entry,
 // all NUL-terminated. macOS leaves the environment out for protected programs such as /bin/sh.
-function darwinArgs(pid: number): { argv: string[]; environment: string[] } | undefined {
+function darwinArgs(pid: number): { executable: string; argv: string[]; environment: string[] } | undefined {
   const call = darwinSysctl();
   const max = call?.([1, 8], 4)?.readInt32LE(0); // KERN_ARGMAX
   const raw = call && max && max > 0 ? call([1, 49, pid], max) : undefined;
@@ -159,6 +159,7 @@ function darwinArgs(pid: number): { argv: string[]; environment: string[] } | un
   const argc = raw.readInt32LE(0), argv: string[] = [], environment: string[] = [];
   let at = raw.indexOf(0, 4);
   if (at < 0) return undefined;
+  const executable = raw.subarray(4, at).toString("utf8");
   while (at < raw.length && raw[at] === 0) at += 1;
   for (let index = 0; index < argc; index += 1) {
     const end = raw.indexOf(0, at);
@@ -167,26 +168,26 @@ function darwinArgs(pid: number): { argv: string[]; environment: string[] } | un
     at = end + 1;
   }
   for (let end = raw.indexOf(0, at); end > at; at = end + 1, end = raw.indexOf(0, at)) environment.push(raw.subarray(at, end).toString("utf8"));
-  return { argv, environment };
+  return { executable, argv, environment };
 }
 
 /**
- * A process's exact argv, which `ps` joins with spaces, and the environment it started with where
- * the system shows it: from /proc on Linux and from the kernel (KERN_PROCARGS2) on macOS, which
+ * A process's executable, its exact argv, which `ps` joins with spaces and whose first word the
+ * process chose, and the environment it started with where the system shows it: from /proc on Linux and from the kernel (KERN_PROCARGS2) on macOS, which
  * hides the environment of protected programs. Undefined elsewhere, for another user's process,
  * or once the process has gone; read only while the pid still names the process `ps` reported, by
  * its start time.
  */
-export function argsOf(pid: number, started: string): { argv: string[]; environment?: Map<string, string> } | undefined {
-  let found: { argv: string[]; environment: string[] } | undefined;
+export function argsOf(pid: number, started: string): { executable: string; argv: string[]; environment?: Map<string, string> } | undefined {
+  let found: { executable: string; argv: string[]; environment: string[] } | undefined;
   try {
     if (process.platform === "linux") {
       const split = (file: string) => readFileSync(`/proc/${pid}/${file}`).toString("utf8").split("\0").filter((item, index, all) => item !== "" || index < all.length - 1);
-      found = { argv: split("cmdline"), environment: split("environ") };
+      found = { executable: readlinkSync(`/proc/${pid}/exe`), argv: split("cmdline"), environment: split("environ") };
     } else if (process.platform === "darwin") found = darwinArgs(pid);
   } catch { found = undefined; }
-  if (!found?.argv.length || startOf(pid) !== started) return undefined;
+  if (!found?.argv.length || !found.executable || startOf(pid) !== started) return undefined;
   // Every process has some environment; none at all means it is hidden.
   const environment = found.environment.length ? new Map(found.environment.map(entry => [entry.slice(0, entry.indexOf("=")), entry.slice(entry.indexOf("=") + 1)])) : undefined;
-  return { argv: found.argv, ...(environment ? { environment } : {}) };
+  return { executable: found.executable, argv: found.argv, ...(environment ? { environment } : {}) };
 }

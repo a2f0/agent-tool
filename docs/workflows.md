@@ -747,8 +747,10 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
 
 - It read the shell's exact argv: from `/proc` on Linux and from the kernel
   (`KERN_PROCARGS2`) on macOS, since `ps` joins positional arguments onto the
-  script. Elsewhere no loop is judged. Teardown never runs anything the shell
-  names, such as its `argv[0]`.
+  script. Elsewhere no loop is judged. Since `argv[0]` is the process's own
+  choice, the executable it runs must be that shell (for `sh`, any shell that
+  serves as it: macOS runs `/bin/bash`, Debian `dash`). Teardown never runs
+  anything the shell names.
 - The shell belongs to no other agent-tool record: it carries no
   `AGENT_TOOL_PROCESS` (a `proc start --keep` from another checkout). Outside
   the session, a shell is judged only when its environment shows that; macOS
@@ -771,7 +773,8 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
 - The loop's commands run as what their names say, read without running
   anything: the script defines none of them as a function or alias; nor does
   any file it sources by literal path (nested sources are read the same way,
-  and one whose path is expanded may define anything) or any startup file of
+  and one whose path is expanded or relative may define anything) or any
+  startup file of
   its shell (zsh's `zshenv` files, and for a login shell `zprofile` and
   `zlogin`; bash's `$BASH_ENV`, and for a login shell `/etc/profile` and the
   user's profiles; `/etc/profile` and `~/.profile` for a login `sh`); and for
@@ -789,12 +792,15 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
   assignment and sourced file before the loop, in order; a harness's shell
   snapshot ends by setting it) finds each of `pgrep`, `grep` and `sleep` at the
   same file teardown finds outside the repository. A PATH step teardown cannot
-  read (an `eval`, a function, an expanded assignment, `hash`) leaves the loop
-  unjudged.
+  read (an `eval`, a function, an expanded assignment, `hash`, or one that may
+  not run: after `&&` or `||`, in a pipeline, in the background or inside a
+  compound command) leaves the loop unjudged.
 - The condition is one `&&`/`||` list, optionally negated with `!`, of checks
   that all settle for good; any other command in it could leave the loop some
   other way, such as `break`. Two checks settle:
-  - `pgrep -f <pattern>`, with a literal pattern and output only discarded,
+  - `pgrep -f <pattern>`, with a literal pattern and output only discarded
+    (redirected to `/dev/null`, or copied from a descriptor the same command
+    pointed there, so that no redirection can fail and skip the command),
     stays true while it finds a process that cannot exit. procps `pgrep` (Linux)
     reports the shell that runs it, so there a loop whose own command line
     matches its pattern never ends; BSD and macOS `pgrep` leave out that shell
@@ -815,8 +821,9 @@ loops are reported as waiting, with their age.
 
 Stuck loops fail teardown. `--apply` stops them one at a time, and a candidate
 counts only while its pid names the same process (start time and command), so
-a reused pid inherits nothing. Each stop first suspends the shell with SIGSTOP,
-so it cannot start another command, then requires a fresh snapshot to show the
+a reused pid inherits nothing. A shell someone else suspended is left alone.
+Each stop first suspends the shell with SIGSTOP, and waits to see it
+suspended, so it cannot start another command, then requires a fresh snapshot to show the
 same shell with children that each run a loop command, and every loop to be
 judged again with it suspended: stopping one loop, or losing a peer, can release
 another that waited on it. When that no longer holds the shell is resumed and

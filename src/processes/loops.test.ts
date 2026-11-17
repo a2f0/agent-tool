@@ -3,7 +3,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { definesAny, failsTeardown, findLoops, loopTransition, pathAfter, programOf, resolveIn, runningLoop, sessionProcesses, stopLoop, stuckLoops, type LoopFacts, type LoopState } from "./loops";
+import { definesAny, failsTeardown, findLoops, loopTransition, pathAfter, programOf, resolveIn, runningLoop, runsShell, sessionProcesses, stopLoop, stuckLoops, withSources, type LoopFacts, type LoopState } from "./loops";
 import { analyzeScript, definedNames, parseScript, shellArgvScript, shellScript, wordsInOrder, type WaitLoop } from "./shell";
 import { processTable, type ProcessRow } from "./table";
 
@@ -88,6 +88,11 @@ test("judges only checks whose outcome can be read from the script", () => {
   expect(checks(`! pgrep -af verify`)).toEqual(["other"]);
   expect(checks(`! pgrep -f verify >/tmp/out`)).toEqual(["other"]);
   expect(checks(`! LC_ALL=C pgrep -f verify`)).toEqual(["other"]);
+  // Copying a descriptor that may be closed can fail before the command runs.
+  expect(checks(`! pgrep -f verify >&3`)).toEqual(["other"]);
+  expect(checks(`! pgrep -f verify 2>&1 >/dev/null`)).toEqual(["other"]);
+  expect(analyzeScript("until ! pgrep -f verify &>/dev/null; do sleep 5; done", "bash")!.loops[0]!.condition!.atoms[0]!.check.kind).toBe("pgrep");
+  expect(checks(`! pgrep -f verify 2>/dev/null >&-`)).toEqual(["pgrep"]);
   // An empty pattern after -e leaves grep reading its input, which may still arrive.
   expect(checks(`grep -q -e ""`)).toEqual(["other"]);
   expect(checks(`grep -q -- -e ""`)).toEqual(["missing-file"]);
@@ -214,6 +219,21 @@ test("reads the PATH a loop's shell searches", () => {
   expect(resolveIn(`.:${path.dirname(pgrep)}`, "pgrep")).toBeUndefined();
   // Literal assignments and sources are recorded where they run; nested or expanded ones are unknown.
   expect(analyzeScript(`PATH=/usr/bin:/bin; source /tmp/snap.sh; export PATH="$HOME/bin"; if true; then PATH=/x; fi; until [ -f "" ]; do sleep 5; done`)!.path.map(event => event.kind === "assign" ? event.value : event.kind)).toEqual(["/usr/bin:/bin", "source", "unknown", "unknown"]);
+  // So are ones that may not run: after `&&` or `||`, in a pipeline, or in the background.
+  expect(analyzeScript(`false && PATH=/a; PATH=/b | cat; PATH=/c & source /tmp/s || PATH=/d; until [ -f "" ]; do sleep 5; done`, "bash")!.path.map(event => event.kind === "assign" ? event.value : event.kind)).toEqual(["unknown", "unknown", "unknown", "source", "unknown"]);
+  // Files sourced in turn are read by literal path.
+  expect(withSources(". /etc/agent-tool-a\n", file => file === "/etc/agent-tool-a" ? "source /etc/agent-tool-b" : "f() { :; }")).toEqual([". /etc/agent-tool-a\n", "source /etc/agent-tool-b", "f() { :; }"]);
+  expect(withSources(". ./relative\n", () => "")).toBeUndefined();
+  expect(withSources('. "$DIR/env"\n', () => "")).toBeUndefined();
+});
+
+test("a process is judged as a shell only when it runs one", () => {
+  const sh = realpathSync(spawnSync("sh", ["-c", "command -v sh"], { encoding: "utf8" }).stdout.trim());
+  expect(runsShell("sh", sh)).toBe(true);
+  expect(runsShell("sh", "/bin/bash")).toBe(true);
+  expect(runsShell("zsh", "/bin/bash")).toBe(false);
+  // argv[0] is the process's own choice: Bun calling itself `sh` is still Bun.
+  expect(runsShell("sh", process.execPath)).toBe(false);
 });
 
 test("a sourced FIFO is refused without blocking", () => {
@@ -428,5 +448,12 @@ test("a stop that rechecks and finds the loop no longer stuck signals nothing", 
   expect(result).toEqual({ outcome: "skipped", gone: [], remaining: [] });
   expect(alive(shell.pid!)).toBe(true);
   // Resumed after the recheck: not left suspended.
-  expect(spawnSync("ps", ["-o", "stat=", "-p", String(shell.pid)], { encoding: "utf8" }).stdout.trim()).not.toMatch(/^T/);
+  const stat = () => spawnSync("ps", ["-o", "stat=", "-p", String(shell.pid)], { encoding: "utf8" }).stdout.trim();
+  expect(stat()).not.toMatch(/^T/);
+  // A shell someone else suspended is neither stopped nor resumed.
+  process.kill(shell.pid!, "SIGSTOP");
+  expect(await until(() => stat().startsWith("T"), 5_000)).toBe(true);
+  expect(await stopLoop({ row, seen: "session", cwd: null, script: loop.script, loop, state: { status: "stuck", reason: "r" } }, () => true)).toEqual({ outcome: "skipped", gone: [], remaining: [] });
+  expect(stat()).toMatch(/^T/);
+  process.kill(shell.pid!, "SIGCONT");
 }, 30_000);

@@ -300,11 +300,32 @@ function startupFiles(shell: string, login: boolean, environment: (name: string)
   return [...profiles, ...(shell === "bash" && bashEnv ? [bashEnv] : [])];
 }
 
+/**
+ * A file's text and the texts of the files it sources in turn, by literal path (`~` and `$HOME`
+ * expanded); undefined when one cannot be read or its path is found any other way.
+ */
+export function withSources(text: string, read: (file: string) => string | null | undefined = readText, depth = 0): string[] | undefined {
+  const texts = [text];
+  for (const [, target] of text.matchAll(SOURCE)) {
+    const file = target!.replace(/^["']|["']$/g, "").replace(/^~(?=\/)|^\$HOME(?=\/)|^\$\{HOME\}(?=\/)/, homedir());
+    if (depth >= 3 || /[$`*?]/.test(file) || !path.isAbsolute(file)) return undefined;
+    const nested = read(file);
+    if (nested === undefined) return undefined;
+    if (nested === null) continue;
+    const more = withSources(nested, read, depth + 1);
+    if (!more) return undefined;
+    texts.push(...more);
+  }
+  return texts;
+}
+
 interface Context {
   /** Startup files' texts, in the order the shell reads them. */
   startup: string[];
   /** Each file the script sources by literal path, and its text (null when missing). */
   sourced: Map<string, string | null>;
+  /** Every text above with the files each sources in turn, for the names they define. */
+  all: string[];
   environment: (name: string) => string | undefined;
   /** The environment as the process started with it, when the system shows it. */
   own?: Map<string, string>;
@@ -316,21 +337,26 @@ interface Context {
  * the process's own where the system shows it, and teardown's otherwise (macOS hides a protected
  * shell's); a harness's commands share it.
  */
-function contextOf(analysis: Analysis, shell: string, login: boolean, own: Map<string, string> | undefined, cwd: string | null): Context | undefined {
+function contextOf(analysis: Analysis, shell: string, login: boolean, own: Map<string, string> | undefined): Context | undefined {
   const environment = (name: string) => own ? own.get(name) : process.env[name];
-  const startup: string[] = [], sourced = new Map<string, string | null>();
+  const startup: string[] = [], sourced = new Map<string, string | null>(), all: string[] = [];
   for (const file of startupFiles(shell, login, environment)) {
     const text = readText(file);
     if (text === undefined) return undefined;
     if (text !== null) startup.push(text);
   }
+  // A relative path names a file in whatever directory the shell was in when it sourced it.
   for (const target of analysis.sourced) {
-    const file = path.isAbsolute(target) ? target : cwd && path.resolve(cwd, target);
-    const text = file ? readText(file) : undefined;
+    const text = path.isAbsolute(target) ? readText(target) : undefined;
     if (text === undefined) return undefined;
     sourced.set(target, text);
   }
-  return { startup, sourced, environment, ...(own ? { own } : {}) };
+  for (const text of [...startup, ...[...sourced.values()].filter(item => item !== null)]) {
+    const texts = withSources(text);
+    if (!texts) return undefined;
+    all.push(...texts);
+  }
+  return { startup, sourced, all, environment, ...(own ? { own } : {}) };
 }
 
 /**
@@ -343,7 +369,7 @@ function plainCommands(analysis: Analysis, loop: WaitLoop, shell: string, contex
   if (names.some(name => analysis.defines.has(name))) return false;
   // bash imports exported functions from its environment; zsh and dash do not.
   if (shell !== "zsh" && shell !== "dash" && names.some(name => context.environment(`BASH_FUNC_${name}%%`) !== undefined)) return false;
-  return ![...context.startup, ...[...context.sourced.values()].filter(text => text !== null)].some(text => definesAny(text, names));
+  return !context.all.some(text => definesAny(text, names));
 }
 
 /**
@@ -385,6 +411,18 @@ function samePrograms(loop: WaitLoop, searchPath: string | undefined, root: stri
 }
 
 /** A process that may run a wait loop: where it was seen, whether it is the agent session's, and its identity. */
+/**
+ * Whether the executable a process runs is the shell its argv[0] names: the same shell, by its real
+ * file's name (`zsh5` for `zsh`), or for `sh` any POSIX shell that serves as it (macOS's `/bin/sh`
+ * runs `/bin/bash`, Debian's runs `dash`).
+ */
+export function runsShell(shell: string, executable: string): boolean {
+  let real: string;
+  try { real = realpathSync(executable); } catch { return false; }
+  const family = /^([a-z]+?)[0-9.]*$/.exec(path.basename(real))?.[1];
+  return family === shell || (shell === "sh" && ["sh", "bash", "dash", "ash", "busybox"].includes(family ?? ""));
+}
+
 export interface Candidate { seen: Seen; session: boolean; started: string; command: string }
 
 /**
@@ -413,14 +451,16 @@ export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number
     // `timeout` above will end it, and its commands run as what their names say.
     const args = guess?.pure && guess.condition ? argsOf(pid, row.started) : undefined;
     const owned = args?.environment?.has("AGENT_TOOL_PROCESS") || (!candidate.session && !args?.environment);
-    const exact = args && !owned ? shellArgvScript(args.argv) : undefined, analysis = exact && analyzeScript(exact.script, exact.shell);
-    const context = analysis ? contextOf(analysis, exact.shell, exact.login, args!.environment, base.cwd) : undefined;
+    const exact = args && !owned ? shellArgvScript(args.argv) : undefined;
+    // argv[0] is whatever the process chose; the executable it runs must be that shell.
+    const analysis = exact && runsShell(exact.shell, args!.executable) ? analyzeScript(exact.script, exact.shell) : undefined;
+    const context = analysis ? contextOf(analysis, exact!.shell, exact!.login, args!.environment) : undefined;
     // A call of a function defined around the script runs code teardown has not judged.
-    const functions = new Set([...(context?.startup ?? []), ...[...(context?.sourced.values() ?? [])].filter(text => text !== null)].flatMap(text => [...definedNames(text)]));
+    const functions = new Set((context?.all ?? []).flatMap(text => [...definedNames(text)]));
     const loop = analysis && context ? runningLoop(analysis, kids, functions) : undefined;
     found.push({ ...base, script: (loop ?? guess ?? shown.loops[0]!).script, ...(loop ? { loop } : {}) });
     const above = ancestors(table, pid);
-    if (!analysis || !context || !loop?.pure || !loop.condition || [...above].some(other => TIMEOUTS.has(program(table.get(other)))) || !plainCommands(analysis, loop, exact.shell, context)) continue;
+    if (!analysis || !context || !loop?.pure || !loop.condition || [...above].some(other => TIMEOUTS.has(program(table.get(other)))) || !plainCommands(analysis, loop, exact!.shell, context)) continue;
     const programs = samePrograms(loop, pathOf(analysis, loop, context), root);
     if (!programs) continue;
     for (const [name, file] of programs) tools.set(name, file);
@@ -495,10 +535,17 @@ export async function stopLoop(item: FoundLoop, recheck: () => boolean, grace = 
     if (same(now, item.row)) for (const row of now.values()) if (row.ppid === item.row.pid && commands.has(row.command)) known.set(row.pid, row);
     return [item.row, ...known.values()].filter(target => same(now, target));
   };
+  // A shell someone else suspended is theirs to resume: leave it alone.
+  const suspended = (table: Map<number, ProcessRow>) => table.get(item.row.pid)?.stat?.startsWith("T") ?? false;
+  const skipped = { outcome: "skipped" as const, gone: [], remaining: [] };
+  if (!same(processTable(), item.row) || suspended(processTable())) return skipped;
   send([item.row], "SIGSTOP");
+  let now = processTable();
+  for (let tries = 0; tries < 20 && same(now, item.row) && !suspended(now); tries += 1) { await pause(25); now = processTable(); }
+  if (!same(now, item.row) || !suspended(now)) return skipped;
   try {
-    const now = processTable(), kids = [...now.values()].filter(row => row.ppid === item.row.pid);
-    if (!same(now, item.row) || kids.length === 0 || kids.some(row => !commands.has(row.command)) || !recheck()) return { outcome: "skipped", gone: [], remaining: [] };
+    const kids = [...now.values()].filter(row => row.ppid === item.row.pid);
+    if (kids.length === 0 || kids.some(row => !commands.has(row.command)) || !recheck()) return skipped;
     for (const kid of kids) known.set(kid.pid, kid);
     send([...kids, item.row], "SIGTERM");
   } finally { send([item.row], "SIGCONT"); }

@@ -9,16 +9,18 @@ import path from "node:path";
  * only the shell knows; `substitution` when it runs a command (`$(...)` or backquotes) to find it.
  */
 export interface Word { text: string; literal: boolean; quoted: boolean; substitution: boolean }
-export interface Redirect { operator: string; target: Word }
+/** A redirection; `fd` is the descriptor written before the operator (`2>`), when there is one. */
+export interface Redirect { operator: string; fd?: number; target: Word }
 export type Command =
   | { kind: "simple"; words: Word[]; assignments: number; redirects: Redirect[] }
   | { kind: "loop"; keyword: "until" | "while"; condition: List; body: List; redirects: Redirect[] }
   | { kind: "compound"; lists: List[]; redirects: Redirect[]; defines?: string };
 export interface Pipeline { negated: boolean; commands: Command[] }
-export interface AndOr { pipelines: Pipeline[]; operators: ("&&" | "||")[] }
+/** An and-or list; `background` when `&` ends it, so the shell does not wait for it. */
+export interface AndOr { pipelines: Pipeline[]; operators: ("&&" | "||")[]; background?: boolean }
 export type List = AndOr[];
 
-type Token = { type: "word"; word: Word } | { type: "operator"; value: string } | { type: "redirect"; value: string };
+type Token = { type: "word"; word: Word } | { type: "operator"; value: string } | { type: "redirect"; value: string; fd?: number };
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "yash"]);
 // Shells where `&>` means "run in the background, then redirect" rather than a redirection.
@@ -175,7 +177,8 @@ function lex(text: string, shell: string): Token[] | undefined {
     if (redirect) {
       // A heredoc's body follows on later lines, which this reader does not follow.
       if (/<<-?$/.test(redirect) || (redirect.startsWith("&") && POSIX_ONLY.has(shell))) return undefined;
-      tokens.push({ type: "redirect", value: redirect.replace(/^\d+/, "") });
+      const fd = /^\d+/.exec(redirect)?.[0];
+      tokens.push({ type: "redirect", value: redirect.replace(/^\d+/, ""), ...(fd ? { fd: Number(fd) } : {}) });
       at += redirect.length;
       continue;
     }
@@ -212,8 +215,10 @@ class Parser {
     for (;;) {
       while (this.operator(["\n", ";"])) this.at += 1;
       if (!this.peek() || this.reserved(terminators) || (closing && this.operator([")"]))) return list;
-      list.push(this.andOr());
+      const item = this.andOr();
+      list.push(item);
       if (!this.operator([";", "&", "\n"])) return list;
+      if (this.operator(["&"])) item.background = true;
       this.at += 1;
     }
   }
@@ -240,9 +245,9 @@ class Parser {
   private redirects(): Redirect[] {
     const redirects: Redirect[] = [];
     while (this.peek()?.type === "redirect") {
-      const operator = (this.peek() as { value: string }).value, target = this.tokens[this.at + 1];
+      const token = this.peek() as { value: string; fd?: number }, target = this.tokens[this.at + 1];
       if (target?.type !== "word") throw new Unsupported("redirection without a target");
-      redirects.push({ operator, target: target.word });
+      redirects.push({ operator: token.value, ...(token.fd === undefined ? {} : { fd: token.fd }), target: target.word });
       this.at += 2;
     }
     return redirects;
@@ -409,9 +414,24 @@ const IMPERSONATORS = new Set([
 ]);
 const INTERPRETERS = /^(?:python|pypy)[0-9.]*$|^(?:node|nodejs|bun|deno)$/;
 
-/** Redirections that only discard or merge output, which change nothing a loop waits on. */
+/**
+ * Redirections that always succeed and only discard output: to or from `/dev/null`, closing a
+ * descriptor, or copying one that the same command already pointed at `/dev/null` (`>/dev/null
+ * 2>&1`). A copy of any other descriptor fails when it is closed, and the command never runs.
+ */
 function harmless(redirects: Redirect[]): boolean {
-  return redirects.every(({ operator, target }) => target.literal && (target.text === "/dev/null" || ((operator === ">&" || operator === "<&") && /^[0-9-]$/.test(target.text))));
+  const discarded = new Set<number>();
+  for (const { operator, fd, target } of redirects) {
+    if (!target.literal) return false;
+    if (operator === "&>" || operator === "&>>") {
+      if (target.text !== "/dev/null") return false;
+      discarded.add(1).add(2);
+    } else if ([">", ">>", ">|", "<"].includes(operator) && target.text === "/dev/null") discarded.add(fd ?? (operator === "<" ? 0 : 1));
+    else if ((operator === ">&" || operator === "<&") && (target.text === "-" || discarded.has(Number(target.text)))) {
+      if (target.text !== "-") discarded.add(fd ?? (operator === "<&" ? 0 : 1));
+    } else return false;
+  }
+  return true;
 }
 
 function check(command: Command): Check {
@@ -530,9 +550,11 @@ function collect(text: string, shell: string, analysis: Analysis, depth: number)
   if (!list) return false;
   // Commands are numbered in the order the shell meets them, `eval`ed text where the `eval` is.
   const index = new Map<Simple, number>();
-  // Inside a compound command, a change to PATH may not run, or may not reach the shell.
+  // Inside a compound command, after `&&` or `||`, in a pipeline or in the background, a change to
+  // PATH may not run, or may not reach the shell.
   const visit = (current: List, nested = false) => {
-    for (const command of commandsOf(current)) {
+    for (const andOr of current) for (const [position, pipeline] of andOr.pipelines.entries()) for (const command of pipeline.commands) {
+      const conditional = nested || !!andOr.background || position > 0 || pipeline.commands.length > 1;
       if (command.kind === "loop") {
         visit(command.condition, true);
         visit(command.body, true);
@@ -553,7 +575,7 @@ function collect(text: string, shell: string, analysis: Analysis, depth: number)
         const at = analysis.commands.length, info = describe(command);
         index.set(command, at);
         analysis.commands.push(info);
-        definitions(command, info, at, analysis, nested);
+        definitions(command, info, at, analysis, conditional);
         const evaluatedText = evaluated(command);
         if (evaluatedText !== undefined && !(depth < 3 && collect(evaluatedText, shell, analysis, depth + 1))) {
           analysis.commands.push(OPAQUE);
