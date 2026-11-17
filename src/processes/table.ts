@@ -5,7 +5,7 @@ import { dlopen, FFIType, ptr } from "bun:ffi";
 import { execFileSync } from "node:child_process";
 import { readFileSync, readlinkSync } from "node:fs";
 
-export interface ProcessRow { pid: number; ppid: number; pgid: number; uid: number; started: string; command: string; /** `ps` state, such as `S` or `T` (stopped). */ stat?: string }
+export interface ProcessRow { pid: number; ppid: number; pgid: number; uid: number; started: string; command: string }
 
 // One locale and time zone, so start times read the same in every shell that compares them.
 const C_LOCALE = { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" };
@@ -20,7 +20,7 @@ export function parseRows(text: string): ProcessRow[] {
   return text.split("\n").flatMap(line => {
     const match = ROW.exec(line);
     if (!match || match[5]!.startsWith("Z")) return [];
-    return [{ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), uid: Number(match[4]), started: match[6]!.replace(/\s+/g, " "), command: match[7]!.trim(), stat: match[5]! }];
+    return [{ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), uid: Number(match[4]), started: match[6]!.replace(/\s+/g, " "), command: match[7]!.trim() }];
   });
 }
 

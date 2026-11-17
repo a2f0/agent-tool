@@ -1,47 +1,28 @@
 // Shell wait loops left running: `until` and `while` loops that sleep between checks. Teardown
 // looks for them among the processes it already inspects in the repository and among the agent
 // session's other shells. A loop is stuck when its condition provably never changes, so it can
-// never finish on its own; teardown fails on those and `--apply` stops them. Every other loop is
-// waiting: reported, never failed on, never stopped.
+// never finish on its own; teardown fails on those. Every other loop is waiting and never fails it.
+// Nothing here signals a process: a person decides what to stop.
 import { spawnSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
-import { accessSync, constants, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { plainText } from "../commands/output";
 import { outsideExecutable } from "../system/executable";
 import { readRegularFile } from "../system/files";
 import { analyzeScript, definedNames, exclusive, isShell, shellArgvScript, shellScript, STEP_TRAP, wordsInOrder, type Analysis, type WaitLoop } from "./shell";
-import { ancestors, argsOf, processTable, type ProcessRow } from "./table";
+import { ancestors, argsOf, type ProcessRow } from "./table";
 
-export type LoopState =
-  | { status: "waiting" }
-  | { status: "stuck"; reason: string }
-  | { status: "stopped"; reason: string }
-  /** `--apply` signalled it, but these processes outlived even SIGKILL. */
-  | { status: "stop-failed"; reason: string; remaining: number[] };
-export type LoopEvent = { type: "proved"; reason: string } | { type: "stopped" } | { type: "stop-failed"; remaining: number[] };
+export type LoopState = { status: "waiting" } | { status: "stuck"; reason: string };
+export type LoopEvent = { type: "proved"; reason: string };
 
-/** Only a waiting loop can be proved stuck, and only a stuck loop is stopped or fails to stop; other events change nothing. */
+/** Only a waiting loop can be proved stuck; a stuck one stays stuck. */
 export function loopTransition(state: LoopState, event: LoopEvent): LoopState {
-  switch (event.type) {
-    case "proved":
-      return state.status === "waiting" ? { status: "stuck", reason: event.reason } : state;
-    case "stopped":
-      return state.status === "stuck" ? { status: "stopped", reason: state.reason } : state;
-    case "stop-failed":
-      return state.status === "stuck" ? { status: "stop-failed", reason: state.reason, remaining: event.remaining } : state;
-    default:
-      return assertNever(event);
-  }
+  return state.status === "waiting" ? { status: "stuck", reason: event.reason } : state;
 }
 
-function assertNever(value: never): never { throw new Error(`Unhandled loop event: ${JSON.stringify(value)}`); }
-
 export type Seen = "repository" | "session";
-
-/** Whether a loop in this state fails teardown: one that can never finish, or that outlived its stop. */
-export const failsTeardown = (status: LoopState["status"]) => status === "stuck" || status === "stop-failed";
 
 export interface LoopReport {
   pid: number;
@@ -51,10 +32,8 @@ export interface LoopReport {
   cwd: string | null;
   seen: Seen;
   state: LoopState["status"];
-  /** Why a stuck or stopped loop could never finish. */
+  /** Why a stuck loop can never finish, and that teardown leaves stopping it to a person. */
   reason?: string;
-  /** For `stop-failed`, the processes still running. */
-  remaining?: number[];
 }
 
 export interface FoundLoop {
@@ -438,7 +417,6 @@ function samePrograms(loop: WaitLoop, searchPath: string | undefined, root: stri
   return programs;
 }
 
-/** A process that may run a wait loop: where it was seen, whether it is the agent session's, and its identity. */
 /**
  * Whether the executable a process runs is the shell its argv[0] names: the same shell, by its real
  * file's name (`zsh5` for `zsh`), or for `sh` any POSIX shell that serves as it (macOS's `/bin/sh`
@@ -454,21 +432,20 @@ export function runsShell(shell: string, executable: string, root = "/"): boolea
   return installed.some(file => real(file) === running);
 }
 
-export interface Candidate { seen: Seen; session: boolean; started: string; command: string }
+/** A process that may run a wait loop: where it was seen, and whether it is the agent session's own. */
+export interface Candidate { seen: Seen; session: boolean }
 
 /**
- * The shells among `candidates` that run a wait loop, each classified. A candidate counts only while
- * its pid still names the same process (start time and command), so a reused pid inherits
- * nothing. One that carries another agent-tool record's `AGENT_TOOL_PROCESS` belongs to that
- * record, and one outside the session is judged only when its environment shows it carries none.
- * Read-only.
+ * The shells among `candidates` that run a wait loop, each classified. One that carries another
+ * agent-tool record's `AGENT_TOOL_PROCESS` belongs to that record, and one outside the session is
+ * judged only when its environment shows it carries none. Read-only.
  */
 export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number, Candidate>, cwd: Map<number, string>, root: string): FoundLoop[] {
   const children = childrenOf(table), found: FoundLoop[] = [], judged = new Map<number, WaitLoop>(), lineage = new Map<number, Set<number>>();
   const tools = new Map<string, string>(), confirmed = new Set<string>();
   for (const [pid, candidate] of [...candidates].sort(([a], [b]) => a - b)) {
     const row = table.get(pid), shownScript = row && shellScript(row.command);
-    if (!row || !shownScript || row.started !== candidate.started || row.command !== candidate.command || !wordsInOrder(shownScript.script, UNPARSED_LOOP)) continue;
+    if (!row || !shownScript || !wordsInOrder(shownScript.script, UNPARSED_LOOP)) continue;
     const base = { row, seen: candidate.seen, cwd: cwd.get(pid) ?? null, state: { status: "waiting" } as LoopState };
     // `ps` joins positional arguments onto the script, so the script is read from the exact argv
     // where the system shows it, and only then judged. argv[0] is whatever the process chose: the
@@ -517,7 +494,7 @@ export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number
   const stuck = stuckLoops(judged, facts);
   for (const item of found) {
     const reason = stuck.get(item.row.pid);
-    if (reason !== undefined) item.state = loopTransition(item.state, { type: "proved", reason });
+    if (reason !== undefined) item.state = loopTransition(item.state, { type: "proved", reason: `${reason}; teardown never stops it: once you know it is yours, \`kill ${item.row.pid}\`` });
   }
   return found;
 }
@@ -533,217 +510,6 @@ export function loopReport(item: FoundLoop, now = Date.now()): LoopReport {
     cwd: item.cwd,
     seen: item.seen,
     state: item.state.status,
-    ...(item.state.status === "waiting" ? {} : { reason: item.state.reason }),
-    ...(item.state.status === "stop-failed" ? { remaining: item.state.remaining } : {}),
+    ...(item.state.status === "stuck" ? { reason: item.state.reason } : {}),
   };
-}
-
-const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-const same = (table: Map<number, ProcessRow>, target: ProcessRow) => {
-  const now = table.get(target.pid);
-  return !!now && now.started === target.started && now.command === target.command;
-};
-
-/**
- * Where stopping a loop's shell stands. While teardown holds it suspended, the shell cannot start a
- * command or exit, and its children's pids cannot be reused (an exited child stays a zombie until
- * the shell reaps it), so they are signalled only then; teardown owes it a SIGCONT on every way out.
- */
-export type StopState =
-  | { status: "ready" }
-  | { status: "holding" }
-  | { status: "released" }
-  | { status: "skipped" }
-  | { status: "finished"; remaining: number[] };
-export type StopEvent =
-  | { type: "suspended" }
-  | { type: "declined" }
-  | { type: "terminated" }
-  | { type: "escalated" }
-  | { type: "finished"; remaining: number[] };
-
-/** Holding begins only from ready or released; declining ends a stop that has not terminated anything. */
-export function stopTransition(state: StopState, event: StopEvent): StopState {
-  switch (event.type) {
-    case "suspended":
-      return state.status === "ready" ? { status: "holding" } : state;
-    case "declined":
-      return state.status === "ready" || state.status === "holding" ? { status: "skipped" } : state;
-    case "terminated":
-      return state.status === "holding" ? { status: "released" } : state;
-    case "escalated":
-      return state.status === "released" ? { status: "holding" } : state;
-    case "finished":
-      return state.status === "holding" || state.status === "released" ? { status: "finished", remaining: event.remaining } : state;
-    default:
-      return assertNever(event);
-  }
-}
-
-const SKIPPED = { outcome: "skipped" as const, gone: [], remaining: [] };
-const CANCELS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
-
-/**
- * While teardown holds a shell suspended, a signal that ends teardown would skip its cleanup: on
- * SIGINT, SIGTERM or SIGHUP, `resume` runs first, then the signal is raised again with its default
- * action. Returns the function that removes the handlers. SIGKILL cannot be caught.
- */
-export function resumeOnCancel(resume: () => void): () => void {
-  const handlers = CANCELS.map(signal => [signal, () => {
-    remove();
-    resume();
-    process.kill(process.pid, signal);
-  }] as const);
-  const remove = () => { for (const [signal, handler] of handlers) process.removeListener(signal, handler); };
-  for (const [signal, handler] of handlers) process.once(signal, handler);
-  return remove;
-}
-
-/**
- * Stops a stuck loop's shell and the sleep or check it is running. The shell is suspended first
- * (SIGSTOP), and only a shell teardown saw running, not one someone else suspended. Held, it must
- * still be the process judged (pid, start time and command), its children must each run a loop
- * command, and `recheck` must find the loop still stuck; otherwise it is resumed and nothing else
- * is signalled (`skipped`). Its children are then killed, the shell gets SIGTERM and is resumed to
- * act on it, and a shell that outlives the grace period is held again and killed with any loop
- * command it started since. `remaining` lists what outlived it all.
- */
-/**
- * Claims the stop of one process, by pid and start time, for this teardown alone, so concurrent
- * teardowns never both hold it: a lock file under a private per-user directory, naming the claiming
- * process. A claim whose holder has exited is stale and taken over. Returns its release, or
- * undefined when another live teardown holds it.
- */
-export function claimStop(row: ProcessRow, directory = path.join(tmpdir(), `agent-tool-loop-stops-${process.getuid?.() ?? "user"}`)): (() => void) | undefined {
-  try {
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const stat = lstatSync(directory);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || (process.getuid && stat.uid !== process.getuid())) return undefined;
-  } catch { return undefined; }
-  const file = path.join(directory, `${row.pid}-${createHash("sha256").update(row.started).digest("hex").slice(0, 16)}`);
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      writeFileSync(file, String(process.pid), { flag: "wx", mode: 0o600 });
-      return () => { try { if (readFileSync(file, "utf8") === String(process.pid)) rmSync(file, { force: true }); } catch { /* Already gone. */ } };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") return undefined;
-      let holder = NaN;
-      try { holder = Number(readFileSync(file, "utf8")); } catch { /* Unreadable: treat as held. */ }
-      let live = true;
-      try { if (Number.isInteger(holder) && holder > 0) process.kill(holder, 0); } catch (kill) { live = (kill as NodeJS.ErrnoException).code === "EPERM"; }
-      if (live) return undefined;
-      try { rmSync(file, { force: true }); } catch { return undefined; }
-    }
-  }
-  return undefined;
-}
-
-export async function stopLoop(item: FoundLoop, recheck: () => boolean, grace = 2000): Promise<{ outcome: "stopped" | "skipped" | "survived"; gone: number[]; remaining: number[] }> {
-  // Another teardown stopping the same shell owns its suspension: leave it to that one.
-  const release = claimStop(item.row);
-  if (!release) return SKIPPED;
-  try { return await stopClaimed(item, recheck, grace); }
-  finally { release(); }
-}
-
-async function stopClaimed(item: FoundLoop, recheck: () => boolean, grace: number): Promise<{ outcome: "stopped" | "skipped" | "survived"; gone: number[]; remaining: number[] }> {
-  const commands = new Set(item.loop?.commands ?? []), signalled = new Map<number, ProcessRow>();
-  let state: StopState = { status: "ready" }, removeCancel = () => {};
-  const send = (table: Map<number, ProcessRow>, targets: ProcessRow[], signal: NodeJS.Signals) => {
-    for (const target of targets) {
-      if (!same(table, target)) continue;
-      try { process.kill(target.pid, signal); } catch { /* Gone, or no longer ours to signal. */ }
-    }
-  };
-  // While teardown holds the shell it cannot exit, so its pid is still its own: resume it directly,
-  // with no snapshot that could fail first, unless a snapshot shows it gone.
-  const resume = () => {
-    let table: Map<number, ProcessRow> | undefined;
-    try { table = processTable(); } catch { table = undefined; }
-    if (table && !same(table, item.row)) return;
-    try { process.kill(item.row.pid, "SIGCONT"); } catch { /* Gone. */ }
-  };
-  const held = (table: Map<number, ProcessRow>) => same(table, item.row) && (table.get(item.row.pid)?.stat?.startsWith("T") ?? false);
-  // Suspends the shell and returns the snapshot that shows it held, or undefined.
-  const hold = async () => {
-    send(processTable(), [item.row], "SIGSTOP");
-    for (let tries = 0; tries < 40; tries += 1) {
-      const table = processTable();
-      if (held(table)) return table;
-      if (!same(table, item.row)) return undefined;
-      await pause(25);
-    }
-    return undefined;
-  };
-  const kids = (table: Map<number, ProcessRow>) => [...table.values()].filter(row => row.ppid === item.row.pid);
-  try {
-    const first = processTable();
-    // A shell someone else suspended is theirs to resume: leave it alone.
-    if (!same(first, item.row) || first.get(item.row.pid)?.stat?.startsWith("T")) { state = stopTransition(state, { type: "declined" }); return SKIPPED; }
-    state = stopTransition(state, { type: "suspended" });
-    removeCancel = resumeOnCancel(() => { if (state.status === "holding") resume(); });
-    const table = await hold();
-    const children = table ? kids(table) : [];
-    if (!table || children.length === 0 || children.some(row => !commands.has(row.command)) || !recheck()) {
-      resume();
-      state = stopTransition(state, { type: "declined" });
-      return SKIPPED;
-    }
-    // The children's pids are pinned while the shell is held: kill them, then let the shell take SIGTERM.
-    for (const child of children) signalled.set(child.pid, child);
-    send(processTable(), children, "SIGKILL");
-    send(processTable(), [item.row], "SIGTERM");
-    resume();
-    state = stopTransition(state, { type: "terminated" });
-    const alive = () => same(processTable(), item.row);
-    for (const deadline = performance.now() + grace; alive() && performance.now() < deadline;) await pause(50);
-    if (alive()) {
-      state = stopTransition(state, { type: "escalated" });
-      const again = await hold();
-      // A shell that ignored SIGTERM may have left the loop since (a peer it waited on exited):
-      // kill it only while it is still in the loop and the loop is still stuck.
-      const later = again ? kids(again) : [];
-      if (!again || later.some(row => !commands.has(row.command)) || !recheck()) {
-        resume();
-        state = stopTransition(state, { type: "declined" });
-        return SKIPPED;
-      }
-      for (const child of later) signalled.set(child.pid, child);
-      send(again, later, "SIGKILL");
-      send(processTable(), [item.row], "SIGKILL");
-      for (let tries = 0; tries < 20 && alive(); tries += 1) await pause(50);
-    }
-    const now = processTable(), remaining = [item.row, ...signalled.values()].filter(target => same(now, target)).map(target => target.pid);
-    state = stopTransition(state, { type: "finished", remaining });
-    return { outcome: remaining.length ? "survived" : "stopped", gone: [item.row, ...signalled.values()].map(target => target.pid).filter(pid => !remaining.includes(pid)), remaining };
-  } finally {
-    // Never leave a shell teardown suspended frozen, whatever failed.
-    if (state.status === "holding" || (state.status === "finished" && state.remaining.includes(item.row.pid))) resume();
-    removeCancel();
-  }
-}
-
-/**
- * Finds and classifies the wait loops among `candidates`, and with `apply` stops the stuck ones,
- * one at a time. Stopping one loop can release another that waited on it, so each stop first
- * judges every loop again with its target suspended, and after it the loops are judged again in a
- * fresh snapshot. A loop whose processes outlive the stop is reported as `stop-failed`, whether or
- * not its shell is still there.
- */
-export async function settleLoops(candidates: Map<number, Candidate>, cwd: Map<number, string>, root: string, apply: boolean, table = processTable()): Promise<{ loops: FoundLoop[]; gone: number[] }> {
-  let found = findLoops(table, candidates, cwd, root);
-  const settled: FoundLoop[] = [], gone: number[] = [], tried = new Set<number>();
-  const remaining = () => new Map([...candidates].filter(([pid]) => !settled.some(item => item.row.pid === pid) && !gone.includes(pid)));
-  while (apply) {
-    const target = found.find(item => item.state.status === "stuck" && !tried.has(item.row.pid));
-    if (!target) break;
-    tried.add(target.row.pid);
-    const result = await stopLoop(target, () => findLoops(processTable(), remaining(), cwd, root).some(item => item.row.pid === target.row.pid && item.state.status === "stuck"));
-    gone.push(...result.gone);
-    if (result.outcome === "stopped") settled.push({ ...target, state: loopTransition(target.state, { type: "stopped" }) });
-    else if (result.outcome === "survived") settled.push({ ...target, state: loopTransition(target.state, { type: "stop-failed", remaining: result.remaining }) });
-    // A skipped loop is judged again too: it may have gone, or left the loop.
-    found = findLoops(processTable(), remaining(), cwd, root);
-  }
-  return { loops: [...settled, ...found].sort((a, b) => a.row.pid - b.row.pid), gone };
 }

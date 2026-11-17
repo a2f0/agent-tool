@@ -42,8 +42,8 @@ const SERVER = 'Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Res
 
 test("reads ps rows and lsof fields", () => {
   expect(parseRows("  12     1    12 501 Ss   Fri Oct 30 21:43:01 2026 /bin/sh -c sleep 1\n  13    12    12 501 S+   Sat Oct  3 01:02:03 2026 sleep 1\n  14    12    12 501 Z    Sat Oct  3 01:02:04 2026 <defunct>\ngarbage\n")).toEqual([
-    { pid: 12, ppid: 1, pgid: 12, uid: 501, started: "Fri Oct 30 21:43:01 2026", command: "/bin/sh -c sleep 1", stat: "Ss" },
-    { pid: 13, ppid: 12, pgid: 12, uid: 501, started: "Sat Oct 3 01:02:03 2026", command: "sleep 1", stat: "S+" },
+    { pid: 12, ppid: 1, pgid: 12, uid: 501, started: "Fri Oct 30 21:43:01 2026", command: "/bin/sh -c sleep 1" },
+    { pid: 13, ppid: 12, pgid: 12, uid: 501, started: "Sat Oct 3 01:02:03 2026", command: "sleep 1" },
   ]);
   expect(parseFields("p10\nn/a\nn/b\np11\nn*:8080\n")).toEqual(new Map([[10, ["/a", "/b"]], [11, ["*:8080"]]]));
   expect(startOf(process.pid)).toMatch(/\d{2}:\d{2}:\d{2} \d{4}$/);

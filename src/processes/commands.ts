@@ -9,7 +9,7 @@ import { createLog } from "../commands/logFile";
 import { plainText } from "../commands/output";
 import { assert, git, output } from "../workflows/core";
 import { claimedBy, ledgerDirectory, membersOf, newId, observe, readRecords, removeRecord, saveRecord, type ProcessRecord, type ProcessState } from "./ledger";
-import { failsTeardown, loopReport, sessionProcesses, settleLoops, shellsUpTo, type Candidate, type LoopReport, type Seen } from "./loops";
+import { findLoops, loopReport, sessionProcesses, shellsUpTo, type Candidate, type LoopReport, type Seen } from "./loops";
 import { ancestors, carrying, listeningPorts, processTable, startOf, workingDirectories, type ProcessRow } from "./table";
 
 const STOP_GRACE_MS = 5000;
@@ -216,19 +216,14 @@ export interface TeardownReport {
   stopped: { id: string; stopped: boolean; remaining: number[] }[];
   /** Processes started some other way whose working directory is in the repository. Listeners fail teardown. */
   untracked: { pid: number; command: string; cwd: string; ports: string[] }[];
-  /** Shell wait loops in the repository or the agent session. Stuck ones fail teardown and --apply stops them; waiting ones never do. */
+  /** Shell wait loops in the repository or the agent session. Stuck ones fail teardown, waiting ones never do; none is ever stopped. */
   loops: LoopReport[];
   worktrees: { path: string; branch: string | null }[];
   unavailable: string[];
   skipped: { file: string; reason: string }[];
 }
 
-interface Survey extends Omit<TeardownReport, "ok" | "applied" | "stopped" | "loops"> {
-  /** Shells that may run wait loops, and the table and working directories they were found in. */
-  candidates: { pids: Map<number, Candidate>; table: Map<number, ProcessRow>; cwd: Map<number, string> };
-}
-
-function survey(root: string, directory: string): Survey {
+function survey(root: string, directory: string): Omit<TeardownReport, "ok" | "applied" | "stopped"> {
   const table = processTable(), { records, skipped } = readRecords(directory);
   const listening = listeningPorts(), cwd = workingDirectories(table.keys());
   const described = records.map(record => describe(record, table, listening.ports, records));
@@ -253,8 +248,9 @@ function survey(root: string, directory: string): Survey {
   for (const [pid, where] of seen) {
     const row = table.get(pid);
     if (!row || excluded.has(pid) || owned.has(pid) || row.ppid === process.pid || (uid !== undefined && row.uid !== uid)) continue;
-    candidates.set(pid, { seen: where, session: session.has(pid) && shellsUpTo(table, pid, session), started: row.started, command: row.command });
+    candidates.set(pid, { seen: where, session: session.has(pid) && shellsUpTo(table, pid, session) });
   }
+  const loops = findLoops(table, candidates, cwd.cwd, root).map(item => loopReport(item));
   const worktrees: { path: string; branch: string | null }[] = [];
   let current: { path: string; branch: string | null } | undefined;
   for (const line of git(["worktree", "list", "--porcelain"]).split("\n")) {
@@ -267,7 +263,7 @@ function survey(root: string, directory: string): Survey {
     kept: described.filter(item => alive(item.state) && item.keep),
     finished: described.filter(item => !alive(item.state)).map(item => ({ id: item.id, label: item.label, state: item.state })),
     untracked,
-    candidates: { pids: candidates, table, cwd: cwd.cwd },
+    loops,
     // The first entry is the main worktree; the rest were added and may need removing.
     worktrees: worktrees.slice(1),
     unavailable: [...(listening.available ? [] : ["listening ports (lsof)"]), ...(cwd.available ? [] : ["working directories (lsof)"])],
@@ -292,13 +288,11 @@ export async function teardownCommand(args: string[]): Promise<number> {
       else if (!record.keep) stopped.push(await stopRecord(directory, record));
     }
   }
-  const { candidates, ...rest } = survey(root, directory);
-  const settled = await settleLoops(candidates.pids, candidates.cwd, root, apply, candidates.table);
-  const gone = new Set(settled.gone);
-  const untracked = rest.untracked.filter(item => !gone.has(item.pid)), loops = settled.loops.map(item => loopReport(item));
+  const found = survey(root, directory);
   // A clean report needs every inspection: without lsof a listening server would go unseen.
-  // Unreadable records may name running processes, so they fail teardown too.
-  const ok = rest.leftover.length === 0 && untracked.every(item => item.ports.length === 0) && !loops.some(item => failsTeardown(item.state)) && rest.unavailable.length === 0 && rest.skipped.length === 0;
-  output({ ok, applied: apply, root: rest.root, leftover: rest.leftover, kept: rest.kept, finished: rest.finished, untracked, loops, worktrees: rest.worktrees, unavailable: rest.unavailable, skipped: rest.skipped, stopped } satisfies TeardownReport);
+  // Unreadable records may name running processes, so they fail teardown too. A stuck wait loop
+  // fails it as well, though nothing here stops it.
+  const ok = found.leftover.length === 0 && found.untracked.every(item => item.ports.length === 0) && found.loops.every(item => item.state !== "stuck") && found.unavailable.length === 0 && found.skipped.length === 0;
+  output({ ok, applied: apply, ...found, stopped } satisfies TeardownReport);
   return ok ? 0 : 1;
 }
