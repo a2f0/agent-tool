@@ -233,7 +233,18 @@ do not act on this one. It then runs, in order:
    every harness their manifests record; `branch check --pre-push`; and, for
    every pushed ref that is not a deletion, `commits check` and `checks
    binaries` over the commits that push adds. Every guard runs and reports;
-   any failure refuses the push before a declared step starts.
+   any failure refuses the push before a declared step starts. A manifest
+   the guard cannot read fails that guard alone. Both manifests record the
+   agent-tool release whose install wrote them, and the guards compare it
+   with the release running the gate, so once a pin bump is installed they
+   refuse the push until both installs rerun with `--apply` and the
+   repository's existing `--harness` scopes, usually through its sync
+   script, and record the new one, even when no managed file changed. Each
+   manifest holds one version for every scope it covers, so an install of
+   any one scope records it for all; the per-file checks still catch a scope
+   whose files the new release changes. The
+   skills guard checks the shared manifest once, however many harnesses it
+   records, none included ([skill installation](reference.md#portable-skills)).
 2. The declared `steps`, through the run-group runner with the label
    `push-gate`, so every push leaves a source-bound report with per-step
    durations in `agent-tool runs list`. A failing step refuses the push with
@@ -261,7 +272,14 @@ parent, so a binary a merged base already carried is not charged to the push.
 Steps check the working tree. CI is the authority, so the gate does not refuse
 a push whose pushed commit is not the checked-out HEAD, or whose tree has
 uncommitted or untracked changes; it warns that the steps checked something
-other than what the push sends, and records it under `worktree`.
+other than what the push sends, and records it under `worktree`. The hooks,
+skills, and permissions guards read the working tree too, with the agent-tool
+installed there, so they cannot see a pin bump whose package is not yet
+installed, or regenerated files left uncommitted. Only CI can catch those, so
+each repository configures a merge-gating CI job that installs the pinned
+release for the pushed commit and, for each manifest it manages, runs
+`skills check` or `permissions check` with the same `--harness` scope as its
+install.
 
 Steps that need the push itself, such as a per-commit message linter or a
 changed-path classifier, read `AGENT_TOOL_PUSH_GATE`, the path of a private

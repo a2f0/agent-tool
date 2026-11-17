@@ -45,7 +45,9 @@ names the layer each module belongs to, and `bun src/index.ts graph check`
 its layers. A test asserts the real configuration passes.
 
 1. Primitives: `git/`, `system/` (PATH lookup outside the repository, Bun workspace
-   discovery, and link-refusing atomic file writes, shared by several domains), `workflows/core.ts`
+   discovery, link-refusing atomic file writes and non-blocking regular-file
+   reads, and the agent-tool version the skills and permissions manifests
+   record, shared by several domains), `workflows/core.ts`
    (process, Git, and `gh` helpers and argument parsing), `workflows/config.ts`,
    `permissions/catalog.ts`, `images/config.ts`, `screenshots/config.ts`, and
    `graph/config.ts`. They

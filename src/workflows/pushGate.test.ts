@@ -499,6 +499,46 @@ test("the hooks, skills, and permissions guards use the shared drift checks", ()
   result = f.gate([["refs/heads/main", installed, "refs/heads/main", zero]]);
   expect(result.status).toBe(0);
   expect(JSON.parse(result.stdout).guards.map((item: { name: string }) => item.name)).toEqual(["hooks", "skills", "permissions", "branch", "ranges", "commits", "binaries"]);
+  // Manifests from another agent-tool release fail their guards, the shared skills manifest reported once.
+  for (const file of [".agent-tool-skills.json", ".agent-tool-permissions.json"]) {
+    const manifest = JSON.parse(readFileSync(path.join(f.root, file), "utf8"));
+    writeFileSync(path.join(f.root, file), JSON.stringify({ ...manifest, agentToolVersion: file.includes("skills") ? "0.0.1" : undefined }));
+  }
+  result = f.gate([["refs/heads/main", installed, "refs/heads/main", zero]]);
+  expect(result.status).toBe(1);
+  const version = f.run(["--version"]).stdout.trim();
+  expect(JSON.parse(result.stdout).guards.slice(1, 3)).toEqual([
+    expect.objectContaining({ name: "skills", ok: false, details: { harnesses: ["claude", "opencode"], changes: [{ path: ".agent-tool-skills.json", status: "outdated", recordedVersion: "0.0.1", currentVersion: version }] } }),
+    expect.objectContaining({ name: "permissions", ok: false, details: { harness: "codex", changes: [{ path: ".agent-tool-permissions.json", status: "outdated", recordedVersion: null, currentVersion: version }] } }),
+  ]);
+  // A manifest that records no harness still has its version checked.
+  writeFileSync(path.join(f.root, ".agent-tool-skills.json"), JSON.stringify({ schemaVersion: 1, agentToolVersion: "0.0.1", files: {} }));
+  result = f.gate([["refs/heads/main", installed, "refs/heads/main", zero]]);
+  expect(JSON.parse(result.stdout).guards[1]).toEqual(expect.objectContaining({ name: "skills", ok: false, details: { harnesses: [], changes: [{ path: ".agent-tool-skills.json", status: "outdated", recordedVersion: "0.0.1", currentVersion: version }] } }));
+  // Unreadable manifests fail their own guards, and every other guard still runs and reports. A
+  // falsy ownership entry is malformed rather than absent, so it cannot drop Claude from the check.
+  const permissions = JSON.parse(readFileSync(path.join(f.root, ".agent-tool-permissions.json"), "utf8"));
+  const unreadable = (skillsError: string, permissionsError: string) => {
+    result = f.gate([["refs/heads/main", installed, "refs/heads/main", zero]]);
+    expect(result.status).toBe(1);
+    const guards = JSON.parse(result.stdout).guards;
+    expect(guards.map((item: { name: string }) => item.name)).toEqual(["hooks", "skills", "permissions", "branch", "ranges", "commits", "binaries"]);
+    expect(guards.slice(1, 3)).toEqual([
+      expect.objectContaining({ name: "skills", ok: false, error: skillsError }),
+      expect.objectContaining({ name: "permissions", ok: false, error: permissionsError }),
+    ]);
+  };
+  writeFileSync(path.join(f.root, ".agent-tool-skills.json"), JSON.stringify({ schemaVersion: 2, files: {} }));
+  writeFileSync(path.join(f.root, ".agent-tool-permissions.json"), JSON.stringify({ ...permissions, claude: false }));
+  unreadable("Invalid managed skill manifest.", "Invalid managed permissions manifest.");
+  // A FIFO would block a read forever; the guards refuse it without opening it.
+  for (const file of [".agent-tool-skills.json", ".agent-tool-permissions.json"]) {
+    rmSync(path.join(f.root, file));
+    expect(spawnSync("mkfifo", [path.join(f.root, file)]).status).toBe(0);
+  }
+  unreadable("Managed skill manifest is not a regular file: .agent-tool-skills.json", "Managed permissions manifest is not a regular file: .agent-tool-permissions.json");
+  for (const file of [".agent-tool-skills.json", ".agent-tool-permissions.json"]) rmSync(path.join(f.root, file));
+  f.git(["checkout", "--", ".agent-tool-skills.json", ".agent-tool-permissions.json"]);
   const skill = path.join(f.root, ".claude/skills/ship-pr/SKILL.md");
   writeFileSync(skill, `${readFileSync(skill, "utf8")}edited\n`);
   result = f.gate([["refs/heads/main", installed, "refs/heads/main", zero]]);

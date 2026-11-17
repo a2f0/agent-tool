@@ -129,7 +129,7 @@ For repository workflow commands added alongside these interfaces, see
 | `dependencies diff --base <ref>` | Declared dependencies added, removed, or changed in every tracked `package.json`, and the new third-party package names |
 | `skills list` | List embedded portable skills |
 | `skills install [--harness all\|claude\|codex\|opencode\|hermes] [--apply]` | Preview by default; install or update managed skills |
-| `skills check [--harness all\|claude\|codex\|opencode\|hermes]` | Read-only CI check for current managed skills |
+| `skills check [--harness all\|claude\|codex\|opencode\|hermes]` | Read-only CI check for current managed skills and the agent-tool version their manifest records |
 | `bun install [--cwd dir]` | Frozen-lockfile install with the Bun that `.mise.toml` pins; requires an existing lockfile |
 | `bun update <name[@version]>... [--cwd dir]` | Change versions of declared registry dependencies only, keeping each one's section |
 | `bun update --catalog <default\|name> <name@version>... [--cwd dir]` | Change only existing root catalog entries to explicit registry specs; preserve references and catalog layout |
@@ -137,7 +137,7 @@ For repository workflow commands added alongside these interfaces, see
 | `bun remove <name>... [--cwd dir]` | Remove declared dependencies only |
 | `bun add <name@version>... [--dev\|--optional\|--peer] [--exact] [--cwd dir]` | Add new dependencies; the one dependency verb that asks for approval |
 | `bun test\|x <executable> [--cwd dir] [--log] [-- args...]` | Run the test runner or an installed executable with the pinned Bun; `--log` captures output like `run` |
-| `permissions show\|check [--harness all\|claude\|codex]` | Print, or check in CI, the harness permission rules generated from command classes |
+| `permissions show\|check [--harness all\|claude\|codex]` | Print, or check in CI, the harness permission rules generated from command classes; the check also requires the manifest's recorded agent-tool version |
 | `permissions install [--harness all\|claude\|codex] [--apply]` | Preview by default; write the managed rules into `.claude/settings.json` and `.codex/rules/` |
 | `images list [target...]` | List the files each image target writes, without rendering |
 | `images build [target...] [--out dir]` | Render image targets from `assets/brand/*.svg`; `--out` redirects one target |
@@ -546,6 +546,27 @@ is no force mode. After updating the dependency, run
 `.agent-tool-skills.json`. Run `agent-tool skills check` in hooks and CI; it
 fails for missing, outdated, unmanaged, or edited skills without writing
 anything. Use the same `--harness` for install and check.
+
+The manifest also records, as `agentToolVersion`, the agent-tool release whose
+install wrote it, so every upgrade changes it even when no skill changed, and
+the committed diff shows the sync ran. Install output ends with the manifest's
+own change. `skills check` ends with an entry for the manifest that carries
+`recordedVersion` and `currentVersion`: `unchanged` when they match, `missing`
+without a manifest, and `outdated` when the manifest records another release or
+no usable one, as manifests from releases before the field do. Rerun the
+install with `--apply` and the same `--harness` to fix it, as for other drift;
+a version is provenance, not ownership, so an unusable one never blocks that
+install. A recorded version newer than the running one usually means the
+installed package is older than the pin: reinstall dependencies first, and
+rerun the install only when the running version matches the pin, as after an
+intentional downgrade.
+The field is additive, so `schemaVersion` stays 1, older manifests remain
+readable, and older releases still read newer ones. The version says which
+release last installed, not that nothing else remains: a skill a release
+retires keeps its files and ownership record, which neither install nor check
+visits, so remove both by hand.
+`.agent-tool-permissions.json` records and checks the version the same way
+([permissions](permissions.md#generated-rules)).
 
 ### Dependency upgrades
 

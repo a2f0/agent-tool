@@ -3,9 +3,13 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import metadata from "../../package.json";
 import { harnessNamed, HARNESSES } from "../harnesses";
 import { BUNDLED_SKILL_REFERENCES, BUNDLED_SKILLS } from "./bundled";
 import { bundledSkillFiles, checkSkills, installSkills } from "./install";
+
+const MANIFEST = ".agent-tool-skills.json";
 
 const roots: string[] = [];
 function fixture(): string { const root = mkdtempSync(path.join(tmpdir(), "agent-tool-install-")); roots.push(root); return root; }
@@ -13,8 +17,11 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 
 test("preview makes no changes; all installs one bundle for all harnesses", () => {
   const root = fixture();
-  expect(installSkills(root, "all")).toHaveLength(bundledSkillFiles().reduce((total, [, files]) => total + files.length, 0) * 2);
+  const preview = installSkills(root, "all");
+  expect(preview).toHaveLength(bundledSkillFiles().reduce((total, [, files]) => total + files.length, 0) * 2 + 1);
+  expect(preview.at(-1)).toEqual({ path: MANIFEST, status: "create" });
   expect(existsSync(path.join(root, ".agents"))).toBe(false);
+  expect(existsSync(path.join(root, MANIFEST))).toBe(false);
   installSkills(root, "all", true);
   for (const directory of [".agents/skills", ".claude/skills"]) {
     for (const [name, source] of Object.entries(BUNDLED_SKILLS)) expect(readFileSync(path.join(root, directory, name, "SKILL.md"), "utf8")).toBe(source);
@@ -79,6 +86,20 @@ test("refuses directory, file and dangling symlinks without following them", () 
   }
 });
 
+test("a FIFO at a skill destination or the manifest is refused without blocking", () => {
+  const cli = path.resolve(import.meta.dir, "../index.ts");
+  for (const relative of [".agents/skills/ship-pr/SKILL.md", MANIFEST]) {
+    const root = fixture(), file = path.join(root, relative);
+    mkdirSync(path.dirname(file), { recursive: true });
+    expect(spawnSync("mkfifo", [file]).status).toBe(0);
+    // A blocking read would outlast any test timeout, so the CLI runs under a hard one.
+    for (const args of [["check"], ["install", "--apply"]]) {
+      const result = spawnSync(process.execPath, [cli, "skills", ...args, "--harness", "codex"], { cwd: root, encoding: "utf8", timeout: 10_000 });
+      expect({ relative, args, signal: result.signal, status: result.status, refused: /not a regular file/.test(result.stderr) }).toEqual({ relative, args, signal: null, status: 1, refused: true });
+    }
+  }
+}, 60_000);
+
 test("check is read-only and detects missing skills and ownership records", () => {
   const root = fixture();
   expect(checkSkills(root, "all").every(change => change.status === "missing")).toBe(true);
@@ -86,9 +107,67 @@ test("check is read-only and detects missing skills and ownership records", () =
   installSkills(root, "all", true);
   expect(checkSkills(root, "all").every(change => change.status === "unchanged")).toBe(true);
   unlinkSync(path.join(root, ".agent-tool-skills.json"));
-  expect(checkSkills(root, "all").every(change => change.status === "unmanaged")).toBe(true);
+  const unowned = checkSkills(root, "all");
+  expect(unowned.slice(0, -1).every(change => change.status === "unmanaged")).toBe(true);
+  expect(unowned.at(-1)).toMatchObject({ path: MANIFEST, status: "missing", recordedVersion: null });
   expect(existsSync(path.join(root, ".agent-tool-skills.json"))).toBe(false);
 });
+
+test("install records the agent-tool version, and check requires the running one", () => {
+  const root = fixture(); installSkills(root, "all", true);
+  const manifestFile = path.join(root, MANIFEST);
+  const manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
+  // The version sits beside the schema, so an upgrade's manifest diff starts with it.
+  expect(Object.keys(manifest)).toEqual(["schemaVersion", "agentToolVersion", "files"]);
+  expect(manifest).toMatchObject({ schemaVersion: 1, agentToolVersion: metadata.version });
+  expect(checkSkills(root, "all").at(-1)).toEqual({ path: MANIFEST, status: "unchanged", recordedVersion: metadata.version, currentVersion: metadata.version });
+  const files = Object.fromEntries(bundledSkillFiles().flatMap(([name, sources]) => sources.map(([inside]) => [`.claude/skills/${name}/${inside}`, readFileSync(path.join(root, ".claude/skills", name, inside), "utf8")])));
+
+  // A manifest from another release, or from one before the field, fails until the install runs,
+  // even though every managed file is current.
+  for (const recorded of ["0.0.1", undefined]) {
+    writeFileSync(manifestFile, `${JSON.stringify({ ...manifest, agentToolVersion: recorded }, null, 2)}\n`);
+    const checks = checkSkills(root, "all");
+    expect(checks.slice(0, -1).every(change => change.status === "unchanged")).toBe(true);
+    expect(checks.at(-1)).toEqual({ path: MANIFEST, status: "outdated", recordedVersion: recorded ?? null, currentVersion: metadata.version });
+    for (const harness of ["claude", "codex", "hermes", "opencode"]) expect(checkSkills(root, harness).at(-1)?.status).toBe("outdated");
+    // The preview names the manifest as the one change, and applying it rewrites nothing else.
+    const preview = installSkills(root, "all");
+    expect(preview.filter(change => change.status !== "unchanged")).toEqual([{ path: MANIFEST, status: "update" }]);
+    expect(installSkills(root, "all", true).filter(change => change.status !== "unchanged")).toEqual([{ path: MANIFEST, status: "update" }]);
+    expect(JSON.parse(readFileSync(manifestFile, "utf8"))).toEqual(manifest);
+    expect(checkSkills(root, "all").every(change => change.status === "unchanged")).toBe(true);
+    for (const [relative, source] of Object.entries(files)) expect(readFileSync(path.join(root, relative), "utf8")).toBe(source);
+  }
+  // An unusable version is provenance lost, not ownership: it reads as none, and the install replaces it.
+  for (const invalid of [1, "", "0.1 beta", "banana", "1..0", "01.2.3", "1.2.3-01", null, { version: metadata.version }]) {
+    writeFileSync(manifestFile, JSON.stringify({ ...manifest, agentToolVersion: invalid }));
+    expect(checkSkills(root, "all").at(-1)).toEqual({ path: MANIFEST, status: "outdated", recordedVersion: null, currentVersion: metadata.version });
+    expect(installSkills(root, "all", true).filter(change => change.status !== "unchanged")).toEqual([{ path: MANIFEST, status: "update" }]);
+    expect(JSON.parse(readFileSync(manifestFile, "utf8"))).toEqual(manifest);
+  }
+  for (const invalid of [{ ...manifest, schemaVersion: 2 }, { ...manifest, files: [] }, [], null]) {
+    writeFileSync(manifestFile, JSON.stringify(invalid));
+    expect(() => checkSkills(root, "all")).toThrow("Invalid managed skill manifest.");
+    expect(() => installSkills(root, "all", true)).toThrow("Invalid managed skill manifest.");
+  }
+});
+
+test("the CLI check fails on a stale recorded version and passes once the install records the current one", () => {
+  const root = fixture();
+  const cli = path.resolve(import.meta.dir, "../index.ts");
+  const run = (...args: string[]) => spawnSync(process.execPath, [cli, "skills", ...args], { cwd: root, encoding: "utf8" });
+  expect(run("install", "--harness", "codex", "--apply").status).toBe(0);
+  const manifestFile = path.join(root, MANIFEST);
+  writeFileSync(manifestFile, readFileSync(manifestFile, "utf8").replace(`"agentToolVersion": "${metadata.version}"`, `"agentToolVersion": "0.0.1"`));
+  const stale = run("check", "--harness", "codex");
+  expect(stale.status).toBe(1);
+  const report = JSON.parse(stale.stdout);
+  expect(report.ok).toBe(false);
+  expect(report.changes.filter((change: { status: string }) => change.status !== "unchanged")).toEqual([{ path: MANIFEST, status: "outdated", recordedVersion: "0.0.1", currentVersion: metadata.version }]);
+  expect(run("install", "--harness", "codex", "--apply").status).toBe(0);
+  expect(JSON.parse(run("check", "--harness", "codex").stdout).ok).toBe(true);
+}, 30_000);
 
 test("check detects stale managed content without updating and rejects user edits", () => {
   const root = fixture(); installSkills(root, "all", true);
@@ -123,7 +202,7 @@ test("skills ship their Markdown references beside SKILL.md, each with its own o
   const root = fixture();
   const changes = installSkills(root, "all", true);
   const fileCount = bundledSkillFiles().reduce((total, [, files]) => total + files.length, 0);
-  expect(changes).toHaveLength(fileCount * 2);
+  expect(changes).toHaveLength(fileCount * 2 + 1);
   for (const directory of [".agents/skills", ".claude/skills"]) {
     for (const [name, files] of bundledSkillFiles()) for (const [inside, source] of files) expect(readFileSync(path.join(root, directory, name, inside), "utf8")).toBe(source);
   }
@@ -150,7 +229,10 @@ test("a consumer installed before references existed sees only the new files as 
     ".agents/skills/explicit-state-machines/references/lessons.md",
     REFERENCE,
   ]);
-  expect(installSkills(root, "codex", true).filter(change => change.status !== "unchanged").every(change => change.status === "create")).toBe(true);
+  const installed = installSkills(root, "codex", true).filter(change => change.status !== "unchanged");
+  expect(installed.slice(0, -1).every(change => change.status === "create")).toBe(true);
+  // The new files' ownership records update the manifest.
+  expect(installed.at(-1)).toEqual({ path: MANIFEST, status: "update" });
   expect(checkSkills(root, "codex").every(change => change.status === "unchanged")).toBe(true);
 });
 

@@ -1,13 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { isatty } from "node:tty";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { executeGroup, reraiseGroupSignal, type GroupRecord } from "../commands/group";
 import { loadConfig, PUSH_GATE_BUDGET_SECONDS, type AgentToolConfig } from "../config";
 import { gitEnvironment } from "../git/environment";
-import { checkPermissions, installedPermissionHarness } from "../permissions/install";
-import { checkSkills, installedSkillHarnesses } from "../skills/install";
+import { checkInstalledPermissions, PERMISSIONS_MANIFEST } from "../permissions/install";
+import { checkInstalledSkills, SKILLS_MANIFEST } from "../skills/install";
 import { branchErrors, parsePrePushInput, pushedBranches, zeroOid, type PushTuple } from "./branch";
 import { binariesAddedByCommits, commitFindings, rejectedBinaries } from "./checks";
 import { assert, checkoutRoot, git, output } from "./core";
@@ -160,10 +160,12 @@ function guard(guards: Guard[], name: string, ref: string | undefined, check: ()
 function runGuards(root: string, config: AgentToolConfig, tuples: PushTuple[], destination: ReturnType<typeof listDestination>): { guards: Guard[]; refs: PushedRef[] } {
   const guards: Guard[] = [];
   guard(guards, "hooks", undefined, () => { const result = checkHooks(); return { ok: result.ok, details: { changes: result.changes.filter(change => change.status !== "unchanged"), blockers: result.blockers, configure: result.configure } }; });
-  const skills = installedSkillHarnesses(root);
-  if (skills) guard(guards, "skills", undefined, () => { const changes = skills.flatMap(harness => checkSkills(root, harness)).filter(change => change.status !== "unchanged"); return { ok: !changes.length, details: { harnesses: skills, changes } }; });
-  const permissions = installedPermissionHarness(root);
-  if (permissions) guard(guards, "permissions", undefined, () => { const changes = checkPermissions(root, permissions).filter(change => change.status !== "unchanged"); return { ok: !changes.length, details: { harness: permissions, changes } }; });
+  // A manifest that exists in any form gets its guard, which reports one it cannot read instead of ending the gate.
+  const present = (file: string) => { try { lstatSync(path.join(root, file)); return true; } catch (error) { return !["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? ""); } };
+  // A manifest that vanishes after the presence check fails its guard rather than passing unchecked.
+  const vanished = (file: string) => { throw new Error(`${file} disappeared during the check.`); };
+  if (present(SKILLS_MANIFEST)) guard(guards, "skills", undefined, () => { const { harnesses, changes } = checkInstalledSkills(root) ?? vanished(SKILLS_MANIFEST); const drift = changes.filter(change => change.status !== "unchanged"); return { ok: !drift.length, details: { harnesses, changes: drift } }; });
+  if (present(PERMISSIONS_MANIFEST)) guard(guards, "permissions", undefined, () => { const { harness, changes } = checkInstalledPermissions(root) ?? vanished(PERMISSIONS_MANIFEST); const drift = changes.filter(change => change.status !== "unchanged"); return { ok: !drift.length, details: { harness, changes: drift } }; });
   guard(guards, "branch", undefined, () => { const branches = pushedBranches(tuples).map(name => ({ name, errors: branchErrors(name, config) })).filter(branch => branch.errors.length); return { ok: !branches.length, details: { branches } }; });
   let refs: PushedRef[] = [];
   guard(guards, "ranges", undefined, () => { refs = pushedRefs(tuples, destination); return { ok: true }; });

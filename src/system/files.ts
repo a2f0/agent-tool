@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, constants, fstatSync, ftruncateSync, lstatSync, openSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, ftruncateSync, lstatSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 /** Refuses symbolic links below the base, so a committed link cannot redirect a write outside it. */
@@ -11,6 +11,39 @@ export function assertNoLinks(base: string, destination: string): void {
     try { link = lstatSync(current).isSymbolicLink(); } catch { return; }
     if (link) throw new Error(`Refusing to write through symbolic link ${path.relative(base, current)}.`);
   }
+}
+
+/** What `readRegularFile` found: nothing, something other than a regular file, or a file's text. */
+export type RegularFile = { status: "missing" } | { status: "irregular" } | { status: "file"; contents: string };
+
+/**
+ * Reads a regular file. It refuses anything else before opening it, then opens one descriptor
+ * without following a final symbolic link and without blocking and checks that descriptor, so a
+ * path replaced after the first check can neither redirect the read nor stall it on a FIFO.
+ * Callers refuse links in parent directories with a component walk first. Node has no `openat`,
+ * so a parent swapped between that walk and the open is outside this guard; only a concurrent
+ * writer of the checkout could do it, and that writer already controls its hooks and packages.
+ */
+export function readRegularFile(file: string, afterCheck: () => void = () => {}): RegularFile {
+  // Never open an existing special file: opening a device can block or act even without reading.
+  try { if (!lstatSync(file).isFile()) return { status: "irregular" }; }
+  catch (error) {
+    if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return { status: "missing" };
+    throw error;
+  }
+  // Tests replace the file here, where only the descriptor's flags and check still guard the read.
+  afterCheck();
+  let descriptor: number;
+  try { descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return { status: "missing" };
+    // O_NOFOLLOW reports a final symbolic link as ELOOP (EMLINK on some BSDs).
+    if (code === "ELOOP" || code === "EMLINK") return { status: "irregular" };
+    throw error;
+  }
+  try { return fstatSync(descriptor).isFile() ? { status: "file", contents: readFileSync(descriptor, "utf8") } : { status: "irregular" }; }
+  finally { closeSync(descriptor); }
 }
 
 /**

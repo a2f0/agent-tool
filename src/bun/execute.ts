@@ -1,11 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { accessSync, constants as files, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants as files, existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
 import { runCommand } from "../commands/run";
 import { assert, flag, option } from "../workflows/core";
 import { CLASSES } from "../permissions/catalog";
-import { checkPermissions } from "../permissions/install";
+import { checkRecordedPermissions, PERMISSIONS_MANIFEST } from "../permissions/install";
 import { projectCommands } from "../permissions/project";
 import { pinnedBun } from "./toolchain";
 import { workspacePackage } from "../system/workspace";
@@ -21,13 +21,18 @@ const EXECUTABLE = /^[\w.+-][\w.+-]*$/;
  * they are regenerated.
  */
 function assertCurrentRules(root: string, command: string): void {
-  if (!existsSync(path.join(root, ".agent-tool-permissions.json"))) return;
+  // Only a missing manifest means no rules; a link, even a dangling one, is refused by the check below.
+  try { lstatSync(path.join(root, PERMISSIONS_MANIFEST)); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
   // Only a current allow class matches whatever rules exist; a removed or asking class relies on fresh ones.
   const entry = projectCommands(root).find(item => item.command === command);
   if (entry && CLASSES[entry.class].decision === "allow") return;
-  const recorded = JSON.parse(readFileSync(path.join(root, ".agent-tool-permissions.json"), "utf8")) as { claude?: unknown; codex?: unknown };
-  const targets = [...(recorded.claude ? ["claude"] : []), ...(recorded.codex ? ["codex"] : [])];
-  const stale = targets.flatMap(target => checkPermissions(root, target)).filter(item => item.status !== "unchanged");
+  // Check the harnesses the manifest records. Rule content decides: a manifest from another
+  // agent-tool release, or with no usable version, over current rules allows nothing extra.
+  const recorded = checkRecordedPermissions(root);
+  // The manifest was there a moment ago; fail closed rather than treat its absence as current rules.
+  assert(recorded, `${PERMISSIONS_MANIFEST} disappeared while checking the rules for '${command}'; rerun the command.`);
+  const stale = recorded.filter(item => item.status !== "unchanged" && item.path !== PERMISSIONS_MANIFEST);
   assert(!stale.length, `Permission rules predate the current class of '${command}'; regenerate them with approval (agent-tool permissions install --apply) before running it.`);
 }
 
