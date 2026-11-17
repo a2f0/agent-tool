@@ -175,9 +175,9 @@ The module re-exports everything from `screenshots/manifest`, and adds:
   returns the `{ width, height, pad, radius }` in CSS pixels that fit a capture
   and its bezel in a box without enlarging it, from `FRAME_METRICS` (bezel
   padding and screen radius as fractions of the capture's width).
-  `nearestSlide(scrollLeft, offset, pitch, count)`,
-  `loopSlide(index, count, copies)`, and
-  `loopCopies(viewportWidth, copyWidth)` are the carousel's scroll math.
+  `nearestSlide(scrollLeft, offset, pitch, count)` is the slide a scroll
+  position rests on, given the scroll position of slide 0 and the distance
+  between slides.
 - The gallery's wheel handling: `createWheelStepper(threshold?, idle?)`
   returns a `WheelStepper` whose `push(delta, time)` turns wheel deltas into
   -1, 0, or 1 screen steps (defaults `WHEEL_STEP_THRESHOLD`, 30px, and
@@ -265,20 +265,26 @@ first, and `screenshot-error` with `{ error }` when the manifest fails to load.
 It shows every captured screen of the project, in manifest order, each in the
 project's bezel with its label as a caption. Each slide is a `<picture>` whose
 light capture is the image and whose dark capture, when there is one, is a
-`(prefers-color-scheme: dark)` source. The row loops in both directions: copies
-of the slides sit on both sides, hidden from assistive technology and the
-tab order but clickable, and once
-scrolling settles the track jumps silently back to the same slide among the
-originals. Previous and next buttons scroll by the slides that fit, or by one
-when every slide fits. The first original slide's image, which rests at the start edge on load, is
-eager with `fetchpriority="high"`; every other image, copies included, is
-lazy. A `view-all-href` link renders with the controls (also when there is one
-screen and no step buttons), so a page need not place its own link beside the
-element; style it with `.shots-carousel-view-all` or `--shots-link`. Smooth
-scrolling and hover motion follow `prefers-reduced-motion`. With one screen it
-does not loop, and with none the element is hidden. If the manifest fails to
-load, the fallback children stay and `screenshot-error` fires. There is no
-auto-play.
+`(prefers-color-scheme: dark)` source. The row is a plain scroller that shows
+each slide once and stops at its ends: scrolling past the last slide goes no
+further, and neither does scrolling back before the first. Previous and next
+buttons scroll by the slides that fit, stopping at either end. A button whose
+direction cannot move (previous at the start, next at the end, both when every
+slide fits) has `aria-disabled="true"`: it stays focusable, so keyboard focus
+is not lost on reaching the last page, screen readers announce it as
+unavailable, and pressing it does nothing. The state follows every scroll,
+whether by touch, trackpad, keyboard, or the buttons, and every resize. The
+first slide's image, which rests at the start edge on load, is eager with
+`fetchpriority="high"`; every other image is lazy. A `view-all-href` link
+renders with the controls (also when there is one screen and no step buttons),
+so a page need not place its own link beside the element; style it with
+`.shots-carousel-view-all` or `--shots-link`. Smooth scrolling and hover motion
+follow `prefers-reduced-motion`. With one screen there are no step buttons, and
+with none the element is hidden. If the manifest fails to load, the fallback
+children stay and `screenshot-error` fires. There is no auto-play.
+
+Its `step(delta)` method scrolls `delta` pages, as the buttons do, and does
+nothing at the end it moves toward.
 
 ### Styling
 
@@ -294,7 +300,10 @@ gallery's buttons, bezels, or dialog, while a site rule with more than one
 class, or a class and an element, such as `screenshot-gallery .shots-frame`,
 still overrides them, as does a single-class site rule that loads later. The
 stylesheet uses no cascade layers, so element resets lose whichever order the
-site's CSS loads in.
+site's CSS loads in. An unavailable carousel step button is dimmed by
+`.shots-carousel-step:where([aria-disabled="true"])`, which a site rule such
+as `screenshot-carousel .shots-carousel-step[aria-disabled="true"]` overrides.
+Keep the button visible there, since it can hold keyboard focus.
 
 | Property | Use |
 | --- | --- |
@@ -318,9 +327,10 @@ site's CSS loads in.
 
 Class names (`shots-gallery`, `shots-toolbar`, `shots-track`, `shots-slide`,
 `shots-frame`, `shots-filmstrip`, `shots-thumb`, `shots-lightbox`,
-`shots-carousel`, `shots-carousel-slide`, `shots-device`, ...) and the
-`data-frame`, `data-project`, `data-shots-theme`, `data-expanded`, and
-`data-active` attributes are available for further styling. The theme shown is
+`shots-carousel`, `shots-carousel-slide`, `shots-carousel-step`, `shots-device`,
+...), the `data-frame`, `data-project`, `data-shots-theme`, `data-expanded`, and
+`data-active` attributes, and the carousel step buttons' `aria-disabled` are
+available for further styling. The theme shown is
 `data-shots-theme`, not `data-theme`, so a site that themes regions by
 `[data-theme]` does not restyle the gallery for the capture it shows.
 

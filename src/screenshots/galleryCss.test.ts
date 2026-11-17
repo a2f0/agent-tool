@@ -113,10 +113,17 @@ describe("gallery.css specificity", () => {
       ".shots-lightbox",
       ".shots-lightbox-close",
       ".shots-carousel-step",
+      ".shots-carousel-step:where([aria-disabled=\"true\"])",
     ]) {
       expect(compare(rule(selector), reset)).toBeGreaterThan(0);
       expect(compare(rule(selector), siteOverride)).toBeLessThan(0);
     }
+  });
+
+  test("an unavailable carousel step is dimmed through aria-disabled, which keeps it focusable", () => {
+    const rule = /\.shots-carousel-step:where\(\[aria-disabled="true"\]\) \{([^}]*)\}/.exec(css);
+    expect(rule?.[1]).toContain("opacity: 0.4");
+    expect(css).not.toMatch(/\.shots-carousel-step[^{]*:disabled/);
   });
 
   test("no rule styles by data-theme, which sites use for their own themes", () => {

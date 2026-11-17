@@ -1,7 +1,7 @@
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import type { ScreenshotChangeDetail, ScreenshotGalleryElement } from "./gallery";
-import { manifest } from "./manifest.testUtils";
+import type { ScreenshotChangeDetail, ScreenshotGalleryElement, ScreenshotManifest } from "./gallery";
+import { entry, manifest } from "./manifest.testUtils";
 
 beforeAll(() => GlobalRegistrator.register({ url: "https://example.test/screenshots/", width: 1440, height: 900 }));
 afterAll(() => GlobalRegistrator.unregister());
@@ -41,14 +41,11 @@ describe("layout math", () => {
     expect(fitFrame("phone", 100, 200, 0, 0)).toMatchObject({ width: 0, height: 0 });
   });
 
-  test("loop math maps every slide to the middle copy and finds the resting slide", async () => {
-    const { loopCopies, loopSlide, nearestSlide } = await gallery();
-    // Three copies of four slides: 0-3, 4-7 (middle), 8-11.
-    expect([0, 3, 4, 7, 8, 11].map(index => loopSlide(index, 4, 1))).toEqual([4, 7, 4, 7, 4, 7]);
-    expect(loopSlide(-1, 4, 1)).toBe(7);
-    expect([loopSlide(1, 3, 2), loopSlide(14, 3, 2)]).toEqual([7, 8]);
-    expect([loopCopies(1440, 1000), loopCopies(1440, 3000), loopCopies(100, 0)]).toEqual([2, 1, 1]);
+  test("nearestSlide finds the resting slide; the carousel's loop helpers are gone", async () => {
+    const module: Record<string, unknown> = await gallery();
+    const { nearestSlide } = await gallery();
     expect([nearestSlide(0, 0, 100, 5), nearestSlide(149, 0, 100, 5), nearestSlide(151, 0, 100, 5), nearestSlide(9999, 0, 100, 5), nearestSlide(-50, 16, 100, 5), nearestSlide(10, 0, 0, 5)]).toEqual([0, 1, 2, 4, 0, 0]);
+    expect(["loopSlide", "loopCopies"].filter(name => name in module)).toEqual([]);
   });
 });
 
@@ -374,7 +371,7 @@ describe("<screenshot-gallery>", () => {
 });
 
 describe("<screenshot-carousel>", () => {
-  test("renders every captured screen of the project in a bezel, with clones on both sides", async () => {
+  test("renders every captured screen of the project once, in a bezel", async () => {
     const carousel = document.createElement("screenshot-carousel") as HTMLElement & { manifestData: unknown };
     carousel.setAttribute("project", "mobile");
     carousel.setAttribute("link-base", "/screenshots");
@@ -383,31 +380,29 @@ describe("<screenshot-carousel>", () => {
     const root = $(carousel, ".shots-carousel");
     expect(root.dataset.frame).toBe("phone");
     const slides = $$(carousel, ".shots-carousel-slide");
-    // One copy before, the real slides, and one after.
-    expect(slides.length).toBe(9);
-    expect(slides.map(slide => slide.hasAttribute("aria-hidden"))).toEqual([true, true, true, false, false, false, true, true, true]);
-    const real = slides.filter(slide => !slide.hasAttribute("aria-hidden"));
-    expect(real.map(slide => slide.querySelector("figcaption")!.textContent)).toEqual(["Home", "Notes", "Org Manager"]);
-    expect(real.map(slide => slide.querySelector("a")!.getAttribute("href"))).toEqual(["/screenshots/mobile/home/", "/screenshots/mobile/notes/", "/screenshots/mobile/org-manager/"]);
-    expect(real[0]!.querySelector("source")!.getAttribute("media")).toBe("(prefers-color-scheme: dark)");
-    expect(real[0]!.querySelector("source")!.getAttribute("srcset")).toBe("/img/mobile/dark/home.png?v=1");
-    expect(real[1]!.querySelector("source")).toBeNull();
+    // Each slide once: no loop copies on either side.
+    expect(slides.map(slide => slide.dataset.index)).toEqual(["0", "1", "2"]);
+    expect($$(carousel, "[data-clone], [aria-hidden=\"true\"]:not(.shots-icon)")).toEqual([]);
+    expect(slides.map(slide => slide.querySelector("figcaption")!.textContent)).toEqual(["Home", "Notes", "Org Manager"]);
+    expect(slides.map(slide => slide.querySelector("a")!.getAttribute("href"))).toEqual(["/screenshots/mobile/home/", "/screenshots/mobile/notes/", "/screenshots/mobile/org-manager/"]);
+    expect(slides.map(slide => slide.querySelector("a")!.hasAttribute("tabindex"))).toEqual([false, false, false]);
+    expect(slides.map(slide => slide.querySelector("img")!.getAttribute("alt"))).toEqual(["Home, phone screenshot", "Notes, phone screenshot", "Org Manager, phone screenshot"]);
+    expect(slides[0]!.querySelector("source")!.getAttribute("media")).toBe("(prefers-color-scheme: dark)");
+    expect(slides[0]!.querySelector("source")!.getAttribute("srcset")).toBe("/img/mobile/dark/home.png?v=1");
+    expect(slides[1]!.querySelector("source")).toBeNull();
     // A screen captured only in dark still gets a slide.
-    expect(real[2]!.querySelector("img")!.getAttribute("src")).toBe("/img/mobile/dark/org-manager.png?v=1");
-    expect(slides[0]!.querySelector("img")!.getAttribute("alt")).toBe("");
-    // Copies are hidden from assistive technology and the tab order, yet still clickable where they show.
-    expect(slides.map(slide => slide.hasAttribute("inert"))).toEqual(Array(9).fill(false));
-    expect(slides.map(slide => slide.querySelector("a")!.getAttribute("tabindex"))).toEqual(["-1", "-1", "-1", null, null, null, "-1", "-1", "-1"]);
-    expect(slides[0]!.querySelector("img")!.getAttribute("loading")).toBe("lazy");
-    expect(real[0]!.querySelector("img")!.getAttribute("loading")).toBe("eager");
-    expect(real.map(slide => slide.querySelector("img")!.getAttribute("fetchpriority"))).toEqual(["high", null, null]);
-    expect(real.slice(1).map(slide => slide.querySelector("img")!.getAttribute("loading"))).toEqual(["lazy", "lazy"]);
-    expect(slides.filter(slide => slide.querySelector("img")!.hasAttribute("fetchpriority")).length).toBe(1);
+    expect(slides[2]!.querySelector("img")!.getAttribute("src")).toBe("/img/mobile/dark/org-manager.png?v=1");
+    // The first slide rests at the start edge on load, so only its image is eager and high priority.
+    expect(slides.map(slide => slide.querySelector("img")!.getAttribute("loading"))).toEqual(["eager", "lazy", "lazy"]);
+    expect(slides.map(slide => slide.querySelector("img")!.getAttribute("fetchpriority"))).toEqual(["high", null, null]);
     expect($(carousel, ".shots-carousel-view-all")).toBeNull();
-    expect($$(carousel, ".shots-carousel-step").map(button => button.getAttribute("aria-label"))).toEqual(["Previous screens", "Next screens"]);
+    const steps = $$(carousel, ".shots-carousel-step");
+    expect(steps.map(button => button.getAttribute("aria-label"))).toEqual(["Previous screens", "Next screens"]);
+    // Unavailable steps use aria-disabled, never disabled, so they keep keyboard focus.
+    expect(steps.map(button => button.hasAttribute("disabled"))).toEqual([false, false]);
   });
 
-  test("limit trims slides, one slide does not loop, and none hides the element", async () => {
+  test("limit trims slides, one slide has no step buttons, and none hides the element", async () => {
     const make = (attributes: Record<string, string>) => {
       const carousel = document.createElement("screenshot-carousel") as HTMLElement & { manifestData: unknown };
       for (const [name, value] of Object.entries(attributes)) carousel.setAttribute(name, value);
@@ -415,39 +410,54 @@ describe("<screenshot-carousel>", () => {
       document.body.append(carousel);
       return carousel;
     };
-    expect($$(make({ project: "mobile", limit: "2" }), ".shots-carousel-slide").length).toBe(6);
+    expect($$(make({ project: "mobile", limit: "2" }), ".shots-carousel-slide").map(slide => slide.querySelector("figcaption")!.textContent)).toEqual(["Home", "Notes"]);
     const single = make({ project: "ipad" });
     expect([$$(single, ".shots-carousel-slide").length, $$(single, ".shots-carousel-step").length]).toEqual([1, 0]);
     expect($(single, ".shots-carousel").dataset.frame).toBe("tablet");
     const linked = make({ project: "ipad", "view-all-href": "/screenshots/", "view-all-label": "All screenshots" });
     const link = $(linked, ".shots-carousel-controls .shots-carousel-view-all");
     expect([link.getAttribute("href"), link.textContent, $$(linked, ".shots-carousel-step").length]).toEqual(["/screenshots/", "All screenshots", 0]);
-    const looping = make({ project: "mobile", "view-all-href": "/screenshots/" });
-    expect($$(looping, ".shots-carousel-controls > *").map(part => part.className)).toEqual(["shots-carousel-view-all", "shots-carousel-step", "shots-carousel-step"]);
-    expect($(looping, ".shots-carousel-view-all").textContent).toBe("View all screenshots");
-    looping.removeAttribute("view-all-href");
-    expect($(looping, ".shots-carousel-view-all")).toBeNull();
+    const stepping = make({ project: "mobile", "view-all-href": "/screenshots/" });
+    expect($$(stepping, ".shots-carousel-controls > *").map(part => part.className)).toEqual(["shots-carousel-view-all", "shots-carousel-step", "shots-carousel-step"]);
+    expect($(stepping, ".shots-carousel-view-all").textContent).toBe("View all screenshots");
+    stepping.removeAttribute("view-all-href");
+    expect($(stepping, ".shots-carousel-view-all")).toBeNull();
     const none = make({ project: "missing" });
     expect([none.hidden, none.childElementCount]).toEqual([true, 0]);
   });
 });
 
 describe("<screenshot-carousel> scrolling, on a simulated layout", () => {
-  // happy-dom has no layout: slides sit PITCH apart after the track's padding, and scrolling ends at once.
-  const PITCH = 264, PADDING = 16;
-  let width = 1408;
+  // happy-dom has no layout: 240px slides sit PITCH apart after the track's padding, the
+  // track scrolls only as far as its content, and scrolling ends at once.
+  const PITCH = 264, PADDING = 16, GAP = 24;
+  let width = 600;
   const observers: (() => void)[] = [];
   const saved: [object, string, PropertyDescriptor | undefined][] = [];
   const define = (target: object, name: string, descriptor: PropertyDescriptor) => {
     saved.push([target, name, Object.getOwnPropertyDescriptor(target, name)]);
     Object.defineProperty(target, name, { configurable: true, ...descriptor });
   };
+  const isTrack = (element: Element) => element.classList.contains("shots-carousel-track");
+  const scrollWidth = (track: Element) => 2 * PADDING + track.querySelectorAll(".shots-carousel-slide").length * PITCH - GAP;
+  const end = (track: Element) => Math.max(0, scrollWidth(track) - width);
   beforeAll(() => {
     define(HTMLElement.prototype, "offsetLeft", { get(this: HTMLElement) { return this.classList.contains("shots-carousel-slide") ? PADDING + [...this.parentElement!.children].indexOf(this) * PITCH : 0; } });
-    define(HTMLElement.prototype, "clientWidth", { get(this: HTMLElement) { return this.classList.contains("shots-carousel-track") ? width : 0; } });
+    define(HTMLElement.prototype, "clientWidth", { get(this: HTMLElement) { return isTrack(this) ? width : 0; } });
+    define(Element.prototype, "scrollWidth", { get(this: Element) { return isTrack(this) ? Math.max(width, scrollWidth(this)) : 0; } });
+    // Like a browser, a track never rests past its end, even after it widens.
     const positions = new WeakMap<Element, number>();
-    define(Element.prototype, "scrollLeft", { get(this: Element) { return positions.get(this) ?? 0; }, set(this: Element, value: number) { positions.set(this, value); } });
-    define(Element.prototype, "scrollTo", { writable: true, value(this: Element, options: ScrollToOptions) { positions.set(this, options.left ?? 0); this.dispatchEvent(new Event("scrollend")); } });
+    const position = (element: Element) => isTrack(element) ? Math.min(end(element), Math.max(0, positions.get(element) ?? 0)) : positions.get(element) ?? 0;
+    define(Element.prototype, "scrollLeft", { get(this: Element) { return position(this); }, set(this: Element, value: number) { positions.set(this, value); } });
+    define(Element.prototype, "scrollTo", {
+      writable: true,
+      value(this: Element, options: ScrollToOptions) {
+        const before = position(this);
+        positions.set(this, options.left ?? 0);
+        if (position(this) !== before) this.dispatchEvent(new Event("scroll"));
+        this.dispatchEvent(new Event("scrollend"));
+      },
+    });
     define(window, "onscrollend", { writable: true, value: null });
     define(globalThis, "ResizeObserver", { writable: true, value: class { constructor(callback: () => void) { observers.push(() => callback()); } observe() {} disconnect() {} } });
   });
@@ -456,81 +466,125 @@ describe("<screenshot-carousel> scrolling, on a simulated layout", () => {
       if (descriptor) Object.defineProperty(target, name, descriptor); else delete (target as Record<string, unknown>)[name];
     }
   });
-  const frame = () => new Promise(done => requestAnimationFrame(() => done(undefined)));
-  /** The slide resting at the track's start edge. */
-  const resting = (carousel: HTMLElement) => {
+  const names = ["home", "notes", "contacts", "files", "calendar", "settings", "help"];
+  const seven: ScreenshotManifest = {
+    ...manifest,
+    screens: names.map(name => ({ name, label: name[0]!.toUpperCase() + name.slice(1) })),
+    entries: names.map(name => entry("mobile", "light", name)),
+  };
+  type Carousel = HTMLElement & { manifestData: unknown; step(delta: number): void };
+  const mount = (data: ScreenshotManifest, attributes: Record<string, string> = {}): Carousel => {
+    observers.length = 0;
+    const carousel = document.createElement("screenshot-carousel") as Carousel;
+    carousel.setAttribute("project", "mobile");
+    for (const [name, value] of Object.entries(attributes)) carousel.setAttribute(name, value);
+    carousel.manifestData = data;
+    document.body.append(carousel);
+    // gallery.css rests a slide inside the track's padding; happy-dom applies only inline styles.
+    $(carousel, ".shots-carousel-track").style.setProperty("scroll-padding-left", `${PADDING}px`);
+    return carousel;
+  };
+  /** The slide at the track's start edge, the first fully in view, and which step buttons are unavailable. */
+  const view = (carousel: HTMLElement) => {
     const track = $(carousel, ".shots-carousel-track");
-    const slides = $$(carousel, ".shots-carousel-slide");
-    const slide = slides[Math.round((track.scrollLeft - PADDING) / PITCH)]!;
-    return { caption: slide.querySelector("figcaption")!.textContent, copy: slide.hasAttribute("aria-hidden"), slides: slides.length };
+    const captions = $$(carousel, ".shots-carousel-slide").map(slide => slide.querySelector("figcaption")!.textContent);
+    return {
+      first: captions[Math.ceil(track.scrollLeft / PITCH - 0.01)],
+      unavailable: $$(carousel, ".shots-carousel-step").filter(button => button.getAttribute("aria-disabled") === "true").map(button => button.dataset.step),
+      slides: captions.length,
+    };
+  };
+  const scroll = (carousel: HTMLElement, left: number) => {
+    const track = $(carousel, ".shots-carousel-track");
+    track.scrollLeft = left;
+    track.dispatchEvent(new Event("scroll"));
   };
 
-  test("starts on the first original, adds copies for a wide track, and wraps both ways", async () => {
-    width = 1408;
-    observers.length = 0;
-    const carousel = document.createElement("screenshot-carousel") as HTMLElement & { manifestData: unknown; step(delta: number): void };
-    carousel.setAttribute("project", "mobile");
-    carousel.manifestData = manifest;
-    document.body.append(carousel);
-    expect(resting(carousel)).toEqual({ caption: "Home", copy: false, slides: 9 });
-    // Three slides are 792px; a 1408px track needs two copies on each side.
-    for (const observe of observers) observe();
-    await frame();
-    expect(resting(carousel)).toEqual({ caption: "Home", copy: false, slides: 15 });
-    // Every slide fits, so a step moves one slide rather than a page of the same slides.
-    carousel.step(-1);
-    expect(resting(carousel)).toEqual({ caption: "Org Manager", copy: false, slides: 15 });
-    carousel.step(1);
-    carousel.step(1);
-    expect(resting(carousel)).toEqual({ caption: "Notes", copy: false, slides: 15 });
-    carousel.step(1);
-    carousel.step(1);
-    expect(resting(carousel)).toEqual({ caption: "Home", copy: false, slides: 15 });
-  });
-
-  test("adding copies on a resize keeps the controls and view-all link in place", async () => {
-    width = 390;
-    observers.length = 0;
-    const carousel = document.createElement("screenshot-carousel") as HTMLElement & { manifestData: unknown };
-    carousel.setAttribute("project", "mobile");
-    carousel.setAttribute("view-all-href", "/screenshots/");
-    carousel.manifestData = manifest;
-    document.body.append(carousel);
-    const root = $(carousel, ".shots-carousel");
+  test("starts at the first slide, pages by the slides that fit, and stops at both ends", async () => {
+    width = 600;
+    const carousel = mount(seven);
     const track = $(carousel, ".shots-carousel-track");
-    const viewAll = $(carousel, ".shots-carousel-view-all");
-    const step = $(carousel, ".shots-carousel-step");
-    const before = $$(carousel, ".shots-carousel-slide").length;
-    // The page settles wider (fonts load, a header grows), so the loop needs more copies.
-    width = 1408;
-    for (const observe of observers) observe();
-    await frame();
-    expect($$(carousel, ".shots-carousel-slide").length).toBeGreaterThan(before);
-    // A click on the link or a step button that lands mid-resize must not hit a detached node.
-    expect([$(carousel, ".shots-carousel"), $(carousel, ".shots-carousel-track"), $(carousel, ".shots-carousel-view-all"), $(carousel, ".shots-carousel-step")])
-      .toEqual([root, track, viewAll, step]);
-    expect(viewAll.isConnected && step.isConnected).toBe(true);
-    expect(resting(carousel)).toMatchObject({ caption: "Home", copy: false });
+    // Two 240px slides fit in 600px; the row ends at 7 * 264 + 8 - 600 = 1256px.
+    expect([track.scrollLeft, view(carousel)]).toEqual([0, { first: "Home", unavailable: ["-1"], slides: 7 }]);
+    carousel.step(-1);
+    expect(track.scrollLeft).toBe(0);
+    carousel.step(1);
+    expect([track.scrollLeft, view(carousel)]).toEqual([528, { first: "Contacts", unavailable: [], slides: 7 }]);
+    carousel.step(1);
+    expect(view(carousel)).toEqual({ first: "Calendar", unavailable: [], slides: 7 });
+    // The next page would start past the end, so the row stops at its end rather than wrapping.
+    carousel.step(1);
+    expect([track.scrollLeft, view(carousel)]).toEqual([1256, { first: "Settings", unavailable: ["1"], slides: 7 }]);
+    carousel.step(1);
+    carousel.step(5);
+    expect([track.scrollLeft, view(carousel)]).toEqual([1256, { first: "Settings", unavailable: ["1"], slides: 7 }]);
+    // Back from the last page brings the two slides before Settings into view.
+    carousel.step(-1);
+    expect([track.scrollLeft, view(carousel)]).toEqual([792, { first: "Files", unavailable: [], slides: 7 }]);
+    carousel.step(-1);
+    carousel.step(-1);
+    expect([track.scrollLeft, view(carousel)]).toEqual([0, { first: "Home", unavailable: ["-1"], slides: 7 }]);
     carousel.remove();
   });
 
-  test("a user scroll into the copies settles back among the originals", async () => {
-    width = 390;
-    observers.length = 0;
-    const carousel = document.createElement("screenshot-carousel") as HTMLElement & { manifestData: unknown };
-    carousel.setAttribute("project", "mobile");
-    carousel.manifestData = manifest;
-    document.body.append(carousel);
-    for (const observe of observers) observe();
-    await frame();
+  test("an unavailable step button keeps focus and does nothing when pressed", async () => {
+    width = 600;
+    const carousel = mount(seven);
     const track = $(carousel, ".shots-carousel-track");
-    // Swipe two slides left of the first original, into the copy before it.
-    track.scrollLeft = PADDING + 1 * PITCH;
-    track.dispatchEvent(new Event("scrollend"));
-    expect(resting(carousel)).toEqual({ caption: "Notes", copy: false, slides: 9 });
-    // A position between slides waits for the snap to finish.
-    track.scrollLeft += PITCH * 3 + 40;
-    track.dispatchEvent(new Event("scrollend"));
-    expect(track.scrollLeft).toBe(PADDING + PITCH * 7 + 40);
+    const [previous, next] = $$(carousel, ".shots-carousel-step") as HTMLButtonElement[];
+    next!.focus();
+    for (let press = 0; press < 3; press += 1) next!.click();
+    expect([track.scrollLeft, next!.getAttribute("aria-disabled"), next!.disabled, document.activeElement === next]).toEqual([1256, "true", false, true]);
+    next!.click();
+    expect(track.scrollLeft).toBe(1256);
+    previous!.focus();
+    for (let press = 0; press < 4; press += 1) previous!.click();
+    expect([track.scrollLeft, previous!.getAttribute("aria-disabled"), previous!.disabled, document.activeElement === previous]).toEqual([0, "true", false, true]);
+    carousel.remove();
+  });
+
+  test("a user scroll (touch, trackpad, or keyboard) updates both buttons", async () => {
+    width = 600;
+    const carousel = mount(seven);
+    scroll(carousel, 1256);
+    expect(view(carousel)).toMatchObject({ unavailable: ["1"] });
+    scroll(carousel, 640);
+    expect(view(carousel)).toMatchObject({ unavailable: [] });
+    // A fractional rest within a pixel of an edge counts as that edge.
+    scroll(carousel, 0.6);
+    expect(view(carousel)).toMatchObject({ unavailable: ["-1"] });
+    scroll(carousel, 1255.4);
+    expect(view(carousel)).toMatchObject({ unavailable: ["1"] });
+    carousel.remove();
+  });
+
+  test("when every slide fits, neither direction can move, and a resize updates that", async () => {
+    width = 1408;
+    const carousel = mount(manifest, { "view-all-href": "/screenshots/" });
+    const track = $(carousel, ".shots-carousel-track");
+    const parts = () => [".shots-carousel", ".shots-carousel-track", ".shots-carousel-view-all", ".shots-carousel-step", ".shots-carousel-slide"].map(selector => $(carousel, selector));
+    const before = parts();
+    // Three slides take 800px of a 1408px track.
+    expect(view(carousel)).toEqual({ first: "Home", unavailable: ["-1", "1"], slides: 3 });
+    carousel.step(1);
+    carousel.step(-1);
+    expect(track.scrollLeft).toBe(0);
+    // The page narrows, so the row overflows: only the next step can move.
+    width = 390;
+    for (const observe of observers) observe();
+    expect(view(carousel)).toEqual({ first: "Home", unavailable: ["-1"], slides: 3 });
+    // One slide fits, so each step moves one, and the second stops at the row's end (800 - 390 = 410px).
+    carousel.step(1);
+    expect([track.scrollLeft, view(carousel)]).toEqual([264, { first: "Notes", unavailable: [], slides: 3 }]);
+    carousel.step(1);
+    expect([track.scrollLeft, view(carousel)]).toEqual([410, { first: "Org Manager", unavailable: ["1"], slides: 3 }]);
+    // It widens again: the track can no longer rest past its end, and every slide fits.
+    width = 1408;
+    for (const observe of observers) observe();
+    expect([track.scrollLeft, view(carousel)]).toEqual([0, { first: "Home", unavailable: ["-1", "1"], slides: 3 }]);
+    // A resize changes no nodes, so a click or focus on the controls survives it.
+    expect(parts().every((part, index) => part === before[index])).toBe(true);
+    expect($$(carousel, "[data-clone]")).toEqual([]);
+    carousel.remove();
   });
 });

@@ -533,6 +533,12 @@
   cursor: pointer;
 }
 
+/* At the start or end of the row, a step button stays focusable but reads as unavailable. */
+.shots-carousel-step:where([aria-disabled="true"]) {
+  opacity: 0.4;
+  cursor: default;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   :is(.shots-track, .shots-carousel-track, .shots-filmstrip) {
     scroll-behavior: smooth;
