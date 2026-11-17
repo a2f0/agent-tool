@@ -101,20 +101,20 @@ function scripts(directory: string): Record<string, unknown> | null {
  * arguments appended, then `post<name>`. An unknown name runs `fallback`, the
  * executable or file of that name, when the manager does so.
  */
-/** Workspace packages from `package.json` workspaces and from pnpm's `pnpm-workspace.yaml`. */
-function workspaceDirectories(context: Context): string[] {
-  const directories = new Set(packageDirectories(context.root));
-  const file = path.join(context.root, "pnpm-workspace.yaml");
+/** Workspace packages of the workspace rooted at `root` (the repository's by default), from `package.json` workspaces and pnpm's `pnpm-workspace.yaml`. */
+function workspaceDirectories(context: Context, root = context.root): string[] {
+  const directories = new Set(packageDirectories(root));
+  const file = path.join(root, "pnpm-workspace.yaml");
   if (!existsSync(file)) return [...directories];
   let patterns: unknown;
   try { patterns = (Bun.YAML.parse(readFileSync(file, "utf8")) as { packages?: unknown } | null)?.packages; }
-  catch (error) { context.errors.push(`Cannot read pnpm-workspace.yaml: ${(error as Error).message}`); return [...directories]; }
+  catch (error) { context.errors.push(`Cannot read ${path.relative(context.root, file) || file}: ${(error as Error).message}`); return [...directories]; }
   const list = (Array.isArray(patterns) ? patterns : []).filter((pattern): pattern is string => typeof pattern === "string");
   const excluded = list.filter(pattern => pattern.startsWith("!")).map(pattern => new Bun.Glob(pattern.slice(1).replace(/\/$/, "")));
   for (const pattern of list.filter(pattern => !pattern.startsWith("!"))) {
-    for (const match of new Bun.Glob(`${pattern.replace(/\/$/, "")}/package.json`).scanSync({ cwd: context.root, onlyFiles: true })) {
+    for (const match of new Bun.Glob(`${pattern.replace(/\/$/, "")}/package.json`).scanSync({ cwd: root, onlyFiles: true })) {
       const relative = path.dirname(match);
-      if (!match.split("/").includes("node_modules") && !excluded.some(glob => glob.match(relative))) directories.add(path.join(context.root, relative));
+      if (!match.split("/").includes("node_modules") && !excluded.some(glob => glob.match(relative))) directories.add(path.join(root, relative));
     }
   }
   return [...directories];
@@ -297,6 +297,11 @@ function readTurboConfig(context: Context, file: string): TurboConfig | null {
   } catch (error) { context.errors.push(`Cannot read ${relative}: ${(error as Error).message}`); return null; }
 }
 
+function declaresWorkspaces(directory: string): boolean {
+  if (existsSync(path.join(directory, "pnpm-workspace.yaml"))) return true;
+  try { return (JSON.parse(readFileSync(path.join(directory, "package.json"), "utf8")) as { workspaces?: unknown }).workspaces !== undefined; } catch { return false; }
+}
+
 const turboFile = (directory: string) => ["turbo.json", "turbo.jsonc"].map(name => path.join(directory, name)).find(file => existsSync(file));
 
 /**
@@ -320,8 +325,14 @@ function turboConfigs(context: Context, args: string[], cwd: string): TurboConfi
     if (file && load(file) && !load(file)!.extends) { roots.push(file); break; }
     if (current === context.root || !current.startsWith(`${context.root}${path.sep}`)) break;
   }
-  // The repository root is a workspace directory too, but its turbo.json is the default root configuration.
-  const packages = workspaceDirectories(context).filter(directory => directory !== context.root).flatMap(directory => turboFile(directory) ?? []);
+  // Packages come from the workspace turbo runs in, the nearest at or above where it starts that declares
+  // workspaces, and from the repository's. A workspace root is a workspace directory too, but its
+  // turbo.json is a root configuration, not a package's.
+  const workspaceRoots = new Set([context.root]);
+  for (let current = start; current.startsWith(`${context.root}${path.sep}`); current = path.dirname(current)) {
+    if (declaresWorkspaces(current)) { workspaceRoots.add(current); break; }
+  }
+  const packages = [...workspaceRoots].flatMap(root => workspaceDirectories(context, root).filter(directory => !workspaceRoots.has(directory))).flatMap(directory => turboFile(directory) ?? []);
   return [...new Set([...roots, ...packages])].flatMap(file => load(file) ?? []);
 }
 

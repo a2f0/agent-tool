@@ -228,6 +228,9 @@ test("turbo tasks are builds or test runs through what they depend on in turbo.j
   expect(resolveStep(custom, ["turbo", "run", "check", "--root-turbo-json", "ci/turbo.json"])).toEqual({ findings: [], errors: [] });
   expect(resolveStep(custom, ["turbo", "run", "check"]).findings.map(finding => finding.chain.at(-1))).toEqual(["turbo.json tasks.check.dependsOn: build"]);
   expect(resolveStep(custom, ["turbo", "run", "lint", "--root-turbo-json=ci/missing.json"]).errors).toEqual(["Cannot read ci/missing.json (--root-turbo-json): no such file."]);
+  // A workspace nested in the checkout brings its own packages' configurations.
+  const nested = project({ "package.json": { scripts: {} }, "frontend/package.json": { workspaces: ["packages/*"] }, "frontend/turbo.json": { tasks: { lint: {} } }, "frontend/packages/web/package.json": { name: "web" }, "frontend/packages/web/turbo.json": { extends: ["//"], tasks: { lint: { dependsOn: ["^build"] } } } });
+  expect(resolveStep(nested, ["sh", "-c", "cd frontend && turbo run lint"]).findings.map(finding => finding.chain.at(-1))).toEqual(["frontend/packages/web/turbo.json tasks.lint.dependsOn: ^build"]);
   const broken = project({ "package.json": { scripts: {} }, "turbo.json": "{ tasks: " });
   expect(resolveStep(broken, ["turbo", "run", "lint"]).errors).toEqual([expect.stringContaining("Cannot read turbo.json")]);
 });
