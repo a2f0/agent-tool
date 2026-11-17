@@ -2,8 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { packageDirectories } from "../system/workspace";
 
-/** A test run or dependency install that a push-gate step reaches, with the chain that led to it. */
-export interface StepFinding { kind: "test" | "install"; runner: string; chain: string[] }
+/** A test run, build, or dependency install that a push-gate step reaches, with the chain that led to it. */
+export interface StepFinding { kind: "test" | "build" | "install"; runner: string; chain: string[] }
 export interface StepResolution { findings: StepFinding[]; errors: string[] }
 
 const MAX_DEPTH = 32;
@@ -21,7 +21,7 @@ const TOOLS = {
   pnpm: tool(["-C", "--dir", "--filter", "-F", "--reporter"], ["--filter", "-F", "--recursive", "-r"]),
   yarn: tool(["--cwd"]),
   exec: tool(["-p", "--package", "-c", "--call"]),
-  turbo: tool(["--filter", "-F", "--concurrency", "--cache-dir", "--output-logs", "--log-order", "--log-prefix", "--env-mode", "--ui", "--cache", "--profile", "--graph", "--summarize"]),
+  turbo: tool(["--filter", "-F", "--concurrency", "--cache-dir", "--output-logs", "--log-order", "--log-prefix", "--env-mode", "--ui", "--cache", "--profile", "--graph", "--summarize", "--cwd", "--root-turbo-json", "--heap", "--team", "--token", "--api", "--login", "--trace", "--cpuprofile", "--remote-cache-timeout", "--cache-workers", "--pkg-inference-root"]),
 } as const;
 const INSTALLS: Record<"bun" | "npm" | "pnpm" | "yarn", string[]> = {
   bun: ["install", "i", "add", "a", "update", "remove", "rm"],
@@ -34,10 +34,11 @@ interface Context { root: string; seen: Set<string>; findings: StepFinding[]; er
 
 /**
  * Follow a declared push-gate step through package scripts, shell strings,
- * and `agent-tool run-group` plans to every test runner or dependency install
- * it reaches. Executables and script files are leaves: their contents are not
- * inspected. Workspace filters resolve to every workspace package declaring
- * the script, which can over-report but never misses one.
+ * and `agent-tool run-group` plans to every test runner, build, or dependency
+ * install it reaches. Executables and script files are leaves: their contents
+ * are not inspected. Workspace filters resolve to every workspace package
+ * declaring the script, which can over-report but never misses one. A command
+ * that both builds and tests, such as `cargo test`, is reported once, as a test.
  */
 export function resolveStep(root: string, command: string[]): StepResolution {
   const context: Context = { root, seen: new Set(), findings: [], errors: [] };
@@ -100,20 +101,20 @@ function scripts(directory: string): Record<string, unknown> | null {
  * arguments appended, then `post<name>`. An unknown name runs `fallback`, the
  * executable or file of that name, when the manager does so.
  */
-/** Workspace packages from `package.json` workspaces and from pnpm's `pnpm-workspace.yaml`. */
-function workspaceDirectories(context: Context): string[] {
-  const directories = new Set(packageDirectories(context.root));
-  const file = path.join(context.root, "pnpm-workspace.yaml");
+/** Workspace packages of the workspace rooted at `root` (the repository's by default), from `package.json` workspaces and pnpm's `pnpm-workspace.yaml`. */
+function workspaceDirectories(context: Context, root = context.root): string[] {
+  const directories = new Set(packageDirectories(root));
+  const file = path.join(root, "pnpm-workspace.yaml");
   if (!existsSync(file)) return [...directories];
   let patterns: unknown;
   try { patterns = (Bun.YAML.parse(readFileSync(file, "utf8")) as { packages?: unknown } | null)?.packages; }
-  catch (error) { context.errors.push(`Cannot read pnpm-workspace.yaml: ${(error as Error).message}`); return [...directories]; }
+  catch (error) { context.errors.push(`Cannot read ${path.relative(context.root, file) || file}: ${(error as Error).message}`); return [...directories]; }
   const list = (Array.isArray(patterns) ? patterns : []).filter((pattern): pattern is string => typeof pattern === "string");
   const excluded = list.filter(pattern => pattern.startsWith("!")).map(pattern => new Bun.Glob(pattern.slice(1).replace(/\/$/, "")));
   for (const pattern of list.filter(pattern => !pattern.startsWith("!"))) {
-    for (const match of new Bun.Glob(`${pattern.replace(/\/$/, "")}/package.json`).scanSync({ cwd: context.root, onlyFiles: true })) {
+    for (const match of new Bun.Glob(`${pattern.replace(/\/$/, "")}/package.json`).scanSync({ cwd: root, onlyFiles: true })) {
       const relative = path.dirname(match);
-      if (!match.split("/").includes("node_modules") && !excluded.some(glob => glob.match(relative))) directories.add(path.join(context.root, relative));
+      if (!match.split("/").includes("node_modules") && !excluded.some(glob => glob.match(relative))) directories.add(path.join(root, relative));
     }
   }
   return [...directories];
@@ -165,36 +166,55 @@ function visit(context: Context, input: string[], cwd: string, chain: string[], 
   } else if (name === "bun") bun(context, args, cwd, chain, depth, text);
   else if (name === "bunx" || name === "npx") execute(context, args, cwd, chain, depth);
   else if (name === "npm" || name === "pnpm" || name === "yarn") packageManager(context, name, args, cwd, chain, depth, text);
-  else if (name === "turbo") { if (turboTasks(args).some(task => /^test/.test(task.slice(task.lastIndexOf("#") + 1)))) report(context, "test", text, chain); }
+  else if (name === "turbo") turbo(context, args, cwd, chain, text);
   else if (testRunner(name, args)) report(context, "test", text, chain);
+  else if (builds(name, args)) report(context, "build", text, chain);
   else if (["pod", "bundle", "pip", "pip3"].includes(name) && args[0] === "install") report(context, "install", text, chain);
   else if (name === "bundle" && args[0] === "exec") visit(context, args.slice(1), cwd, chain, depth + 1);
 }
 
-function turboTasks(args: string[]): string[] {
-  const rest = args[0] === "run" ? args.slice(1) : args;
-  const tasks: string[] = [];
-  for (let index = 0; index < rest.length; index++) {
-    const value = rest[index]!;
-    if (value === "--") break;
-    if (value.startsWith("-")) { if (!value.includes("=") && TOOLS.turbo.values.has(value)) index++; continue; }
-    tasks.push(value);
-  }
-  return tasks;
-}
+/* Options, per tool, that take a separate value, so `--profile release` or `-x build` is never read as a subcommand or task. */
+const WEBPACK_VALUES: ReadonlySet<string> = new Set(["-c", "--config", "--config-name", "--env", "--node-env", "--mode", "-o", "--output-path", "--entry", "--name", "-t", "--target", "-d", "--devtool", "--stats"]);
+const DOCKER_VALUES: ReadonlySet<string> = new Set(["--config", "-c", "--context", "-H", "--host", "-l", "--log-level", "--tlscacert", "--tlscert", "--tlskey", "--builder", "-f", "--file", "-p", "--project-name", "--profile", "--env-file", "--project-directory", "--ansi", "--progress", "--parallel"]);
+const GRADLE_VALUES: ReadonlySet<string> = new Set(["-p", "--project-dir", "-x", "--exclude-task", "-b", "--build-file", "-c", "--settings-file", "-g", "--gradle-user-home", "-I", "--init-script", "--include-build", "--project-cache-dir", "--console", "--warning-mode", "--max-workers", "--priority", "--update-locks", "--dependency-verification", "--write-verification-metadata", "--configuration-cache-problems", "--tests", "-D", "-P"]);
+const XCODEBUILD_VALUES: ReadonlySet<string> = new Set(["-project", "-workspace", "-target", "-scheme", "-configuration", "-sdk", "-arch", "-destination", "-destination-timeout", "-xcconfig", "-toolchain", "-derivedDataPath", "-resultBundlePath", "-resultBundleVersion", "-archivePath", "-exportPath", "-exportOptionsPlist", "-clonedSourcePackagesDirPath", "-packageCachePath", "-testPlan", "-only-testing", "-skip-testing", "-only-test-configuration", "-skip-test-configuration", "-xctestrun", "-testProductsPath", "-test-iterations", "-jobs", "-parallel-testing-worker-count", "-maximum-parallel-testing-workers", "-maximum-concurrent-test-device-destinations", "-maximum-concurrent-test-simulator-destinations", "-parallel-testing-enabled", "-test-timeouts-enabled", "-default-test-execution-time-allowance", "-maximum-test-execution-time-allowance", "-test-repetition-relaunch-enabled", "-collect-test-diagnostics", "-localizationPath", "-exportLanguage", "-scmProvider", "-defaultPackageRegistryURL", "-packageDependencySCMToRegistryTransformation", "-authenticationKeyPath", "-authenticationKeyID", "-authenticationKeyIssuerID", "-framework", "-library", "-headers", "-debug-symbols", "-output", "-find-executable", "-find-library"]);
+const RUNNER_VALUES: Record<string, ReadonlySet<string>> = {
+  go: new Set(["-C"]), cargo: new Set(["-C", "--config", "-Z", "--color"]), deno: new Set(["--config", "-c"]), swift: new Set(["--package-path"]),
+  vite: new Set(["-c", "--config", "--base", "-l", "--logLevel", "-m", "--mode", "--configLoader", "-f", "--filter"]),
+  astro: new Set(["--root", "--config", "--site", "--base", "--mode"]),
+  webpack: WEBPACK_VALUES, "webpack-cli": WEBPACK_VALUES, docker: DOCKER_VALUES, "docker-compose": DOCKER_VALUES,
+};
 
-/** Global options some runners take before their subcommand: `go -C dir test`, `cargo +nightly -Z flag test`. */
-const RUNNER_VALUES: Record<string, string[]> = { go: ["-C"], cargo: ["-C", "--config", "-Z", "--color"], deno: ["--config", "-c"], swift: ["--package-path"] };
-function subcommand(name: string, args: string[]): string | undefined {
-  const values = RUNNER_VALUES[name] ?? [];
+/** The positional words before any `--`, skipping options and the separate values of those in `takesValue`. */
+function positionals(args: string[], takesValue: ReadonlySet<string>): string[] {
+  const words: string[] = [];
   for (let index = 0; index < args.length; index++) {
     const value = args[index]!;
-    if (values.includes(value)) { index++; continue; }
+    if (value === "--") break;
+    if (value.startsWith("-")) { if (takesValue.has(value)) index++; continue; }
+    words.push(value);
+  }
+  return words;
+}
+
+/** The first positional word, after global options such as `go -C dir` or `cargo +nightly -Z flag`. */
+function subcommand(name: string, args: string[]): string | undefined {
+  const takesValue = RUNNER_VALUES[name] ?? new Set();
+  for (let index = 0; index < args.length; index++) {
+    const value = args[index]!;
+    if (takesValue.has(value)) { index++; continue; }
     if (value.startsWith("-") || (name === "cargo" && value.startsWith("+"))) continue;
     return value;
   }
   return undefined;
 }
+
+/** xcodebuild's actions: positional words other than `NAME=value` build settings. */
+const xcodebuildActions = (args: string[]) => positionals(args, XCODEBUILD_VALUES).filter(word => !word.includes("="));
+/** Gradle task paths such as `test` or `:app:testDebugUnitTest`. */
+const gradleTask = (pattern: string) => new RegExp(`^(?::?[\\w-]+:)*(?:${pattern})$`, "i");
+const GRADLE_TEST = gradleTask("test\\w*");
+const GRADLE_BUILD = gradleTask("assemble\\w*|build(?:Needed|Dependents)?|bundle\\w*|install\\w*");
 
 function testRunner(name: string, args: string[]): boolean {
   if (["jest", "vitest", "mocha", "ava", "maestro", "detox", "pytest", "rspec"].includes(name)) return true;
@@ -202,10 +222,154 @@ function testRunner(name: string, args: string[]): boolean {
   if (name === "node") return args.some(arg => arg === "--test" || arg.startsWith("--test="));
   if (["playwright", "deno", "go", "swift"].includes(name)) return first === "test";
   if (name === "cargo") return first === "test" || first === "nextest";
-  if (name === "gradle" || name === "gradlew") return args.some(arg => /^(?::?[\w-]+:)*test\w*$/i.test(arg));
-  if (name === "xcodebuild") return args.some(arg => arg === "test" || arg === "test-without-building");
+  if (name === "gradle" || name === "gradlew") return positionals(args, GRADLE_VALUES).some(task => GRADLE_TEST.test(task));
+  if (name === "xcodebuild") return xcodebuildActions(args).some(action => action === "test" || action === "test-without-building");
   if (/^python[\d.]*$/.test(name)) return args[0] === "-m" && args[1] === "pytest";
   return false;
+}
+
+/** webpack-cli subcommands that serve, inspect, or scaffold instead of bundling; any other first word is a build or an entry. */
+const WEBPACK_OTHER = new Set(["serve", "server", "s", "info", "i", "configtest", "t", "version", "v", "help", "h", "init", "create", "new", "c", "n", "loader", "l", "plugin", "p", "migrate", "m"]);
+/** xcodebuild options that only list, report, export, or resolve; without one, xcodebuild builds (its default action). */
+const XCODEBUILD_OTHER = new Set(["-list", "-showBuildSettings", "-showBuildSettingsForIndex", "-showsdks", "-showdestinations", "-showTestPlans", "-version", "-usage", "-help", "-license", "-checkFirstLaunchStatus", "-runFirstLaunch", "-resolvePackageDependencies", "-exportArchive", "-create-xcframework", "-find-executable", "-find-library", "-downloadPlatform", "-downloadAllPlatforms", "-importPlatform"]);
+
+/**
+ * Bundlers, framework builds, native compilers, and image builds. Static
+ * checks are not builds: `tsc` (whether `--noEmit` or `-b`), `cargo
+ * check|clippy|fmt`, linters, and formatters.
+ */
+function builds(name: string, args: string[]): boolean {
+  if (name === "rollup" || name === "tsup") return true;
+  if (name === "esbuild") return args.some(arg => arg === "--bundle" || /^--out(?:file|dir)(?:=|$)/.test(arg));
+  const first = subcommand(name, args);
+  if (name === "webpack" || name === "webpack-cli") return !WEBPACK_OTHER.has(first ?? "");
+  if (["vite", "next", "astro", "electrobun", "swift", "go"].includes(name)) return first === "build";
+  if (name === "cargo") return ["build", "b", "run", "r"].includes(first ?? "");
+  // `expo run:ios|android` compiles the native app before launching it.
+  if (name === "expo") return first === "export" || /^(?:export|run):/.test(first ?? "");
+  if (name === "gradle" || name === "gradlew") return positionals(args, GRADLE_VALUES).some(task => GRADLE_BUILD.test(task));
+  if (name === "xcodebuild") {
+    if (args.some(arg => XCODEBUILD_OTHER.has(arg))) return false;
+    const actions = xcodebuildActions(args);
+    // Without an action, xcodebuild builds.
+    return !actions.length || actions.some(action => action !== "clean" && action !== "installsrc");
+  }
+  if (name === "docker-compose") return first === "build";
+  if (name === "docker") {
+    const [command, sub] = positionals(args, DOCKER_VALUES);
+    return command === "build" || ((command === "image" || command === "builder" || command === "compose") && sub === "build") || (command === "buildx" && ["build", "b", "bake"].includes(sub ?? ""));
+  }
+  return false;
+}
+
+/** turbo's subcommands that run no tasks. */
+const TURBO_COMMANDS = new Set(["prune", "ls", "info", "query", "gen", "generate", "login", "logout", "link", "unlink", "daemon", "telemetry", "bin", "completion", "scan", "boundaries", "devtools", "docs", "config"]);
+
+/** The tasks a `turbo` command runs: those after `run` or `watch`, or bare task names. */
+function turboTasks(args: string[]): string[] {
+  const words = positionals(args, TOOLS.turbo.values);
+  if (words[0] === "run" || words[0] === "watch") return words.slice(1);
+  return TURBO_COMMANDS.has(words[0] ?? "") ? [] : words;
+}
+
+/** The value of `--name value` or `--name=value` before any `--`. */
+function optionValue(args: string[], name: string): string | undefined {
+  for (let index = 0; index < args.length && args[index] !== "--"; index++) {
+    const value = args[index]!;
+    if (value === name) return args[index + 1];
+    if (value.startsWith(`${name}=`)) return value.slice(name.length + 1);
+  }
+  return undefined;
+}
+
+interface TurboConfig { file: string; section: string; tasks: Record<string, unknown>; extends: boolean }
+
+function readTurboConfig(context: Context, file: string): TurboConfig | null {
+  const relative = path.relative(context.root, file) || file;
+  try {
+    const value: unknown = Bun.JSONC.parse(readFileSync(file, "utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("expected an object");
+    // turbo 2 names the section `tasks`; turbo 1 named it `pipeline`.
+    const section = "tasks" in value ? "tasks" : "pipeline";
+    const tasks = (value as Record<string, unknown>)[section] ?? {};
+    if (!tasks || typeof tasks !== "object" || Array.isArray(tasks)) throw new Error(`expected ${section} to be an object`);
+    return { file: relative, section, tasks: tasks as Record<string, unknown>, extends: "extends" in value };
+  } catch (error) { context.errors.push(`Cannot read ${relative}: ${(error as Error).message}`); return null; }
+}
+
+function declaresWorkspaces(directory: string): boolean {
+  if (existsSync(path.join(directory, "pnpm-workspace.yaml"))) return true;
+  try { return (JSON.parse(readFileSync(path.join(directory, "package.json"), "utf8")) as { workspaces?: unknown }).workspaces !== undefined; } catch { return false; }
+}
+
+const turboFile = (directory: string) => ["turbo.json", "turbo.jsonc"].map(name => path.join(directory, name)).find(file => existsSync(file));
+
+/**
+ * Every turbo configuration that can define a task: the root one, then each
+ * workspace package's. The root one is `--root-turbo-json` when given (read
+ * from the directory turbo starts in and from the repository root, wherever it
+ * exists), else the nearest at or above the directory turbo starts in
+ * (`--cwd`) without `extends`.
+ */
+function turboConfigs(context: Context, args: string[], cwd: string): TurboConfig[] {
+  const loaded = new Map<string, TurboConfig | null>();
+  const load = (file: string) => { if (!loaded.has(file)) loaded.set(file, readTurboConfig(context, file)); return loaded.get(file)!; };
+  const start = path.resolve(cwd, optionValue(args, "--cwd") ?? ".");
+  const explicit = optionValue(args, "--root-turbo-json");
+  const roots: string[] = [];
+  if (explicit !== undefined) {
+    roots.push(...new Set([path.resolve(start, explicit), path.resolve(context.root, explicit)].filter(file => existsSync(file))));
+    if (!roots.length) context.errors.push(`Cannot read ${explicit} (--root-turbo-json): no such file.`);
+  } else for (let current = start; ; current = path.dirname(current)) {
+    const file = turboFile(current);
+    if (file && load(file) && !load(file)!.extends) { roots.push(file); break; }
+    if (current === context.root || !current.startsWith(`${context.root}${path.sep}`)) break;
+  }
+  // Packages come from the workspace turbo runs in, the nearest at or above where it starts that declares
+  // workspaces, and from the repository's. A workspace root is a workspace directory too, but its
+  // turbo.json is a root configuration, not a package's.
+  const workspaceRoots = new Set([context.root]);
+  for (let current = start; current.startsWith(`${context.root}${path.sep}`); current = path.dirname(current)) {
+    if (declaresWorkspaces(current)) { workspaceRoots.add(current); break; }
+  }
+  const packages = [...workspaceRoots].flatMap(root => workspaceDirectories(context, root).filter(directory => !workspaceRoots.has(directory))).flatMap(directory => turboFile(directory) ?? []);
+  return [...new Set([...roots, ...packages])].flatMap(file => load(file) ?? []);
+}
+
+/**
+ * `turbo run <task...>` runs its tasks and, unless `--only`, every task they
+ * depend on in turbo.json: `^name`, `name`, and `package#name` all run tasks
+ * named `name`. A dependency's definitions in the root and every package
+ * configuration are followed together, which can over-report but never misses
+ * one. The package scripts turbo runs for each task are not followed.
+ */
+function turbo(context: Context, args: string[], cwd: string, chain: string[], text: string): void {
+  const queue = turboTasks(args).map(task => ({ task, hops: [] as string[] }));
+  if (!queue.length) return;
+  const separator = args.indexOf("--");
+  const configs = (separator === -1 ? args : args.slice(0, separator)).includes("--only") ? [] : turboConfigs(context, args, cwd);
+  const found: Partial<Record<"test" | "build", string[]>> = {};
+  const seen = new Set<string>();
+  while (queue.length) {
+    const { task, hops } = queue.shift()!;
+    const name = task.slice(task.lastIndexOf("#") + 1);
+    if (seen.has(name)) continue;
+    seen.add(name);
+    if (/^test/.test(name)) found.test ??= hops;
+    else if (/^build/.test(name)) found.build ??= hops;
+    for (const config of configs) {
+      for (const [key, definition] of Object.entries(config.tasks)) {
+        if (key.slice(key.lastIndexOf("#") + 1) !== name) continue;
+        const dependsOn = (definition as { dependsOn?: unknown } | null)?.dependsOn;
+        // `$TURBO_EXTENDS$` and turbo 1's `$ENV` entries name no task.
+        for (const dependency of Array.isArray(dependsOn) ? dependsOn : []) {
+          if (typeof dependency === "string" && !dependency.startsWith("$")) queue.push({ task: dependency.replace(/^\^/, ""), hops: [...hops, `${config.file} ${config.section}.${key}.dependsOn: ${dependency}`] });
+        }
+      }
+    }
+  }
+  const kind = found.test ? "test" : found.build ? "build" : null;
+  if (kind) context.findings.push({ kind, runner: text, chain: [...(chain.at(-1) === text ? chain : [...chain, text]), ...found[kind]!] });
 }
 
 function bun(context: Context, args: string[], cwd: string, chain: string[], depth: number, text: string): void {
@@ -214,6 +378,8 @@ function bun(context: Context, args: string[], cwd: string, chain: string[], dep
   const sub = rest[0];
   if (!sub) return;
   if (sub === "test") report(context, "test", text, chain);
+  // The bundler is built in, so `bun build` never runs a package script of that name.
+  else if (sub === "build") report(context, "build", text, chain);
   else if (INSTALLS.bun.includes(sub)) report(context, "install", text, chain);
   else if (sub === "x") execute(context, rest.slice(1), directory, chain, depth);
   else if (sub === "exec") { if (rest[1]) visitShell(context, rest[1], directory, chain, depth + 1); }

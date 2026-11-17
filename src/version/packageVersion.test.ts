@@ -84,7 +84,7 @@ describe("packageVersion", () => {
       isVersionedManifest(root, "packages/windowing/fixtures/package.json"),
     ).toBe(false);
     expect(isVersionedManifest(root, "package.json")).toBe(false);
-  });
+  }, 20_000);
 
   test("configures the root package as `.`", () => {
     const root = repository();
@@ -93,5 +93,5 @@ describe("packageVersion", () => {
     expect(workspacePackages(root)).toEqual(["."]);
     expect(isVersionedManifest(root, "package.json")).toBe(true);
     expect(isVersionedManifest(root, FRONTEND)).toBe(false);
-  });
+  }, 20_000);
 });

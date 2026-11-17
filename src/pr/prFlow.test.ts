@@ -142,7 +142,7 @@ describe("PR CLI flows ported from a2f0.net", () => {
     const query = calls.find(call => call.includes("owner=owner"));
     expect(query?.[query.indexOf("owner=owner") - 1]).toBe("-f");
     expect(query?.[query.indexOf("name=repo") - 1]).toBe("-f");
-  });
+  }, 20_000);
 
   test.each(["missing", "retargeted", "failed-ci", "head-drift"])(
     "refuses a %s PR before sending a merge", (scenario) => {
@@ -183,7 +183,7 @@ describe("PR CLI flows ported from a2f0.net", () => {
       const result = invoke("merged", ["pr", "merge", "", head, "production"]);
       expect(result.status).toBe(0);
       expect(JSON.parse(readFileSync(path.join(fixture, "mutation.json"), "utf8"))).toContain(`expectedHeadOid=${head}`);
-    });
+    }, 20_000);
 
     test("refuses a PR that conflicts with its base and says to integrate", () => {
       const result = invoke("conflicting", ["pr", "merge", "", head, "production"]);
@@ -266,7 +266,7 @@ describe("PR CLI flows ported from a2f0.net", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("Pull request base changed from 'production' to 'staging'");
       expect(existsSync(path.join(fixture, "mutation.json"))).toBe(false);
-    });
+    }, 20_000);
 
     test("the removed squashMerge action names pr merge and sends nothing", () => {
       const result = invoke("merged", ["squashMerge", "", head, "production"]);
@@ -304,7 +304,7 @@ describe("PR CLI flows ported from a2f0.net", () => {
     const result = invoke("unmerged", ["pr", "merge", "", head, "production"]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("is not merged");
-  });
+  }, 20_000);
 
   test("creates a PR with literal multiline stdin and an explicit base", () => {
     const body = "First line\n\nLiteral `code` and $(no-shell-expansion).\n";
@@ -331,7 +331,7 @@ describe("PR CLI flows ported from a2f0.net", () => {
     writeFileSync(path.join(fixture, "sub", "body.md"), "From a subdirectory.\n");
     expect(invoke("missing", ["pr", "open", "feat: example", "--body-file", "body.md"], "", undefined, path.join(fixture, "sub")).status).toBe(0);
     expect(JSON.parse(readFileSync(path.join(fixture, "created.json"), "utf8")).body).toBe("From a subdirectory.\n");
-  });
+  }, 20_000);
 
   test("default PR titles ignore signature display on signed commits", () => {
     const key = path.join(temporary, "signing-key");

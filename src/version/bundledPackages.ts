@@ -12,16 +12,16 @@ interface WorkspaceManifest {
   dependencies?: unknown;
 }
 
-function headManifest(rootDir: string, packageDir: string): WorkspaceManifest {
+function headManifest(rootDir: string, packageDir: string, commit: string): WorkspaceManifest {
   const file = manifestPath(packageDir);
-  const result = spawnSync("git", ["show", `HEAD:${file}`], {
+  const result = spawnSync("git", ["show", `${commit}:${file}`], {
     cwd: rootDir,
     env: gitEnvironment(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });
   if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`${file} is not committed at HEAD.`);
+  if (result.status !== 0) throw new Error(`${file} is not committed at ${commit}.`);
   return JSON.parse(result.stdout);
 }
 
@@ -42,21 +42,21 @@ function workspaceDependencies(manifest: WorkspaceManifest): string[] {
 /**
  * The workspace packages each configured bundle ships inside its own artifact:
  * every package it reaches through `workspace:` ranges in `dependencies`, read
- * from HEAD. A change to any of them is a change to the bundle.
+ * from `commit`. A change to any of them is a change to the bundle.
  */
-export function bundledPackages(rootDir: string): Map<string, string[]> {
+export function bundledPackages(rootDir: string, commit = "HEAD"): Map<string, string[]> {
   const bundles = loadConfig(rootDir).versions.bundles;
   const result = new Map<string, string[]>();
   if (bundles.length === 0) return result;
-  const versioned = workspacePackages(rootDir);
+  const versioned = workspacePackages(rootDir, commit);
   // Discovered only when a bundle has a workspace dependency, so a bundle
   // without any needs no workspace declaration.
   let directories: Map<string, string> | undefined;
   const directoryOf = (name: string): string | undefined => {
     if (directories === undefined) {
       directories = new Map();
-      for (const packageDir of discoveredWorkspaces(rootDir)) {
-        const manifest = headManifest(rootDir, packageDir);
+      for (const packageDir of discoveredWorkspaces(rootDir, commit)) {
+        const manifest = headManifest(rootDir, packageDir, commit);
         if (typeof manifest.name === "string") directories.set(manifest.name, packageDir);
       }
     }
@@ -67,7 +67,7 @@ export function bundledPackages(rootDir: string): Map<string, string[]> {
       throw new Error(`versions.bundles names ${bundle}, which is not a versioned package.`);
     }
     const reached = new Set<string>();
-    const pending = workspaceDependencies(headManifest(rootDir, bundle));
+    const pending = workspaceDependencies(headManifest(rootDir, bundle, commit));
     for (let name = pending.pop(); name !== undefined; name = pending.pop()) {
       const packageDir = directoryOf(name);
       if (packageDir === undefined) {
@@ -75,7 +75,7 @@ export function bundledPackages(rootDir: string): Map<string, string[]> {
       }
       if (packageDir === bundle || reached.has(packageDir)) continue;
       reached.add(packageDir);
-      pending.push(...workspaceDependencies(headManifest(rootDir, packageDir)));
+      pending.push(...workspaceDependencies(headManifest(rootDir, packageDir, commit)));
     }
     result.set(bundle, [...reached].sort());
   }

@@ -112,6 +112,7 @@ For repository workflow commands added alongside these interfaces, see
 | `proc list` / `proc stop <id...>\|--all [--grace-ms N]` | Show recorded processes with their members and ports; stop them, SIGKILL after the grace period |
 | `teardown [--apply]` | Report what the checkout still runs or holds; `--apply` stops recorded processes not started with `--keep` |
 | `review claude\|codex\|opencode [effort] [--base ref]` | Review committed HEAD using a pinned raw-file snapshot |
+| `review carry <reviewed-head> <new-head> [--base ref]` | Read-only: whether a clean review of the reviewed head still covers a new head that only merged the base and prepared versions; JSON, exit 1 when it does not |
 | `pr open [title] [--body-file file]` | Open a same-repository PR; body from the file or stdin; branch already pushed |
 | `pr checks [--wait] [--head oid] [--allow-behind] [--timeout seconds] [--interval seconds]` | Report or wait for the PR head's checks and whether the head is behind its live base; stop for that only under `merge.requireStrictBaseFreshness` |
 | `pr cancel-runs --head <oid>` | Cancel the unfinished GitHub Actions runs of a superseded PR head |
@@ -119,7 +120,7 @@ For repository workflow commands added alongside these interfaces, see
 | `pr merge <subject-or-empty> <head-oid> <base-branch>` | Run every `pr preflight` gate against the live base, then synchronously squash the reviewed HEAD |
 | `push-gate hook` | Print the canonical `pre-push` body to commit as `scripts/git/hooks/pre-push` |
 | `push-gate run --pre-push <remote> <url>` | The hook's whole body: built-in trust guards, then the declared `pushGate` steps as a recorded run group, with a budget warning |
-| `push-gate check` | Read-only: the tracked hook is canonical and installed, and no declared step runs tests or installs without `allowSlow` |
+| `push-gate check` | Read-only: the tracked hook is canonical and installed, and no declared step runs tests, builds, or installs without `allowSlow` |
 | `repo base-health [--branch name] [--limit N]` | Read the default branch's CI from GitHub: `green`, `red`, `pending`, or `no-ci`, with failing jobs, the breaking range, and open repairs |
 | `versions plan\|bump\|check <base-oid>` | Plan, rewrite, or check package versions against an exact base |
 | `versions prepare <base-oid>` | Bump, refresh `bun.lock`, validate, and commit versions; print a JSON receipt |
@@ -157,6 +158,40 @@ A successful review exit means a complete review was returned, ending in a
 `VERDICT:` line. BLOCKER or MAJOR findings still require action. The review
 command does not repair, push, or merge; the shipping skills coordinate that
 work.
+
+#### Carrying a review across base integration
+
+In a repository that versions packages, two open PRs often take the same next
+version, so the one merged second integrates the base and runs `versions
+prepare` again. `review carry <reviewed-head> <new-head>` decides mechanically,
+without a reviewer, whether that new head still has the clean review its
+reviewed head received. Both heads are full OIDs. The base is `--base <ref>`,
+or else the PR's base branch (the default branch without a PR), fetched fresh
+as `repo context --fetch` does. It walks the first-parent history from the
+reviewed head to the new head and accepts only:
+
+- **Base merges**: a merge whose other parent the base already contains and
+  whose tree is Git's own merge of its parents (`git merge-tree --write-tree`,
+  Git 2.38 or newer). Conflicts are allowed only in versioned manifests, and
+  each must be resolved byte for byte as `versions resolve-conflicts` resolves
+  it. Custom merge drivers never run: each configured `merge.<name>.driver`
+  becomes the shell's `false` and `merge.renormalize` is off, so the check runs
+  no repository code, and a merge that relied on a driver needs a new review.
+- **Version commits**: a commit that changes only the `version` field of
+  versioned manifests and, when `versions.lockfile` is set, only the workspace
+  versions in `bun.lock`, which must match the manifests, and that sets every
+  package to the version `versions prepare` targets on the commit's parent
+  against the newest base commit it contains. A new major or minor version in
+  that commit is therefore refused.
+
+It prints `{ ok, reviewedHead, head, base: { ref, oid }, steps, reasons }`.
+Each step is `{ commit, kind, ok, paths, reason }`, with `kind` `base-merge`
+or `versions` (`other` for an octopus merge) and `paths` the conflicted
+manifests of a merge or the files a version commit changes. It exits 1 when
+anything else changed: content outside version fields, a conflict resolved by
+hand, a merge of a branch the base does not contain, or history that does not
+descend from the reviewed head, such as a rebase. CI still runs on the new
+head.
 
 ### Compact command output
 
@@ -309,7 +344,9 @@ On success it prints a JSON receipt with `baseOid`, `startHead`, `headOid`,
 `committed`, `lockfileChanged`, and the rewritten `versions`. A failure before
 the commit restores the manifests, lockfile, and index, unless HEAD or other
 paths changed, in which case it leaves that state for inspection. Repeating
-against the same base creates no commit.
+against the same base creates no commit. A head that only merged the base and
+prepared versions again keeps its earlier review when
+[`review carry`](#carrying-a-review-across-base-integration) accepts it.
 
 ### Images
 

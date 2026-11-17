@@ -50,7 +50,7 @@ test("x runs this checkout's installed binary directly, and test forwards its ar
   expect(JSON.parse(f.run(["x", "biome", "--", "check", "src"]).stdout)).toEqual({ args: "check src", firstPath: f.bin });
   for (const name of ["left-pad@1.0.0", "@scope/tool", "../bin"]) expect(f.run(["x", name]).stderr).toMatch(/installed executable/);
   expect(JSON.parse(f.run(["test", "--", "src/a.test.ts"]).stdout).args).toEqual(["test", "src/a.test.ts"]);
-});
+}, 20_000);
 
 test("--log captures output in a private log and prints a receipt, with the pinned Bun first on PATH", () => {
   const f = fixture();

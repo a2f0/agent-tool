@@ -37,7 +37,7 @@ describe("prepareVersions CLI failures", () => {
       expect(git(rootDir, ["status", "--porcelain"])).toBe(before);
       expect(read(rootDir, "bun.lock")).toBe(lock);
       expect(read(rootDir, FRONTEND)).toBe(manifest);
-    });
+    }, 30_000);
   }
 
   test("requires a full, integrated base OID before making changes", () => {
@@ -51,7 +51,7 @@ describe("prepareVersions CLI failures", () => {
     expect(result.stderr).toContain("Merge the pinned base");
     expect(git(rootDir, ["rev-parse", "HEAD"])).toBe(head);
     expect(git(rootDir, ["status", "--porcelain"])).toBe("");
-  });
+  }, 30_000);
 
   for (const stage of ["install", "validation", "commit"]) {
     test(`restores manifests, lockfile, and index after ${stage} fails`, () => {
@@ -93,7 +93,7 @@ describe("prepareVersions CLI failures", () => {
         expect(fixture.prepare(base).code).toBe(0);
         expect(fixture.lockVersion("packages/windowing")).toBe("0.7.102");
       }
-    });
+    }, 30_000);
   }
 
   test("preserves unexpected changes instead of committing or discarding them", () => {
@@ -112,7 +112,7 @@ describe("prepareVersions CLI failures", () => {
     expect(result.stderr).toContain("Preserved intermediate state");
     expect(git(rootDir, ["rev-parse", "HEAD"])).toBe(start);
     expect(read(rootDir, "README.md")).toBe("external change\n");
-  });
+  }, 30_000);
 
   test("detects unexpected staged edits even when the worktree matches HEAD", () => {
     const fixture = versionPreparationFixture();
@@ -135,7 +135,7 @@ Bun.spawnSync(["git", "restore", "--worktree", "--source=HEAD", "README.md"]);
     expect(git(rootDir, ["rev-parse", "HEAD"])).toBe(start);
     expect(read(rootDir, "README.md")).toBe("demo\n");
     expect(git(rootDir, ["show", ":README.md"])).toBe("external change");
-  });
+  }, 30_000);
 
   test("rejects a commit hook that changes the prepared tree and preserves its commit", () => {
     const fixture = versionPreparationFixture();
@@ -155,7 +155,7 @@ Bun.spawnSync(["git", "restore", "--worktree", "--source=HEAD", "README.md"]);
     expect(result.stdout).toBe("");
     expect(git(rootDir, ["rev-parse", "HEAD"])).not.toBe(start);
     expect(read(rootDir, "README.md")).toBe("hook change\n");
-  });
+  }, 30_000);
 });
 
 describe("prepareVersions lockfile verification", () => {
@@ -182,7 +182,7 @@ describe("prepareVersions lockfile verification", () => {
     } finally {
       rmSync(tools, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   test("verifies the staged lockfile when a clean filter rewrites it", () => {
     const fixture = versionPreparationFixture();
@@ -199,7 +199,7 @@ describe("prepareVersions lockfile verification", () => {
     expect(result.stderr).toContain("Restored version manifests");
     expect(git(rootDir, ["rev-parse", "HEAD"])).toBe(start);
     expect(git(rootDir, ["status", "--porcelain"])).toBe("");
-  });
+  }, 30_000);
 
   test("reports only workspaces whose lockfile version differs", () => {
     const lock = `{

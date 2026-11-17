@@ -6,14 +6,14 @@ import {
 import { posix } from "node:path";
 import { loadConfig } from "../config";
 
-/** The versioned packages: the configured directories, or every workspace. */
-export function workspacePackages(rootDir: string): string[] {
+/** The versioned packages: the configured directories, or every workspace committed at `commit`. */
+export function workspacePackages(rootDir: string, commit = "HEAD"): string[] {
   const configured = loadConfig(rootDir).versions.packages;
-  return configured === null ? discoveredWorkspaces(rootDir) : [...configured];
+  return configured === null ? discoveredWorkspaces(rootDir, commit) : [...configured];
 }
 
-/** Discover every committed workspace, including globbed and newly added ones. */
-export function discoveredWorkspaces(rootDir: string): string[] {
+/** Discover every workspace committed at `commit`, including globbed and newly added ones. */
+export function discoveredWorkspaces(rootDir: string, commit = "HEAD"): string[] {
   const options: ExecFileSyncOptionsWithStringEncoding = {
     cwd: rootDir,
     env: gitEnvironment(),
@@ -21,7 +21,7 @@ export function discoveredWorkspaces(rootDir: string): string[] {
     stdio: ["ignore", "pipe", "pipe"],
   };
   const root: { workspaces?: string[] | { packages?: string[] } } = JSON.parse(
-    execFileSync("git", ["show", "HEAD:package.json"], options),
+    execFileSync("git", ["show", `${commit}:package.json`], options),
   );
   const patterns = Array.isArray(root.workspaces)
     ? root.workspaces
@@ -30,7 +30,7 @@ export function discoveredWorkspaces(rootDir: string): string[] {
     throw new Error("package.json must declare workspace package paths.");
   }
   const globs = patterns.map((pattern) => new Bun.Glob(pattern));
-  return execFileSync("git", ["ls-tree", "-rz", "--name-only", "HEAD"], options)
+  return execFileSync("git", ["ls-tree", "-rz", "--name-only", commit], options)
     .split("\0")
     .filter((file) => file.endsWith("/package.json"))
     .map((file) => posix.dirname(file))

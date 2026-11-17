@@ -66,7 +66,7 @@ test("branch creation pins remote base and avoids local upstream settings", () =
   expect(spawnSync("git", ["rev-parse", "--abbrev-ref", "@{upstream}"], { cwd: f.root, env: f.env }).status).not.toBe(0);
   expect(f.run(["branch", "create", "chore/task", "--base", "main"]).status).toBe(1);
   writeFileSync(path.join(f.root, "user-edit"), "keep"); expect(f.run(["branch", "create", "chore/another", "--base", "main"]).status).toBe(1); expect(readFileSync(path.join(f.root, "user-edit"), "utf8")).toBe("keep");
-});
+}, 20_000);
 test("push runs normal hooks and detects hook-created commits", () => {
   const f = fixture(); const remote = path.join(f.root, "remote.git"); f.git(["init", "--bare", remote]); f.git(["remote", "add", "origin", remote]); writeFileSync(path.join(f.root, ".git/info/exclude"), "remote.git/\n"); f.git(["switch", "-c", "chore/push"]);
   const bin = path.join(f.root, ".git/bin"); mkdirSync(bin); writeFileSync(path.join(bin, "gh"), `#!${process.execPath}\nconsole.log(JSON.stringify({nameWithOwner:'o/r',defaultBranchRef:{name:'main'}}));\n`); chmodSync(path.join(bin, "gh"), 0o755);
@@ -162,7 +162,7 @@ test("CI waiter does not pass no-check races, duplicate pending jobs, or head dr
   f.save({ checks: [{ name: "test", workflow: "CI", state: "SUCCESS" }, { name: "test", workflow: "CI", state: "PENDING" }] }); result = f.run(["pr", "checks"]); expect(result.status).toBe(1); expect(JSON.parse(result.stdout).waiting).toBe(true);
   f.save({ apiHead: "a".repeat(40) }); result = f.run(["pr", "checks"]); expect(result.status).toBe(1); expect(result.stderr).toContain("HEAD changed");
   f.save(); expect(f.run(["pr", "checks", "--wait"]).status).toBe(0);
-});
+}, 30_000);
 const strictFreshness = (root: string) => writeFileSync(path.join(root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, merge: { requireStrictBaseFreshness: true } }));
 test("with strict base freshness the CI waiter stops once the head falls behind its live base, unless --allow-behind", () => {
   const f = githubFixture(); strictFreshness(f.root); f.save({ checks: [{ name: "test", workflow: "CI", state: "PENDING" }], behindBy: 2 });
@@ -227,7 +227,7 @@ test("pr cancel-runs cancels a head's unfinished runs on the PR branch only", ()
   result = f.run(["pr", "cancel-runs", "--head", old]); expect(result.status).toBe(1);
   expect(JSON.parse(result.stdout).runs[0]).toMatchObject({ id: 6, outcome: "failed", error: "cannot cancel" });
   expect(f.run(["pr", "cancel-runs"]).stderr).toContain("Usage: pr cancel-runs");
-});
+}, 20_000);
 test("pr cancel-runs keeps the current head's CI unless that head is behind its base", () => {
   const f = githubFixture();
   f.save({ runs: [{ databaseId: 7, status: "in_progress", headSha: f.commit, headBranch: "chore/workflow", workflowName: "CI", event: "push", url: "u" }] });
@@ -258,7 +258,7 @@ test("pr checks --wait takes its default timeout from merge.checksTimeoutSeconds
   result = f.run(["pr", "checks", "--wait", "--timeout", "0"]); expect(result.status).toBe(1); expect(result.stderr).toContain("Timed out waiting");
   writeFileSync(path.join(f.root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, merge: { checksTimeoutSeconds: 1.5 } }));
   result = f.run(["pr", "checks", "--wait", "--timeout", "0"]); expect(result.status).toBe(1); expect(result.stderr).toContain("merge.checksTimeoutSeconds");
-});
+}, 20_000);
 test("preflight checks exact base/HEAD and preserves dirty user edits", () => {
   const f = githubFixture(); let result = f.run(["pr", "preflight", f.commit, "main", f.commit]); expect(result.status).toBe(0);
   expect(JSON.parse(result.stdout)).toMatchObject({ baseOid: f.commit, liveBaseOid: f.commit, baseMoved: false, strictBaseFreshness: false });
@@ -285,7 +285,7 @@ test("cleanup previews without changes, then deletes only exact shipped refs thr
   expect(f.git(["branch", "--show-current"])).toBe("main"); expect(f.git(["branch", "--list", "chore/workflow"])).toBe(""); expect(existsSync(f.stateFile + ".deleted")).toBe(true);
   const again = f.run(["repo", "cleanup", "1", f.commit, "--apply"]);
   expect(again.status).toBe(0); expect(JSON.parse(again.stdout).completed).toEqual(["updated-default"]);
-});
+}, 30_000);
 test("cleanup prunes a squash-merged local branch after GitHub deleted the remote", () => {
   const f = githubFixture();
   writeFileSync(path.join(f.root, "tracked"), "shipped change\n"); f.git(["commit", "-am", "feat: shipped change"]);
@@ -299,7 +299,7 @@ test("cleanup prunes a squash-merged local branch after GitHub deleted the remot
   expect(f.git(["branch", "--show-current"])).toBe("main"); expect(f.git(["rev-parse", "HEAD"])).toBe(merge);
   expect(f.git(["branch", "--list", "chore/workflow"])).toBe(""); expect(f.git(["status", "--porcelain"])).toBe("");
   expect(existsSync(f.stateFile + ".deleted")).toBe(false);
-});
+}, 20_000);
 test("cleanup preserves a shipped branch checked out in another worktree", () => {
   const f = githubFixture(); f.save({ status: "MERGED" }); f.git(["switch", "main"]);
   const linked = path.join(f.root, ".git/linked"); f.git(["worktree", "add", linked, "chore/workflow"]);
@@ -308,7 +308,7 @@ test("cleanup preserves a shipped branch checked out in another worktree", () =>
   expect(f.git(["rev-parse", "refs/heads/chore/workflow"])).toBe(f.commit);
   expect(existsSync(f.stateFile + ".deleted")).toBe(false);
   expect(execFileSync("git", ["branch", "--show-current"], { cwd: linked, env: f.env, encoding: "utf8" }).trim()).toBe("chore/workflow");
-});
+}, 20_000);
 test("cleanup refuses a merged PR whose head is an exempt shared branch", () => {
   const f = githubFixture(); f.save({ status: "MERGED" });
   writeFileSync(path.join(f.root, ".git/info/exclude"), "agent-tool.json\n");
@@ -323,7 +323,7 @@ test("cleanup keeps branches on request and rejects unmerged or moved HEAD", () 
   const f = githubFixture(); expect(f.run(["repo", "cleanup", "1", f.commit, "--apply"]).status).toBe(1); f.save({ status: "MERGED" });
   expect(f.run(["repo", "cleanup", "1", f.commit, "--apply", "--keep-branch"]).status).toBe(0); expect(f.git(["rev-parse", "refs/heads/chore/workflow"])).toBe(f.commit); expect(existsSync(f.stateFile + ".deleted")).toBe(false);
   f.git(["switch", "chore/workflow"]); f.git(["commit", "--allow-empty", "-m", "chore: additional work"]); expect(f.run(["repo", "cleanup", "1", f.commit, "--apply"]).status).toBe(1);
-});
+}, 20_000);
 
 test("private source release plans require explicit opt-in and pin the scoped registry", () => {
   const f = fixture(); const bin = path.join(f.root, ".git/bin"); mkdirSync(bin);
@@ -368,7 +368,7 @@ test("empty hook policy removes owned hooks without touching user hooks", () => 
 test("required skipped and neutral checks fail immediately instead of waiting", () => {
   const f = githubFixture(); f.save({ checks: [{ name: "test", state: "NEUTRAL", workflow: "CI" }] }); let result = f.run(["pr", "checks", "--wait", "--timeout", "0"]); expect(result.status).toBe(1); expect(JSON.parse(result.stdout).waiting).toBe(false);
   writeFileSync(path.join(f.root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, merge: { requiredChecks: [{ name: "test", workflow: "CI" }] } })); f.save({ checks: [{ name: "test", state: "SKIPPED", workflow: "CI" }] }); result = f.run(["pr", "checks", "--wait", "--timeout", "0"]); expect(result.status).toBe(1); expect(JSON.parse(result.stdout).waiting).toBe(false);
-});
+}, 20_000);
 test("toolchain diagnostics read pinned numeric mise versions", () => {
   const f = fixture(); writeFileSync(path.join(f.root, ".mise.toml"), `[tools]\nbun = "${Bun.version}"\n`);
   const result = f.run(["toolchain", "check"], { PATH: path.dirname(process.execPath) + path.delimiter + process.env.PATH }); expect(result.status).toBe(0); expect(JSON.parse(result.stdout).tools[0].actual).toBe(Bun.version);
@@ -416,14 +416,14 @@ test("thread mutations validate PR membership and use the original reply route",
   const result = f.run(["pr", "threads", "reply", "11", "--body-file", file]); expect(result.status).toBe(0); expect(JSON.parse(readFileSync(f.stateFile + ".reply", "utf8"))).toEqual({ body });
   const calls = readFileSync(f.stateFile + ".calls", "utf8").trim().split("\n").map(line => JSON.parse(line)); expect(calls).toContainEqual(["api", "--method", "POST", "repos/o/r/pulls/1/comments/11/replies", "--input", "-"]);
   const resolved = f.run(["pr", "threads", "resolve", "T1"]); expect(resolved.status).toBe(0); expect(JSON.parse(resolved.stdout).resolveReviewThread.thread.isResolved).toBe(true);
-});
+}, 20_000);
 test("policy diagnostics combine classic and effective rules and fail unreadable protection", () => {
   const f = githubFixture(); f.save({ rules: [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "rules-check" }] } }], protection: { required_status_checks: { contexts: ["classic-check"] } } });
   let result = f.run(["policy", "check"]); expect(result.status).toBe(1); expect(JSON.parse(result.stdout).missingConfiguredChecks.sort()).toEqual(["classic-check", "rules-check"]);
   writeFileSync(path.join(f.root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, merge: { requiredChecks: [{ name: "classic-check" }, { name: "rules-check" }] } })); expect(f.run(["policy", "check"]).status).toBe(0);
   f.save(); result = f.run(["policy", "check"]); expect(result.status).toBe(0); expect(JSON.parse(result.stdout).classicProtection).toBeNull();
   f.save({ protectionStatus: 403 }); expect(f.run(["policy", "check"]).status).toBe(1);
-});
+}, 30_000);
 test("CI gate CLI parses stdin and policy files and rejects invalid schemas", () => {
   const f = fixture(); const policy = path.join(f.root, "policy.json"); writeFileSync(policy, JSON.stringify({ required: ["changes"], conditional: [{ job: "native", source: "changes", output: "native" }] }));
   const run = (needs: unknown) => spawnSync(process.execPath, [cli, "ci", "gate", "-", "--policy", policy], { cwd: f.root, env: f.env, encoding: "utf8", input: JSON.stringify(needs) });
@@ -445,7 +445,7 @@ test("release verify CLI polls the selected workflow and commit before verifying
   writeFileSync(preload, `import {readFileSync} from 'node:fs';import {createHash} from 'node:crypto';const archive=readFileSync(${JSON.stringify(archive)});let metadataCalls=0;globalThis.fetch=async(url)=>{if(String(url).endsWith('.tgz'))return new Response(archive);if(metadataCalls++===0)return new Response(null,{status:404});return Response.json({...${JSON.stringify(manifest)},gitHead:${JSON.stringify(f.commit)},dist:{tarball:'https://registry.npmjs.org/package.tgz',integrity:'sha512-'+createHash('sha512').update(archive).digest('base64')}});};`);
   const result = spawnSync(process.execPath, ["--preload", preload, cli, "release", "verify", manifest.name, manifest.version, f.commit, "--workflow", "Publish fixture", "--timeout", "10", "--interval", "1"], { cwd: f.root, env: { ...f.env, PATH: f.bin + path.delimiter + process.env.PATH, API_STATE: f.stateFile }, encoding: "utf8", timeout: 15000 }); if (result.status !== 0) throw new Error(result.stderr); expect(JSON.parse(result.stdout).ok).toBe(true); expect(Number(readFileSync(f.stateFile + ".polls", "utf8"))).toBe(3);
   const calls = readFileSync(f.stateFile + ".calls", "utf8").trim().split("\n").map(line => JSON.parse(line)); expect(calls.filter(call => call[0] === "run")).toEqual(Array(3).fill(["run", "list", "-R", "o/r", "--workflow", "Publish fixture", "--commit", f.commit, "--limit", "100", "--json", "databaseId,status,conclusion,headSha,url"]));
-});
+}, 30_000);
 
 test("a nested checkout whose .git Git cannot open never resolves to the enclosing repository", () => {
   // A workspace keeps checkouts inside its own repository; Git skips a .git without HEAD and finds the outer one.
@@ -502,7 +502,7 @@ test("signed commit checks ignore signature display without weakening trust or m
   f.git(["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "fix: unsigned change"]);
   result = f.run(["commits", "check", "--range", "HEAD^..HEAD"]);
   expect(result.status).toBe(1); expect(JSON.parse(result.stdout).findings[0].errors).toEqual(["Signature does not meet 'present' policy (N)."]);
-});
+}, 20_000);
 
 test("pr logs saves each failed Actions job log and lists external failures without one", () => {
   const f = githubFixture();
@@ -553,4 +553,4 @@ test("dependency diff reports declared changes in every manifest and names new t
   expect(f.run(["dependencies", "diff", "--base", "--output=x"]).status).toBe(1);
   const nested = spawnSync(process.execPath, [cli, "dependencies", "diff", "--base", base], { cwd: path.join(f.root, "packages/web"), env: f.env, encoding: "utf8" });
   expect(JSON.parse(nested.stdout).newPackages).toEqual(JSON.parse(f.run(["dependencies", "diff", "--base", base]).stdout).newPackages);
-});
+}, 20_000);

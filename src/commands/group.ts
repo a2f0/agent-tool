@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
 import { FORWARDED_SIGNALS, runCommand, type RunReceipt } from "./run";
@@ -11,17 +11,51 @@ export interface SourceState { headOid: string; treeOid: string; branch: string 
 export function sourceState(): SourceState {
   const hash = createHash("sha256");
   const add = (value: string | Buffer) => { hash.update(String(Buffer.byteLength(value))); hash.update(":" ); hash.update(value); };
-  const rawDiff = (args: string[]) => execFileSync("git", ["diff", "--no-ext-diff", "--no-textconv", "--binary", ...args, "--"], { env: gitEnvironment(), maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
-  add(rawDiff(["HEAD"])); add(rawDiff(["--cached"]));
-  for (const record of git(["status", "--porcelain=v2", "--ignore-submodules=none", "-z"]).split("\0")) {
+  fingerprintCheckout(add, process.cwd(), "", gitEnvironment(), ["HEAD"]);
+  return { headOid: head(), treeOid: git(["rev-parse", "HEAD^{tree}"]), branch: git(["branch", "--show-current"]) || null, fingerprint: hash.digest("hex") };
+}
+
+/** Where Git finds a repository; a hook may export them, and a nested repository's reads must find its own. */
+const GIT_LOCATION = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_PREFIX", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE", "GIT_SHALLOW_FILE", "GIT_REPLACE_REF_BASE"];
+
+/**
+ * Hash a checkout's tracked changes (against `diffBase`), its staged changes,
+ * and its nonignored untracked files, naming each file with `prefix`. Git lists
+ * an untracked nested repository as one `dir/` entry without descending into
+ * it; that repository is hashed the same way from its own root, after its HEAD
+ * (or `unborn`), so a commit, edit, or new file inside it changes the result.
+ */
+function fingerprintCheckout(add: (value: string | Buffer) => void, cwd: string, prefix: string, env: NodeJS.ProcessEnv, diffBase: string[]): void {
+  const read = (args: string[]) => execFileSync("git", args, { cwd, env, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+  const rawDiff = (args: string[]) => read(["diff", "--no-ext-diff", "--no-textconv", "--binary", ...args, "--"]);
+  add(rawDiff(diffBase)); add(rawDiff(["--cached"]));
+  for (const record of read(["status", "--porcelain=v2", "--ignore-submodules=none", "-z"]).toString("utf8").split("\0")) {
     if (/^[12] /.test(record)) { const submodule = record.split(" ")[2]!; assert(!submodule.startsWith("S") || submodule === "S...", "Dirty submodules cannot be fingerprinted; validate from a clean submodule state."); }
   }
-  for (const file of git(["ls-files", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean).sort()) {
-    add(file); const stat = lstatSync(file); add(String(stat.mode));
-    if (stat.isSymbolicLink()) add(readlinkSync(file));
-    else { assert(stat.isFile(), `Cannot fingerprint non-file '${file}'.`); add(readFileSync(file)); }
+  let nestedEnv: NodeJS.ProcessEnv | undefined;
+  for (const file of read(["ls-files", "--others", "--exclude-standard", "-z"]).toString("utf8").split("\0").filter(Boolean).sort()) {
+    const full = path.join(cwd, file);
+    add(prefix + file); const stat = lstatSync(full); add(String(stat.mode));
+    if (stat.isSymbolicLink()) add(readlinkSync(full));
+    else if (stat.isFile()) add(readFileSync(full));
+    else {
+      nestedEnv ??= Object.fromEntries(Object.entries(env).filter(([name]) => !GIT_LOCATION.includes(name)));
+      const headOid = stat.isDirectory() && file.endsWith("/") ? nestedHead(full, nestedEnv) : undefined;
+      assert(headOid !== undefined, `Cannot fingerprint non-file '${prefix + file}'.`);
+      add(headOid ?? "unborn");
+      // Without a commit there is no HEAD to diff against; the index stands in for it.
+      fingerprintCheckout(add, full, prefix + file, nestedEnv, headOid === null ? [] : ["HEAD"]);
+    }
   }
-  return { headOid: head(), treeOid: git(["rev-parse", "HEAD^{tree}"]), branch: git(["branch", "--show-current"]) || null, fingerprint: hash.digest("hex") };
+}
+
+/** The HEAD commit of the repository rooted at `directory` (null when unborn), or undefined when Git does not see one there. */
+function nestedHead(directory: string, env: NodeJS.ProcessEnv): string | null | undefined {
+  const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: directory, env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  // A `.git` Git cannot open makes it resolve the enclosing repository instead.
+  if (top.status !== 0 || realpathSync(top.stdout.trim()) !== realpathSync(directory)) return undefined;
+  const resolved = spawnSync("git", ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], { cwd: directory, env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  return resolved.status === 0 ? resolved.stdout.trim() : null;
 }
 
 function reportsDirectory(): string { return path.join(git(["rev-parse", "--path-format=absolute", "--git-common-dir"]), "agent-tool", "runs"); }

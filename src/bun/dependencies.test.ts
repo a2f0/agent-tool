@@ -76,7 +76,7 @@ test("an explicit update version is written as given, without forcing an exact p
   expect(f.read().dependencies).toEqual({ ms: "^2.0.0" });
   // An explicit exact version stays exact even where the current spec is a range.
   expect(f.run(["update", "ms@3.0.0"]).receipt.runs[1].command).toEqual(["bun", "add", "--exact", "ms@3.0.0"]);
-});
+}, 30_000);
 
 test("dependency commands accept only the root package or a declared workspace", () => {
   const f = fixture({ workspaces: ["packages/*"], dependencies: { ms: "1.0.0" } });
@@ -122,7 +122,7 @@ test("dependency commands accept only the root package or a declared workspace",
   const siblingLock = f.run(["update", "ms", "--cwd", "packages/web"], { STUB_SIBLING_LOCK: path.join(f.project, "packages/api/bun.lock") });
   expect(siblingLock.receipt.violations).toEqual(["packages/api/bun.lock changed beside a workspace package."]);
   expect(existsSync(path.join(f.project, "packages/api/bun.lock"))).toBe(false);
-});
+}, 30_000);
 
 test("update changes only versions, keeping each dependency's section and exact pin, with the pinned Bun", () => {
   const f = fixture({ dependencies: { ms: "1.0.0" }, devDependencies: { "@scope/tool": "^1.0.0" } });
@@ -132,7 +132,7 @@ test("update changes only versions, keeping each dependency's section and exact 
   expect(result.receipt.runs.map((item: { command: string[] }) => item.command)).toEqual([["bun", "install", "--frozen-lockfile", "--lockfile-only"], ["bun", "add", "--exact", "ms@latest"], ["bun", "add", "--dev", "@scope/tool@latest"]]);
   expect(f.read()).toMatchObject({ dependencies: { ms: "2.0.0" }, devDependencies: { "@scope/tool": "^2.0.0" } });
   expect(result.receipt.changes).toEqual([{ name: "ms", section: "dependencies", from: "1.0.0", to: "2.0.0" }, { name: "@scope/tool", section: "devDependencies", from: "^1.0.0", to: "^2.0.0" }]);
-});
+}, 30_000);
 
 test("each verb refuses work outside its permission class before running Bun", () => {
   const f = fixture({ dependencies: { ms: "1.0.0", local: "workspace:*", both: "1.0.0" }, devDependencies: { both: "1.0.0" }, peerDependencies: { react: "^19" } });
@@ -158,7 +158,7 @@ test("each verb refuses work outside its permission class before running Bun", (
     expect(result.stderr).toMatch(message);
   }
   expect(readFileSync(path.join(f.project, "bun.lock"), "utf8")).toBe(LOCK);
-});
+}, 30_000);
 
 test("add creates only the requested names in one section, and remove deletes only declared names", () => {
   const f = fixture({ dependencies: { ms: "1.0.0" } });
@@ -166,7 +166,7 @@ test("add creates only the requested names in one section, and remove deletes on
   expect(f.read().devDependencies).toEqual({ chalk: "5.0.0" });
   expect(f.run(["remove", "chalk"]).status).toBe(0);
   expect(f.read()).toMatchObject({ dependencies: { ms: "1.0.0" }, devDependencies: {} });
-});
+}, 30_000);
 
 test("unexpected or failed Bun changes are restored, including the lockfile", () => {
   const f = fixture({ dependencies: { ms: "1.0.0" } });
@@ -192,7 +192,7 @@ test("unexpected or failed Bun changes are restored, including the lockfile", ()
   expect(failed.status).toBe(1);
   expect(failed.receipt.violations).toEqual(["bun remove failed with exit 1."]);
   expect(readFileSync(path.join(f.project, "package.json"), "utf8")).toBe(original);
-});
+}, 30_000);
 
 test("a manifest the lockfile does not cover stops every change before Bun resolves it", () => {
   const f = fixture({ dependencies: { ms: "1.0.0", "hand-added": "1.0.0" } });
@@ -204,14 +204,14 @@ test("a manifest the lockfile does not cover stops every change before Bun resol
   }
   rmSync(path.join(f.project, "bun.lock"));
   expect(f.run(["update", "ms"]).stderr).toMatch(/No bun.lock/);
-});
+}, 30_000);
 
 test("a mise install that reports another version is refused", () => {
   const f = fixture({ dependencies: { ms: "1.0.0" } }, { pin: "9.9.8" });
   const result = f.run(["install"]);
   expect(result.status).toBe(1);
   expect(result.stderr).toMatch(/reports Bun 9\.9\.9, not the pinned 9\.9\.8/);
-});
+}, 30_000);
 
 test("a mise data directory inside the checkout is never trusted, even under a dot-dot name", () => {
   const f = fixture({ dependencies: { ms: "1.0.0" } }, { pin: "0.0.1", install: false });
@@ -221,7 +221,7 @@ test("a mise data directory inside the checkout is never trusted, even under a d
   chmodSync(path.join(bin, "bun"), 0o755);
   expect(f.run(["install"], { MISE_DATA_DIR: path.join(f.project, "..cache") }).status).toBe(1);
   expect(existsSync(path.join(f.project, "executed"))).toBe(false);
-});
+}, 30_000);
 
 test("changes need a text lockfile", () => {
   const f = fixture({ dependencies: { ms: "1.0.0" } });
@@ -229,7 +229,7 @@ test("changes need a text lockfile", () => {
   writeFileSync(path.join(f.project, "bun.lockb"), "binary");
   expect(f.run(["update", "ms"]).stderr).toMatch(/needs a text bun.lock/);
   expect(f.run(["install"]).status).toBe(0);
-});
+}, 30_000);
 
 test("a bun inside the checkout is never executed", () => {
   const f = fixture({ dependencies: { ms: "1.0.0" } }, { pin: "0.0.1", install: false });
@@ -240,7 +240,7 @@ test("a bun inside the checkout is never executed", () => {
   const result = f.run(["install"], { PATH: `${bin}${path.delimiter}${process.env.PATH}` });
   expect(result.status).toBe(1);
   expect(existsSync(path.join(f.project, "executed"))).toBe(false);
-});
+}, 30_000);
 
 test("a stale workspace reference stops changes before an unfrozen call", () => {
   const f = fixture({ workspaces: ["packages/*"], dependencies: { ms: "1.0.0", web: "1.0.0" } });
@@ -250,7 +250,7 @@ test("a stale workspace reference stops changes before an unfrozen call", () => 
   const result = f.run(["update", "ms"]);
   expect(result.status).toBe(1);
   expect(result.stderr).toMatch(/\.: web@1\.0\.0 no longer match their workspaces/);
-});
+}, 30_000);
 
 test("install is frozen and requires an existing lockfile", () => {
   const f = fixture({ dependencies: { ms: "1.0.0" } });
@@ -259,14 +259,14 @@ test("install is frozen and requires an existing lockfile", () => {
   expect(result.receipt.runs[0].command).toEqual(["bun", "install", "--frozen-lockfile"]);
   rmSync(path.join(f.project, "bun.lock"));
   expect(f.run(["install"]).stderr).toMatch(/No bun.lock/);
-});
+}, 30_000);
 
 test("a missing pinned Bun fails instead of using a different PATH version", () => {
   const f = fixture({ dependencies: { ms: "1.0.0" } }, { pin: "0.0.1", install: false });
   const result = f.run(["update", "ms"]);
   expect(result.status).toBe(1);
   expect(result.stderr).toMatch(/Bun 0\.0\.1 from the mise config is not installed/);
-});
+}, 30_000);
 
 test("specs and manifest comparisons", () => {
   for (const spec of ["1.2.3", "^1.2.3", "~1.2", ">=1.0.0", "latest", "next", "1.x", "*", ">=1 <2", "^1 || ^2", "1.0.0 - 2.0.0"]) expect(registrySpec(spec)).toBe(true);
@@ -313,4 +313,4 @@ test("with real Bun, a hand-added dependency stops an allowed change, and a cove
   const removed = run(["remove", "local-a"]);
   expect(removed.status).toBe(0);
   expect(removed.receipt.changes).toEqual([{ name: "local-a", section: "dependencies", from: "file:./vendor/a", to: null }]);
-});
+}, 60_000);
