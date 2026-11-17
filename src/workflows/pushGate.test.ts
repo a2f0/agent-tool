@@ -511,6 +511,21 @@ test("the hooks, skills, and permissions guards use the shared drift checks", ()
     expect.objectContaining({ name: "skills", ok: false, details: { harnesses: ["claude", "opencode"], changes: [{ path: ".agent-tool-skills.json", status: "outdated", recordedVersion: "0.0.1", currentVersion: version }] } }),
     expect.objectContaining({ name: "permissions", ok: false, details: { harness: "codex", changes: [{ path: ".agent-tool-permissions.json", status: "outdated", recordedVersion: null, currentVersion: version }] } }),
   ]);
+  // A manifest that records no harness still has its version checked.
+  writeFileSync(path.join(f.root, ".agent-tool-skills.json"), JSON.stringify({ schemaVersion: 1, agentToolVersion: "0.0.1", files: {} }));
+  result = f.gate([["refs/heads/main", installed, "refs/heads/main", zero]]);
+  expect(JSON.parse(result.stdout).guards[1]).toEqual(expect.objectContaining({ name: "skills", ok: false, details: { harnesses: [], changes: [{ path: ".agent-tool-skills.json", status: "outdated", recordedVersion: "0.0.1", currentVersion: version }] } }));
+  // Unreadable manifests fail their own guards, and every other guard still runs and reports.
+  writeFileSync(path.join(f.root, ".agent-tool-skills.json"), JSON.stringify({ schemaVersion: 1, agentToolVersion: 1, files: {} }));
+  writeFileSync(path.join(f.root, ".agent-tool-permissions.json"), JSON.stringify({ schemaVersion: 1, agentToolVersion: "0 1" }));
+  result = f.gate([["refs/heads/main", installed, "refs/heads/main", zero]]);
+  expect(result.status).toBe(1);
+  const unreadable = JSON.parse(result.stdout).guards;
+  expect(unreadable.map((item: { name: string }) => item.name)).toEqual(["hooks", "skills", "permissions", "branch", "ranges", "commits", "binaries"]);
+  expect(unreadable.slice(1, 3)).toEqual([
+    expect.objectContaining({ name: "skills", ok: false, error: "Invalid managed skill manifest." }),
+    expect.objectContaining({ name: "permissions", ok: false, error: "Invalid managed permissions manifest." }),
+  ]);
   f.git(["checkout", "--", ".agent-tool-skills.json", ".agent-tool-permissions.json"]);
   const skill = path.join(f.root, ".claude/skills/ship-pr/SKILL.md");
   writeFileSync(skill, `${readFileSync(skill, "utf8")}edited\n`);

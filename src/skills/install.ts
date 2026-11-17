@@ -5,7 +5,7 @@ import { harnessNamed } from "../harnesses";
 import { AGENT_TOOL_VERSION, manifestVersionCheck, validVersion, type CheckStatus } from "../system/manifestVersion";
 import { BUNDLED_SKILL_REFERENCES, BUNDLED_SKILLS } from "./bundled";
 
-const MANIFEST = ".agent-tool-skills.json";
+export const SKILLS_MANIFEST = ".agent-tool-skills.json";
 const hash = (source: string) => createHash("sha256").update(source).digest("hex");
 
 /** Refuse symlinks at every existing component, including dangling links. */
@@ -49,7 +49,7 @@ export function bundledSkillFiles(): [name: string, files: [relative: string, so
 interface SkillManifest { exists: boolean; agentToolVersion?: string; files: Record<string, string> }
 
 function readManifest(root: string): SkillManifest {
-  const file = safeDestination(root, MANIFEST);
+  const file = safeDestination(root, SKILLS_MANIFEST);
   if (!existsSync(file)) return { exists: false, files: {} };
   const value = JSON.parse(readFileSync(file, "utf8"));
   if (value.schemaVersion !== 1 || !value.files || typeof value.files !== "object" || Array.isArray(value.files) || Object.values(value.files).some(item => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item))) throw new Error("Invalid managed skill manifest.");
@@ -64,7 +64,7 @@ export function installSkills(rootDir: string, target: string, apply = false): S
   // discovers both default directories too; avoid additional duplicate bundles.
   const directories = target === "all" ? [".agents/skills", ".claude/skills"]
     : [target === "hermes" ? ".agents/skills" : harnessNamed(target).skillDirectory];
-  const manifestFile = safeDestination(root, MANIFEST);
+  const manifestFile = safeDestination(root, SKILLS_MANIFEST);
   const previous = readManifest(root).files;
   const pending: { file: string; relative: string; source: string; change: SkillChange }[] = [];
   for (const directory of directories) {
@@ -87,7 +87,7 @@ export function installSkills(rootDir: string, target: string, apply = false): S
   // Recording the version makes every upgrade change the manifest, so a committed sync is visible.
   const manifest = `${JSON.stringify({ schemaVersion: 1, agentToolVersion: AGENT_TOOL_VERSION, files }, null, 2)}\n`;
   const recorded = existsSync(manifestFile) ? readFileSync(manifestFile, "utf8") : undefined;
-  const manifestChange: SkillChange = { path: MANIFEST, status: recorded === manifest ? "unchanged" : recorded === undefined ? "create" : "update" };
+  const manifestChange: SkillChange = { path: SKILLS_MANIFEST, status: recorded === manifest ? "unchanged" : recorded === undefined ? "create" : "update" };
   // Preflight every destination before writing any files.
   if (apply) {
     for (const item of pending) if (item.change.status !== "unchanged") atomicWrite(item.file, item.source);
@@ -105,7 +105,7 @@ const DIRECTORY_HARNESSES: Record<string, string> = { ".claude/skills": "claude"
  */
 export function installedSkillHarnesses(rootDir: string): string[] | null {
   const root = realpathSync(rootDir);
-  if (!existsSync(safeDestination(root, MANIFEST))) return null;
+  if (!existsSync(safeDestination(root, SKILLS_MANIFEST))) return null;
   const directories = new Set(Object.keys(readManifest(root).files).map(file => file.split("/", 2).join("/")));
   return [...new Set([...directories].map(directory => DIRECTORY_HARNESSES[directory] ?? "all"))].sort();
 }
@@ -113,11 +113,17 @@ export function installedSkillHarnesses(rootDir: string): string[] | null {
 /** One entry per managed file, then the manifest's own entry with its recorded and running versions. */
 export interface SkillCheck { path: string; status: CheckStatus; recordedVersion?: string | null; currentVersion?: string }
 
+/** The manifest's own check entry: whether it records the running agent-tool version. */
+export function checkSkillsManifest(rootDir: string): SkillCheck {
+  const manifest = readManifest(realpathSync(rootDir));
+  return manifestVersionCheck(SKILLS_MANIFEST, manifest.exists, manifest.agentToolVersion);
+}
+
 /** Read-only CI gate: require current bundled bytes, their ownership records, and the installing version. */
 export function checkSkills(rootDir: string, target: string): SkillCheck[] {
   const root = realpathSync(rootDir);
-  const changes = installSkills(root, target).filter(change => change.path !== MANIFEST);
-  const manifest = readManifest(root), previous = manifest.files;
+  const changes = installSkills(root, target).filter(change => change.path !== SKILLS_MANIFEST);
+  const previous = readManifest(root).files;
   const files: SkillCheck[] = changes.map(change => {
     if (change.status === "create") return { path: change.path, status: "missing" };
     if (change.status === "update") return { path: change.path, status: "outdated" };
@@ -125,5 +131,5 @@ export function checkSkills(rootDir: string, target: string): SkillCheck[] {
     if (previous[change.path] !== hash(readFileSync(safeDestination(root, change.path), "utf8"))) return { path: change.path, status: "outdated" };
     return { path: change.path, status: "unchanged" };
   });
-  return [...files, manifestVersionCheck(MANIFEST, manifest.exists, manifest.agentToolVersion)];
+  return [...files, checkSkillsManifest(root)];
 }
