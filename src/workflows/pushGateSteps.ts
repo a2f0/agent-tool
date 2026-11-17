@@ -508,6 +508,8 @@ const PYTHON_TOOLS = {
     "-P", "--upgrade-package", "--resolution", "--prerelease", "--fork-strategy", "--exclude-newer", "--exclude-newer-package", "--no-sources-package",
     "--reinstall-package", "--link-mode", "-C", "--config-setting", "--config-settings-package", "--no-build-isolation-package", "--no-build-package",
     "--no-binary-package", "--refresh-package",
+    // Hidden from `--help`, but they still take a value.
+    "--python-preference", "--preview-features", "--python-fetch", "--max-recursion-depth",
   ]),
   poetry: tool(["-C", "--directory", "-P", "--project"]),
   // pdm takes `-p`, `--project`, and `--venv` only after its subcommand (`pdm -p api run` fails), but reading them before it too means a misplaced one never hides the command.

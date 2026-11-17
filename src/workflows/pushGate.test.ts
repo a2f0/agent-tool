@@ -200,7 +200,7 @@ test("Python runners, environment managers, and wrappers are followed to the com
     // Without a command, `uv run` still syncs before listing what it could run.
     [["uv", "run"], ["install"]], [["uv", "run", "--no-sync"], []],
     [["uv", "run", "--no-sync", "--with", "pytest-cov", "--", "pytest", "--cov"], ["test"]], [["uv", "run", "--no-sync", "-m", "pytest"], ["test"]], [["uv", "run", "--no-sync", "--module", "build"], ["build"]],
-    [["uv", "--directory", "build", "run", "--no-sync", "--with", "test", "mypy"], []], [["uv", "--directory", "build", "run", "--no-sync", "npm", "test"], ["test"]],
+    [["uv", "--directory", "build", "run", "--no-sync", "--with", "test", "mypy"], []], [["uv", "--directory", "build", "run", "--no-sync", "npm", "test"], ["test"]], [["uv", "run", "--no-sync", "--python-preference", "only-managed", "pytest"], ["test"]], [["uvx", "--preview-features", "python-upgrade", "pytest"], ["test"]],
     [["UV_NO_SYNC=1", "uv", "run", "pytest"], ["install", "test"]], [["env", "UV_NO_SYNC=true", "uv", "run", "mypy"], ["install"]],
     [["uvx", "pytest"], ["test"]], [["uv", "tool", "--no-cache", "run", "pytest"], ["test"]], [["uv", "tool", "--directory", "build", "run", "npm", "test"], ["test"]], [["uvx", "--from", "pytest", "py.test"], ["test"]], [["uv", "tool", "run", "--with", "build", "tox"], ["test"]], [["uvx", "ruff@0.6", "check"], []], [["uvx", "pytest==8.3", "-q"], ["test"]], [["uvx", "tox[uv]>=4"], ["test"]], [["pipx", "run", "pytest~=8.0"], ["test"]], [["uvx", "ruff[all]==0.6", "check"], []],
     [["poetry", "run", "pytest"], ["test"]], [["poetry", "-C", "build", "run", "mypy"], []], [["poetry", "--directory=build", "run", "npm", "test"], ["test"]],
