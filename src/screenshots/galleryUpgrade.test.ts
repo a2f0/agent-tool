@@ -23,4 +23,7 @@ test("manifestData set before the elements are defined renders once they are", a
   }
   expect(gallery.querySelector(".shots-gallery")).not.toBeNull();
   expect(carousel.querySelector(".shots-carousel")).not.toBeNull();
+  // The upgraded carousel shows each phone screen once, with no loop copies.
+  expect([...carousel.querySelectorAll(".shots-carousel-slide figcaption")].map(caption => caption.textContent)).toEqual(["Home", "Notes", "Org Manager"]);
+  expect(carousel.querySelectorAll("[data-clone]").length).toBe(0);
 });

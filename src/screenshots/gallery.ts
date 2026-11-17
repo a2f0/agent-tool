@@ -60,17 +60,12 @@ export function nearestSlide(scrollLeft: number, offset: number, pitch: number, 
 }
 
 /**
- * A looping carousel renders its `count` slides `2 * copies + 1` times. Any
- * slide index maps to the same slide in the middle copy, where the track jumps
- * silently once scrolling settles, so it wraps in both directions.
+ * Whether a horizontal scroller can still move back toward its start or
+ * forward toward its end. The 1px tolerance absorbs fractional scroll
+ * positions, so a scroller resting at an edge reads as at that edge.
  */
-export function loopSlide(index: number, count: number, copies: number): number {
-  return copies * count + wrapIndex(index - copies * count, count);
-}
-
-/** How many copies each side needs so a full viewport of clones is always ready. */
-export function loopCopies(viewportWidth: number, copyWidth: number): number {
-  return copyWidth > 0 ? Math.max(1, Math.ceil(viewportWidth / copyWidth)) : 1;
+function scrollRoom(scrollLeft: number, scrollWidth: number, clientWidth: number): { back: boolean; forward: boolean } {
+  return { back: scrollLeft > 1, forward: scrollLeft < scrollWidth - clientWidth - 1 };
 }
 
 /** Wheel travel, in CSS pixels on a gesture's dominant axis, that steps one screen. */
@@ -183,7 +178,7 @@ export interface ScreenshotGalleryElement extends HTMLElement {
 }
 export interface ScreenshotCarouselElement extends HTMLElement {
   manifestData: ScreenshotManifest | null;
-  /** Scrolls `delta` pages of slides, wrapping seamlessly. */
+  /** Scrolls `delta` pages of slides, stopping at the first and last slide. */
   step(delta: number): void;
 }
 
@@ -733,10 +728,8 @@ function defineCarousel(): CustomElementConstructor {
     #data: ScreenshotManifest | null = null;
     #abort: AbortController | null = null;
     #track: HTMLDivElement | null = null;
-    #count = 0;
-    #copies = 1;
     #slides: HTMLElement[] = [];
-    #manifest: ScreenshotManifest | null = null;
+    #steps: { previous: HTMLButtonElement; next: HTMLButtonElement } | null = null;
 
     constructor() {
       super();
@@ -785,69 +778,65 @@ function defineCarousel(): CustomElementConstructor {
     }
 
     #render(manifest: ScreenshotManifest): void {
-      this.#manifest = manifest;
       const slides = this.#slidesFor(manifest);
       const signal = this.#abort!.signal;
-      this.#count = slides.length;
+      this.#track = null;
+      this.#slides = [];
+      this.#steps = null;
       if (!slides.length) { this.replaceChildren(); this.hidden = true; this.dataset["state"] = "empty"; return; }
       this.hidden = false;
       this.dataset["state"] = "ready";
       const project = slides[0]!.light.project;
       const frame = projectFrame(manifest, project);
-      const loop = slides.length > 1;
-      const track = element("div", { class: "shots-carousel-track", tabindex: "0" }, [this.#list(manifest, slides, loop ? this.#copies : 0)]);
+      const list = this.#list(manifest, slides);
+      const track = element("div", { class: "shots-carousel-track", tabindex: "0" }, [list]);
       this.#track = track;
       const root = element("div", { class: "shots-carousel", role: "region", "aria-roledescription": "carousel", "aria-label": this.getAttribute("label") ?? "Screenshots", "data-frame": frame }, [track]);
       const controls = element("div", { class: "shots-carousel-controls" });
       const viewAll = this.getAttribute("view-all-href");
       if (viewAll) controls.append(element("a", { class: "shots-carousel-view-all", href: viewAll, text: this.getAttribute("view-all-label") || "View all screenshots" }));
-      if (loop) {
+      if (slides.length > 1) {
         const previous = element("button", { type: "button", class: "shots-carousel-step", "data-step": "-1", "aria-label": "Previous screens" }, [icon("prev")]);
         const next = element("button", { type: "button", class: "shots-carousel-step", "data-step": "1", "aria-label": "Next screens" }, [icon("next")]);
         previous.addEventListener("click", () => this.step(-1), { signal });
         next.addEventListener("click", () => this.step(1), { signal });
         controls.append(previous, next);
-        onScrollSettle(track, () => this.#normalize(), signal);
+        this.#steps = { previous, next };
+        // Touch, trackpad, keyboard, and the buttons all scroll the track; a resize moves its end.
+        track.addEventListener("scroll", () => this.#updateSteps(), { passive: true, signal });
         if (typeof ResizeObserver === "function") {
-          const observer = new ResizeObserver(() => this.#resize());
+          const observer = new ResizeObserver(() => this.#updateSteps());
           observer.observe(track);
+          observer.observe(list);
           signal.addEventListener("abort", () => observer.disconnect());
         }
       }
       if (controls.childElementCount) root.append(controls);
       this.replaceChildren(root);
-      if (loop) this.#jump(this.#copies * slides.length);
+      this.#updateSteps();
     }
 
-    /** The slide list: the originals between `copies` loop copies on each side. */
-    #list(manifest: ScreenshotManifest, slides: { name: string; light: ScreenshotEntry; dark: ScreenshotEntry | undefined }[], copies: number): HTMLUListElement {
+    /** One list item per slide, each shown once. */
+    #list(manifest: ScreenshotManifest, slides: { name: string; light: ScreenshotEntry; dark: ScreenshotEntry | undefined }[]): HTMLUListElement {
       const project = slides[0]!.light.project;
       const linkBase = this.getAttribute("link-base");
-      const list = element("ul", { class: "shots-carousel-list", role: "list" });
-      this.#slides = [];
-      for (let copy = -copies; copy <= copies; copy += 1) {
-        slides.forEach((slide, index) => {
-          const clone = copy !== 0;
-          const screen = screenInfo(manifest, slide.name);
-          const picture = element("picture", {}, slide.dark ? [element("source", { media: "(prefers-color-scheme: dark)", srcset: slide.dark.src, width: slide.dark.width, height: slide.dark.height })] : []);
-          picture.append(element("img", {
-            src: slide.light.src, alt: clone ? "" : screen.alt ?? `${screen.label}, ${projectInfo(manifest, project).label.toLowerCase()} screenshot`,
-            width: slide.light.width, height: slide.light.height, decoding: "async",
-            // The first original rests at the start edge on load: fetch it first, and the rest as they near the viewport.
-            loading: !clone && index === 0 ? "eager" : "lazy", fetchpriority: !clone && index === 0 ? "high" : undefined,
-          }));
-          const device = linkBase
-            ? element("a", { class: "shots-device", href: screenshotPath(linkBase, project, slide.name), tabindex: clone ? "-1" : undefined }, [picture])
-            : element("div", { class: "shots-device" }, [picture]);
-          // Copies stay clickable where they show, but out of the accessibility tree and tab order.
-          const item = element("li", { class: "shots-carousel-slide", "data-index": index, "aria-hidden": clone ? "true" : undefined, "data-clone": clone || undefined }, [
-            element("figure", {}, [device, element("figcaption", { text: screen.label })]),
-          ]);
-          this.#slides.push(item);
-          list.append(item);
-        });
-      }
-      return list;
+      this.#slides = slides.map((slide, index) => {
+        const screen = screenInfo(manifest, slide.name);
+        const picture = element("picture", {}, slide.dark ? [element("source", { media: "(prefers-color-scheme: dark)", srcset: slide.dark.src, width: slide.dark.width, height: slide.dark.height })] : []);
+        picture.append(element("img", {
+          src: slide.light.src, alt: screen.alt ?? `${screen.label}, ${projectInfo(manifest, project).label.toLowerCase()} screenshot`,
+          width: slide.light.width, height: slide.light.height, decoding: "async",
+          // The first slide rests at the start edge on load: fetch it first, and the rest as they near the viewport.
+          loading: index === 0 ? "eager" : "lazy", fetchpriority: index === 0 ? "high" : undefined,
+        }));
+        const device = linkBase
+          ? element("a", { class: "shots-device", href: screenshotPath(linkBase, project, slide.name) }, [picture])
+          : element("div", { class: "shots-device" }, [picture]);
+        return element("li", { class: "shots-carousel-slide", "data-index": index }, [
+          element("figure", {}, [device, element("figcaption", { text: screen.label })]),
+        ]);
+      });
+      return element("ul", { class: "shots-carousel-list", role: "list" }, this.#slides);
     }
 
     #pitch(): number {
@@ -859,49 +848,34 @@ function defineCarousel(): CustomElementConstructor {
       const track = this.#track!, padding = parseFloat(getComputedStyle(track).scrollPaddingLeft);
       return this.#slides[0]!.offsetLeft - (Number.isFinite(padding) ? padding : 0);
     }
-    #current(): number { return nearestSlide(this.#track!.scrollLeft, this.#offset(), this.#pitch(), this.#slides.length); }
-    #jump(slide: number): void {
-      const track = this.#track;
-      if (!track || !this.#pitch()) return;
-      track.scrollTo({ left: this.#offset() + slide * this.#pitch(), behavior: "instant" });
-    }
 
-    /** Silently moves a settled track back to the same slide in the middle copy. */
-    #normalize(): void {
-      const track = this.#track, pitch = this.#pitch();
-      if (!track || !pitch) return;
-      const current = this.#current(), target = loopSlide(current, this.#count, this.#copies);
-      // Only a track resting on a slide jumps; a snap still in progress settles again.
-      if (Math.abs(track.scrollLeft - (this.#offset() + current * pitch)) > 2) return;
-      if (target !== current) this.#jump(target);
-    }
-
-    #resize(): void {
-      const track = this.#track, pitch = this.#pitch();
-      if (!track || !pitch || !this.#manifest) return;
-      const copies = loopCopies(track.clientWidth, pitch * this.#count);
-      if (copies > this.#copies) {
-        const logical = wrapIndex(this.#current(), this.#count), manifest = this.#manifest, signal = this.#abort?.signal;
-        this.#copies = copies;
-        // Outside the observer callback, so the new slides do not resize the track within it.
-        // Only the slides change: the controls and the view-all link stay the same nodes, so a
-        // click or focus on them survives a resize.
-        requestAnimationFrame(() => {
-          if (signal?.aborted || this.#track !== track) return;
-          track.replaceChildren(this.#list(manifest, this.#slidesFor(manifest), copies));
-          this.#jump(copies * this.#count + logical);
-        });
-      } else this.#normalize();
+    /**
+     * Marks the step button for a direction the track cannot move in with
+     * `aria-disabled`, read from the scroll position each time. Unlike
+     * `disabled`, it keeps the button focusable, so a keyboard user who steps
+     * onto the last page keeps focus there; a click on it does nothing.
+     */
+    #updateSteps(): void {
+      const track = this.#track, steps = this.#steps;
+      if (!track || !steps) return;
+      const room = scrollRoom(track.scrollLeft, track.scrollWidth, track.clientWidth);
+      for (const [button, open] of [[steps.previous, room.back], [steps.next, room.forward]] as const) {
+        if (open) button.removeAttribute("aria-disabled");
+        else if (button.getAttribute("aria-disabled") !== "true") button.setAttribute("aria-disabled", "true");
+      }
     }
 
     step(delta: number): void {
       const track = this.#track, pitch = this.#pitch();
-      if (!track || !pitch) return;
-      this.#normalize();
-      // A page of every slide would show the same slides again, so then step one.
+      if (!track || !pitch || !delta) return;
+      const room = scrollRoom(track.scrollLeft, track.scrollWidth, track.clientWidth);
+      if (!(delta < 0 ? room.back : room.forward)) return;
       const visible = Math.max(1, Math.floor((track.clientWidth + 1) / pitch));
-      const fit = visible >= this.#count ? 1 : visible;
-      track.scrollTo({ left: this.#offset() + (this.#current() + delta * fit) * pitch, behavior: scrollBehavior() });
+      const offset = this.#offset(), position = (track.scrollLeft - offset) / pitch;
+      // The last page can end mid-slide; stepping back from it counts from the first slide fully in view.
+      const from = delta < 0 ? Math.ceil(position - 0.1) : Math.round(position);
+      const end = Math.max(0, track.scrollWidth - track.clientWidth);
+      track.scrollTo({ left: Math.min(end, Math.max(0, offset + (from + delta * visible) * pitch)), behavior: scrollBehavior() });
     }
   };
 }
