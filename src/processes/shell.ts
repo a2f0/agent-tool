@@ -13,7 +13,7 @@ export interface Redirect { operator: string; target: Word }
 export type Command =
   | { kind: "simple"; words: Word[]; assignments: number; redirects: Redirect[] }
   | { kind: "loop"; keyword: "until" | "while"; condition: List; body: List; redirects: Redirect[] }
-  | { kind: "compound"; lists: List[]; redirects: Redirect[] };
+  | { kind: "compound"; lists: List[]; redirects: Redirect[]; defines?: string };
 export interface Pipeline { negated: boolean; commands: Command[] }
 export interface AndOr { pipelines: Pipeline[]; operators: ("&&" | "||")[] }
 export type List = AndOr[];
@@ -318,7 +318,7 @@ class Parser {
       // A function definition: its body runs only when called.
       this.at += 2;
       this.newlines();
-      return { kind: "compound", lists: [[{ pipelines: [{ negated: false, commands: [this.command()] }], operators: [] }]], redirects: [] };
+      return { kind: "compound", lists: [[{ pipelines: [{ negated: false, commands: [this.command()] }], operators: [] }]], redirects: [], defines: words[0]!.text };
     }
     if (words.length === 0 && redirects.length === 0) throw new Unsupported("empty command");
     let assignments = 0;
@@ -376,6 +376,10 @@ export interface Analysis {
   loops: WaitLoop[];
   /** Every simple command in the script, loops and `eval`ed text included. */
   commands: CommandInfo[];
+  /** Names the script defines as functions or aliases, which then run in place of the command. */
+  defines: Set<string>;
+  /** Files the script sources by a literal path, whose definitions apply too. */
+  sourced: string[];
 }
 
 type Simple = Extract<Command, { kind: "simple" }>;
@@ -466,15 +470,31 @@ function describe(command: Simple): CommandInfo {
  * does not parse.
  */
 export function analyzeScript(text: string, shell = "sh"): Analysis | undefined {
-  const analysis: Analysis = { loops: [], commands: [] };
+  const analysis: Analysis = { loops: [], commands: [], defines: new Set(), sourced: [] };
   return collect(text, shell, analysis, 0) ? analysis : undefined;
+}
+
+// Stands for `eval`ed text that could not be read: it may run anything.
+const OPAQUE: CommandInfo = { text: "eval", args: [], expands: true, substitutes: true };
+
+/** What a simple command defines or sources: aliases, autoloaded functions, and sourced files. */
+function definitions(command: CommandInfo, analysis: Analysis): void {
+  const operands = command.args.filter(arg => !arg.startsWith("-") && !arg.startsWith("+"));
+  if (command.program === "alias") for (const arg of operands) { const name = /^([^=]+)=/.exec(arg)?.[1]; if (name) analysis.defines.add(name); }
+  if (command.program === "autoload" || command.program === "functions") for (const arg of operands) analysis.defines.add(arg.replace(/=.*$/, ""));
+  if ((command.program === "source" || command.program === ".") && operands[0] && !command.expands) analysis.sourced.push(operands[0]);
 }
 
 function collect(text: string, shell: string, analysis: Analysis, depth: number): boolean {
   const list = parseScript(text, shell);
   if (!list) return false;
   const index = new Map<Simple, number>();
-  for (const command of simpleCommands(list)) { index.set(command, analysis.commands.length); analysis.commands.push(describe(command)); }
+  for (const command of simpleCommands(list)) {
+    index.set(command, analysis.commands.length);
+    const info = describe(command);
+    analysis.commands.push(info);
+    definitions(info, analysis);
+  }
   const visit = (current: List) => {
     for (const command of commandsOf(current)) {
       if (command.kind === "loop") {
@@ -491,10 +511,12 @@ function collect(text: string, shell: string, analysis: Analysis, depth: number)
         }
         visit(command.condition);
         visit(command.body);
-      } else if (command.kind === "compound") command.lists.forEach(visit);
-      else {
-        const nested = depth < 3 ? evaluated(command) : undefined;
-        if (nested !== undefined) collect(nested, shell, analysis, depth + 1);
+      } else if (command.kind === "compound") {
+        if (command.defines) analysis.defines.add(command.defines);
+        command.lists.forEach(visit);
+      } else {
+        const nested = evaluated(command);
+        if (nested !== undefined && !(depth < 3 && collect(nested, shell, analysis, depth + 1))) analysis.commands.push(OPAQUE);
       }
     }
   };

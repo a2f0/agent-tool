@@ -5,11 +5,12 @@
 // waiting: reported, never failed on, never stopped.
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { plainText } from "../commands/output";
 import { analyzeScript, exclusive, isShell, shellArgvScript, shellScript, wordsInOrder, type Analysis, type WaitLoop } from "./shell";
-import { ancestors, processTable, type ProcessRow } from "./table";
+import { ancestors, argvOf, processTable, type ProcessRow } from "./table";
 
 export type LoopState =
   | { status: "waiting" }
@@ -165,7 +166,8 @@ function verdict(pid: number, loop: WaitLoop, stuck: Set<number>, facts: LoopFac
  * settled. Since no loop in the set can be the first to finish, none ever does.
  */
 export function stuckLoops(loops: Map<number, WaitLoop>, facts: LoopFacts): Map<number, string> {
-  const stuck = new Set([...loops].filter(([, loop]) => loop.condition).map(([pid]) => pid));
+  // Every check must be one teardown can read: an unknown one could exit the loop some other way.
+  const stuck = new Set([...loops].filter(([, loop]) => loop.condition?.atoms.every(atom => atom.check.kind !== "other")).map(([pid]) => pid));
   for (let changed = true; changed;) {
     changed = false;
     for (const pid of [...stuck]) {
@@ -198,46 +200,104 @@ function pgrepMatches(pattern: string): Set<number> | undefined {
 const UNPARSED_LOOP = ["until|while", "do", "sleep", "done"];
 const TIMEOUTS = new Set(["timeout", "gtimeout"]);
 const program = (row: ProcessRow | undefined) => path.basename(row?.command.split(" ")[0] ?? "");
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/**
- * A shell's script. On Linux it comes from the exact argv, leaving out positional arguments; `ps`
- * joins them onto the script elsewhere, so there a crafted argument reads as script text, and only
- * `exclusive` stands between it and a loop the shell is not running.
- */
-function scriptOf(row: ProcessRow): { shell: string; script: string } | undefined {
-  if (process.platform === "linux") {
-    try {
-      const bytes = readFileSync(`/proc/${row.pid}/cmdline`);
-      const argv = bytes.toString("utf8").split("\0");
-      if (argv.at(-1) === "") argv.pop();
-      // Still the same process when its argv reads as the line ps showed, which in the C locale
-      // prints every byte outside printable ASCII as `?`.
-      const shown = bytes.toString("latin1").replace(/\0$/, "").replaceAll("\0", " ").replace(/[^\x20-\x7e]/g, "?").trim();
-      if (shown === row.command) return shellArgvScript(argv);
-    } catch { /* Gone, or not readable: fall back to ps. */ }
-  }
-  return shellScript(row.command);
+/** A file's text; null when it does not exist, undefined when it cannot be read. */
+function readText(file: string): string | null | undefined {
+  try { return statSync(file).size > 4 * 1024 * 1024 ? undefined : readFileSync(file, "utf8"); }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "ENOENT" ? null : undefined; }
 }
 
-/** The shells among `candidates` that run a wait loop, each classified. Read-only. */
-export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number, Seen>, cwd: Map<number, string>): FoundLoop[] {
+/**
+ * Whether shell text may define any of the names as an alias or function (`alias name=`,
+ * `name () {`, `function name`, `autoload name`), or sources a file that may: nested sources are
+ * read by literal path, and one whose path is found by expansion may define anything.
+ */
+export function definesAny(text: string, names: Iterable<string>, read: (file: string) => string | null | undefined = readText, depth = 0): boolean {
+  const edge = "(?<![\\w.\\-\\[\\]])", end = "(?![\\w.\\-\\[\\]])";
+  for (const name of names) {
+    const word = escape(name);
+    const forms = [`\\balias\\b[^\\n]*${edge}${word}=`, `\\bfunction\\s+${word}${end}`, `${edge}${word}\\s*\\(\\s*\\)`, `\\b(?:autoload|functions)\\b[^\\n]*${edge}${word}${end}`];
+    if (forms.some(form => new RegExp(form).test(text))) return true;
+  }
+  for (const [, target] of text.matchAll(/(?:^|[;&|{(]|\bthen|\bdo|\belse)\s*(?:source|\.)\s+([^\s;&|)]+)/gm)) {
+    const file = target!.replace(/^["']|["']$/g, "").replace(/^~(?=\/)|^\$HOME(?=\/)|^\$\{HOME\}(?=\/)/, homedir());
+    if (depth >= 3 || /[$`*?]/.test(file) || !path.isAbsolute(file)) return true;
+    const nested = read(file);
+    if (nested === undefined || (nested !== null && definesAny(nested, names, read, depth + 1))) return true;
+  }
+  return false;
+}
+
+// How a fresh instance of each shell answers which kind of command a name is.
+const RESOLVE: Record<string, string> = {
+  zsh: 'for n; do whence -w -- "$n"; done',
+  bash: 'for n; do printf "%s: %s\\n" "$n" "$(type -t -- "$n")"; done',
+};
+const resolved = new Map<string, boolean>();
+
+/**
+ * Whether the shell binary, started as the loop's shell was with its startup files (`.zshenv`,
+ * `$BASH_ENV`), runs each name as a program or builtin rather than a function or alias. It asks a
+ * fresh instance; a failure to answer counts as no.
+ */
+function resolvesPlainly(binary: string, shell: string, names: string[]): boolean {
+  const key = `${binary}\0${names.join("\0")}`;
+  if (!resolved.has(key)) {
+    const script = RESOLVE[shell] ?? 'for n; do command -V "$n"; done';
+    const result = spawnSync(binary, ["-c", script, "agent-tool", ...names], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "ignore"] });
+    const lines = result.status === 0 ? result.stdout.trim().split("\n") : [];
+    const plain = (line: string) => /^\S+: (?:command|builtin|file)$/.test(line) || / is (?:\/\S+|a (?:special )?shell builtin)$/.test(line);
+    resolved.set(key, lines.length === names.length && lines.every(plain));
+  }
+  return resolved.get(key)!;
+}
+
+/**
+ * Whether the loop's commands run as the plain programs or builtins their names say: the script
+ * defines none of them, nor does any file it sources by literal path, and the shell's startup files
+ * leave them alone. A definition a sourced file makes through `eval` is not seen.
+ */
+function plainCommands(analysis: Analysis, loop: WaitLoop, binary: string, shell: string, cwd: string | null): boolean {
+  const names = [...new Set(loop.commands.map(text => text.split(" ")[0]!))];
+  if (names.some(name => analysis.defines.has(name))) return false;
+  for (const target of analysis.sourced) {
+    const file = path.isAbsolute(target) ? target : cwd && path.resolve(cwd, target);
+    const text = file ? readText(file) : undefined;
+    if (text === undefined || (text !== null && definesAny(text, names))) return false;
+  }
+  return resolvesPlainly(binary, shell, names);
+}
+
+export interface Candidate { seen: Seen; started: string; command: string }
+
+/**
+ * The shells among `candidates` that run a wait loop, each classified. A candidate counts only while
+ * its pid still names the same process (start time and command), so a reused pid inherits
+ * nothing. Read-only.
+ */
+export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number, Candidate>, cwd: Map<number, string>): FoundLoop[] {
   const children = childrenOf(table), found: FoundLoop[] = [], judged = new Map<number, WaitLoop>(), lineage = new Map<number, Set<number>>();
-  for (const [pid, seen] of [...candidates].sort(([a], [b]) => a - b)) {
-    const row = table.get(pid), parsed = row && scriptOf(row);
-    if (!row || !parsed) continue;
-    const base = { row, seen, cwd: cwd.get(pid) ?? null, state: { status: "waiting" } as LoopState };
-    const analysis = analyzeScript(parsed.script, parsed.shell);
-    if (!analysis) {
+  for (const [pid, candidate] of [...candidates].sort(([a], [b]) => a - b)) {
+    const row = table.get(pid), parsed = row && shellScript(row.command);
+    if (!row || !parsed || row.started !== candidate.started || row.command !== candidate.command) continue;
+    const base = { row, seen: candidate.seen, cwd: cwd.get(pid) ?? null, state: { status: "waiting" } as LoopState };
+    const shown = analyzeScript(parsed.script, parsed.shell);
+    if (!shown) {
       if (wordsInOrder(parsed.script, UNPARSED_LOOP)) found.push({ ...base, script: parsed.script });
       continue;
     }
-    if (analysis.loops.length === 0) continue;
-    const loop = runningLoop(analysis, children.get(pid) ?? []);
-    found.push({ ...base, script: (loop ?? analysis.loops[0]!).script, ...(loop ? { loop } : {}) });
-    // Only a loop whose body only sleeps and whose condition is simple checks can be judged, and
-    // not under a `timeout` that will end it.
+    if (shown.loops.length === 0) continue;
+    const kids = children.get(pid) ?? [], guess = runningLoop(shown, kids);
+    // `ps` joins positional arguments onto the script, so only the exact argv can prove which loop
+    // runs. Judge a loop only when the body only sleeps, the condition is simple checks, no
+    // `timeout` above will end it, and its commands run as what their names say.
+    const argv = guess?.pure && guess.condition ? argvOf(pid, row.started) : undefined;
+    const exact = argv && shellArgvScript(argv), analysis = exact && analyzeScript(exact.script, exact.shell);
+    const loop = analysis ? runningLoop(analysis, kids) : undefined;
+    found.push({ ...base, script: (loop ?? guess ?? shown.loops[0]!).script, ...(loop ? { loop } : {}) });
     const above = ancestors(table, pid);
-    if (loop?.pure && loop.condition && ![...above].some(other => TIMEOUTS.has(program(table.get(other))))) {
+    if (analysis && loop?.pure && loop.condition && ![...above].some(other => TIMEOUTS.has(program(table.get(other)))) && plainCommands(analysis, loop, argv![0]!, exact.shell, base.cwd)) {
       judged.set(pid, loop);
       lineage.set(pid, above);
     }
@@ -279,29 +339,27 @@ const same = (table: Map<number, ProcessRow>, target: ProcessRow) => {
 };
 
 /**
- * Stops a stuck loop's shell and the sleep or check it is running. Right before the first signal,
- * the shell must still be the process judged (pid, start time and command) with only the loop's
- * commands as children. It gets SIGTERM; a shell that outlives the grace period is stopped with
- * SIGSTOP, so it cannot start another command, then killed. Every child running one of the loop's
- * commands, including any it started after SIGTERM, is signalled with it while it is the same
- * process. Returns whether all of them are gone, and which are.
+ * Stops a stuck loop's shell and the sleep or check it is running, taking its targets from `table`,
+ * the snapshot the loop was judged stuck in: the shell, and its children, which then all ran the
+ * loop's commands. The shell gets SIGTERM with them; one that outlives the grace period is stopped
+ * with SIGSTOP, so it cannot start another command, then killed with every loop command it started
+ * since. Each is signalled only while it is still the same process (pid, start time and command).
+ * Returns whether all of them are gone, and which are.
  */
-export async function stopLoop(item: FoundLoop, grace = 2000): Promise<{ stopped: boolean; gone: number[] }> {
-  const commands = new Set(item.loop?.commands ?? []), known = new Map<number, ProcessRow>();
-  const look = () => {
-    const table = processTable();
-    if (same(table, item.row)) for (const row of table.values()) if (row.ppid === item.row.pid && commands.has(row.command)) known.set(row.pid, row);
-    return [item.row, ...known.values()].filter(target => same(table, target));
+export async function stopLoop(item: FoundLoop, table: Map<number, ProcessRow>, grace = 2000): Promise<{ stopped: boolean; gone: number[] }> {
+  const commands = new Set(item.loop?.commands ?? []);
+  const known = new Map([...table.values()].filter(row => row.ppid === item.row.pid).map(row => [row.pid, row]));
+  if (!same(table, item.row) || known.size === 0 || [...known.values()].some(row => !commands.has(row.command))) return { stopped: false, gone: [] };
+  const look = (now = processTable()) => {
+    if (same(now, item.row)) for (const row of now.values()) if (row.ppid === item.row.pid && commands.has(row.command)) known.set(row.pid, row);
+    return [item.row, ...known.values()].filter(target => same(now, target));
   };
   const send = (targets: ProcessRow[], signal: NodeJS.Signals) => {
     for (const target of targets) { try { process.kill(target.pid, signal); } catch { /* Gone, or no longer ours to signal. */ } }
   };
-  const first = processTable();
-  if (!same(first, item.row)) return { stopped: false, gone: [] };
-  if ([...first.values()].some(row => row.ppid === item.row.pid && !commands.has(row.command))) return { stopped: false, gone: [] };
-  send(look(), "SIGTERM");
-  for (const deadline = performance.now() + grace; look().length && performance.now() < deadline;) await pause(50);
+  send([item.row, ...known.values()], "SIGTERM");
   let live = look();
+  for (const deadline = performance.now() + grace; live.length && performance.now() < deadline; live = look()) await pause(50);
   if (live.length) {
     if (live.includes(item.row)) { send([item.row], "SIGSTOP"); live = look(); }
     send(live, "SIGKILL");
@@ -312,21 +370,22 @@ export async function stopLoop(item: FoundLoop, grace = 2000): Promise<{ stopped
 
 /**
  * Finds and classifies the wait loops among `candidates`, and with `apply` stops the stuck ones,
- * one at a time. Stopping one loop can release another that waited on it, so the rest are judged
- * again against the live process table before each stop.
+ * one at a time. Stopping one loop can release another that waited on it, so before each stop the
+ * loops are judged again in a fresh snapshot, and the stop acts on that snapshot.
  */
-export async function settleLoops(candidates: Map<number, Seen>, cwd: Map<number, string>, apply: boolean, table = processTable()): Promise<{ loops: FoundLoop[]; gone: number[] }> {
+export async function settleLoops(candidates: Map<number, Candidate>, cwd: Map<number, string>, apply: boolean, table = processTable()): Promise<{ loops: FoundLoop[]; gone: number[] }> {
   let found = findLoops(table, candidates, cwd);
   const stopped: FoundLoop[] = [], gone: number[] = [], tried = new Set<number>();
   while (apply) {
     const target = found.find(item => item.state.status === "stuck" && !tried.has(item.row.pid));
     if (!target) break;
     tried.add(target.row.pid);
-    const result = await stopLoop(target);
+    const result = await stopLoop(target, table);
     gone.push(...result.gone);
     if (result.stopped) stopped.push({ ...target, state: loopTransition(target.state, { type: "stopped" }) });
     // A loop that could not be stopped is judged again too: it may have gone, or left the loop.
-    found = findLoops(processTable(), new Map([...candidates].filter(([pid]) => !gone.includes(pid))), cwd);
+    table = processTable();
+    found = findLoops(table, new Map([...candidates].filter(([pid]) => !gone.includes(pid))), cwd);
   }
   return { loops: [...stopped, ...found].sort((a, b) => a.row.pid - b.row.pid), gone };
 }

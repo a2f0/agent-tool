@@ -9,7 +9,7 @@ import { createLog } from "../commands/logFile";
 import { plainText } from "../commands/output";
 import { assert, git, output } from "../workflows/core";
 import { claimedBy, ledgerDirectory, membersOf, newId, observe, readRecords, removeRecord, saveRecord, type ProcessRecord, type ProcessState } from "./ledger";
-import { loopReport, sessionProcesses, settleLoops, type LoopReport, type Seen } from "./loops";
+import { loopReport, sessionProcesses, settleLoops, type Candidate, type LoopReport, type Seen } from "./loops";
 import { ancestors, carrying, listeningPorts, processTable, startOf, workingDirectories, type ProcessRow } from "./table";
 
 const STOP_GRACE_MS = 5000;
@@ -225,7 +225,7 @@ export interface TeardownReport {
 
 interface Survey extends Omit<TeardownReport, "ok" | "applied" | "stopped" | "loops"> {
   /** Shells that may run wait loops, and the table and working directories they were found in. */
-  candidates: { pids: Map<number, Seen>; table: Map<number, ProcessRow>; cwd: Map<number, string> };
+  candidates: { pids: Map<number, Candidate>; table: Map<number, ProcessRow>; cwd: Map<number, string> };
 }
 
 function survey(root: string, directory: string): Survey {
@@ -247,11 +247,12 @@ function survey(root: string, directory: string): Survey {
     return [{ pid, command: row.command, cwd: directoryOf, ports }];
   }).sort((a, b) => a.pid - b.pid);
   // Wait loops among those, and among the agent session's other shells, which may run anywhere.
-  const candidates = new Map<number, Seen>([...[...sessionProcesses(table)].map(pid => [pid, "session"] as const), ...untracked.map(item => [item.pid, "repository"] as const)]);
-  const uid = process.getuid?.();
-  for (const pid of candidates.keys()) {
+  const seen = new Map<number, Seen>([...[...sessionProcesses(table)].map(pid => [pid, "session"] as const), ...untracked.map(item => [item.pid, "repository"] as const)]);
+  const uid = process.getuid?.(), candidates = new Map<number, Candidate>();
+  for (const [pid, where] of seen) {
     const row = table.get(pid);
-    if (!row || excluded.has(pid) || owned.has(pid) || row.ppid === process.pid || (uid !== undefined && row.uid !== uid)) candidates.delete(pid);
+    if (!row || excluded.has(pid) || owned.has(pid) || row.ppid === process.pid || (uid !== undefined && row.uid !== uid)) continue;
+    candidates.set(pid, { seen: where, started: row.started, command: row.command });
   }
   const worktrees: { path: string; branch: string | null }[] = [];
   let current: { path: string; branch: string | null } | undefined;

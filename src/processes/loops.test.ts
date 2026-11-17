@@ -3,7 +3,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loopTransition, programOf, runningLoop, sessionProcesses, stuckLoops, type LoopFacts, type LoopState } from "./loops";
+import { definesAny, findLoops, loopTransition, programOf, runningLoop, sessionProcesses, stuckLoops, type LoopFacts, type LoopState } from "./loops";
 import { analyzeScript, parseScript, shellArgvScript, shellScript, wordsInOrder, type WaitLoop } from "./shell";
 import { processTable, type ProcessRow } from "./table";
 
@@ -125,6 +125,8 @@ test("proves which loop a shell is running from its children", () => {
     expect(runningLoop(analyzeScript(`${before}; until ! pgrep -f x; do sleep 5; done`)!, [child("sleep 5")])).toBeUndefined();
     expect(runningLoop(analyzeScript(`until ! pgrep -f x; do sleep 5; done; ${before}`)!, [child("sleep 5")])).toBeUndefined();
   }
+  // Text an eval runs that cannot be read could start it too.
+  expect(runningLoop(analyzeScript(`eval 'case $x in a) sleep 5;; esac'; until ! pgrep -f x; do sleep 5; done`)!, [child("sleep 5")])).toBeUndefined();
   // Commands that cannot start it leave the proof standing.
   for (const before of ["sleep 1", "echo \"$x\"", "cd /tmp", "cat \"$f\""]) expect(runningLoop(analyzeScript(`${before}; until ! pgrep -f x; do sleep 5; done`)!, [child("sleep 5")])).toBeDefined();
   // Nested loops: the innermost one whose commands the children run.
@@ -161,12 +163,44 @@ test("a loop is stuck only while its condition is settled by loops that cannot f
   const both = (operator: string) => loopOf(`until ! pgrep -f a ${operator} ! pgrep -f b; do sleep 5; done`);
   expect(stuckLoops(new Map([[10, both("&&")]]), facts(true, { a: [10], b: [] })).size).toBe(1);
   expect(stuckLoops(new Map([[10, both("||")]]), facts(true, { a: [10], b: [] })).size).toBe(0);
+  // A check teardown cannot read could leave the loop another way, such as `break`.
+  expect(stuckLoops(new Map([[10, loopOf(`until { [ ! -f ready ] || break; } && [ -f "" ]; do sleep 30; done`)]]), facts(true, {})).size).toBe(0);
+  expect(stuckLoops(new Map([[10, loopOf(`until [ -f ready ] && [ -f "" ]; do sleep 30; done`)]]), facts(true, {})).size).toBe(0);
   // Without a working pgrep nothing is settled.
   expect(stuckLoops(new Map([[10, waits("p")]]), facts(undefined, { p: [10] })).size).toBe(0);
   expect(stuckLoops(new Map([[10, waits("p")]]), facts(true, { p: undefined })).size).toBe(0);
   // A file with an empty name never appears.
   expect(stuckLoops(new Map([[10, loopOf(`until grep -q x ""; do sleep 5; done`)], [11, loopOf(`while ! [ -f "" ]; do sleep 5; done`)]]), facts(true, {})).size).toBe(2);
   expect(stuckLoops(new Map([[10, loopOf(`until grep -q x /tmp/f; do sleep 5; done`)]]), facts(true, {})).size).toBe(0);
+});
+
+test("a loop's commands must run as what their names say", () => {
+  // Defined in the script itself.
+  expect(analyzeScript(`test() { /usr/bin/test -f ready; }; until test -f ""; do sleep 30; done`)!.defines).toEqual(new Set(["test"]));
+  expect(analyzeScript(`alias pgrep='pgrep -l'; until ! pgrep -f x; do sleep 5; done`)!.defines).toEqual(new Set(["pgrep"]));
+  expect(analyzeScript(`source /tmp/snapshot.sh && eval 'until ! pgrep -f x; do sleep 5; done'`)!.sourced).toEqual(["/tmp/snapshot.sh"]);
+  // Defined in a sourced file, as a harness's shell snapshot does for grep.
+  const none = () => null;
+  expect(definesAny("function grep {\n  command grep \"$@\"\n}\n", ["grep", "sleep"], none)).toBe(true);
+  expect(definesAny("test () {\n  /usr/bin/test -f ready\n}\n", ["test"], none)).toBe(true);
+  expect(definesAny("alias -- pgrep='pgrep -l'\n", ["pgrep"], none)).toBe(true);
+  expect(definesAny("autoload -Uz sleep\n", ["sleep"], none)).toBe(true);
+  // Calls, other names, and longer words that contain the name define nothing.
+  expect(definesAny("function pkill {\n  if command pgrep -P $$ | command grep -qx 1; then return 1; fi\n}\nalias -- roscoe-test='mount /mnt/test'\n[[ -n $a ]] && autoload -Uz \"$f\"\n", ["pgrep", "test", "[", "sleep"], none)).toBe(false);
+  // A nested source is read by its literal path; one found by expansion may define anything.
+  expect(definesAny(". /etc/agent-tool-test-env\n", ["pgrep"], file => file === "/etc/agent-tool-test-env" ? "pgrep() { :; }" : null)).toBe(true);
+  expect(definesAny(". /etc/agent-tool-test-env\n", ["pgrep"], () => null)).toBe(false);
+  expect(definesAny(". /etc/agent-tool-test-env\n", ["pgrep"], () => undefined)).toBe(true);
+  expect(definesAny('. "$CARGO_HOME/env"\n', ["pgrep"], none)).toBe(true);
+});
+
+test("a candidate whose pid now names another process is not judged", () => {
+  const shell = row(999_999, 1, "sh -c until [ -f stop ]; do sleep 5; done");
+  const table = new Map([[shell.pid, shell], [999_998, row(999_998, shell.pid, "sleep 5")]]);
+  const candidate = { seen: "session" as const, started: shell.started, command: shell.command };
+  expect(findLoops(table, new Map([[shell.pid, candidate]]), new Map()).map(item => [item.row.pid, item.state.status])).toEqual([[shell.pid, "waiting"]]);
+  expect(findLoops(table, new Map([[shell.pid, { ...candidate, started: "Mon Nov 16 09:00:00 2026" }]]), new Map())).toEqual([]);
+  expect(findLoops(table, new Map([[shell.pid, { ...candidate, command: "sh -c true" }]]), new Map())).toEqual([]);
 });
 
 test.each([

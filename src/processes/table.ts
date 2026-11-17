@@ -1,6 +1,7 @@
 // The machine's processes as agent-tool sees them: identity (pid, parent, group and start time),
 // working directory, and listening TCP ports. Read through `ps`, `lsof` and, on Linux, `/proc`,
 // so it needs nothing beyond the operating system.
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { execFileSync } from "node:child_process";
 import { readFileSync, readlinkSync } from "node:fs";
 
@@ -129,4 +130,56 @@ export function carrying(table: Map<number, ProcessRow>, name: string, value: st
     }
   }
   return new Set([...values].filter(([, found]) => found === value).map(([pid]) => pid));
+}
+
+type Sysctl = (mib: number[], size: number) => Buffer | undefined;
+let sysctl: Sysctl | null | undefined;
+
+/** macOS's sysctl(3), loaded once; null where it cannot be. */
+function darwinSysctl(): Sysctl | null {
+  if (sysctl !== undefined) return sysctl;
+  try {
+    const { symbols } = dlopen("/usr/lib/libSystem.B.dylib", { sysctl: { args: [FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u64], returns: FFIType.i32 } });
+    sysctl = (mib, size) => {
+      const name = new Int32Array(mib), buffer = Buffer.alloc(size), length = new BigUint64Array([BigInt(size)]);
+      if (symbols.sysctl(ptr(name), mib.length, ptr(buffer), ptr(length), null, 0) !== 0) return undefined;
+      return buffer.subarray(0, Number(length[0]));
+    };
+  } catch { sysctl = null; }
+  return sysctl;
+}
+
+// KERN_PROCARGS2: argc, the executable path, padding, then each argument NUL-terminated.
+function darwinArgv(pid: number): string[] | undefined {
+  const call = darwinSysctl();
+  const max = call?.([1, 8], 4)?.readInt32LE(0); // KERN_ARGMAX
+  const raw = call && max && max > 0 ? call([1, 49, pid], max) : undefined;
+  if (!raw || raw.length < 4) return undefined;
+  const argc = raw.readInt32LE(0), argv: string[] = [];
+  let at = raw.indexOf(0, 4);
+  if (at < 0) return undefined;
+  while (at < raw.length && raw[at] === 0) at += 1;
+  for (let index = 0; index < argc; index += 1) {
+    const end = raw.indexOf(0, at);
+    if (end < 0) return undefined;
+    argv.push(raw.subarray(at, end).toString("utf8"));
+    at = end + 1;
+  }
+  return argv;
+}
+
+/**
+ * A process's exact argv, which `ps` joins with spaces: from /proc on Linux and from the kernel
+ * (KERN_PROCARGS2) on macOS. Undefined elsewhere, for another user's process, or once the process
+ * has gone; read only while the pid still names the process `ps` reported, by its start time.
+ */
+export function argvOf(pid: number, started: string): string[] | undefined {
+  let argv: string[] | undefined;
+  try {
+    if (process.platform === "linux") {
+      argv = readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0");
+      if (argv.at(-1) === "") argv.pop();
+    } else if (process.platform === "darwin") argv = darwinArgv(pid);
+  } catch { argv = undefined; }
+  return argv?.length && startOf(pid) === started ? argv : undefined;
 }
