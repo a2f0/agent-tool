@@ -27,7 +27,10 @@ function assertCurrentRules(root: string, command: string): void {
   if (entry && CLASSES[entry.class].decision === "allow") return;
   // Check every harness the manifest records. Rule content decides: a manifest from another
   // agent-tool release, or with no usable version, over current rules allows nothing extra.
-  const stale = (checkInstalledPermissions(root)?.changes ?? []).filter(item => item.status !== "unchanged" && item.path !== PERMISSIONS_MANIFEST);
+  const installed = checkInstalledPermissions(root);
+  // The manifest was there a moment ago; fail closed rather than treat its absence as current rules.
+  assert(installed, `${PERMISSIONS_MANIFEST} disappeared while checking the rules for '${command}'; rerun the command.`);
+  const stale = installed.changes.filter(item => item.status !== "unchanged" && item.path !== PERMISSIONS_MANIFEST);
   assert(!stale.length, `Permission rules predate the current class of '${command}'; regenerate them with approval (agent-tool permissions install --apply) before running it.`);
 }
 

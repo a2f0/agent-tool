@@ -87,14 +87,18 @@ test("refuses directory, file and dangling symlinks without following them", () 
 });
 
 test("a FIFO at a skill destination or the manifest is refused without blocking", () => {
+  const cli = path.resolve(import.meta.dir, "../index.ts");
   for (const relative of [".agents/skills/ship-pr/SKILL.md", MANIFEST]) {
     const root = fixture(), file = path.join(root, relative);
     mkdirSync(path.dirname(file), { recursive: true });
     expect(spawnSync("mkfifo", [file]).status).toBe(0);
-    expect(() => checkSkills(root, "codex")).toThrow("not a regular file");
-    expect(() => installSkills(root, "codex", true)).toThrow("not a regular file");
+    // A blocking read would outlast any test timeout, so the CLI runs under a hard one.
+    for (const args of [["check"], ["install", "--apply"]]) {
+      const result = spawnSync(process.execPath, [cli, "skills", ...args, "--harness", "codex"], { cwd: root, encoding: "utf8", timeout: 10_000 });
+      expect({ relative, args, signal: result.signal, status: result.status, refused: /not a regular file/.test(result.stderr) }).toEqual({ relative, args, signal: null, status: 1, refused: true });
+    }
   }
-}, 10_000);
+}, 60_000);
 
 test("check is read-only and detects missing skills and ownership records", () => {
   const root = fixture();

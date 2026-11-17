@@ -24,6 +24,11 @@ test("refuses a final symbolic link, a directory, and a FIFO without following o
   symlinkSync(path.join(elsewhere, "missing.json"), path.join(root, "dangling.json"));
   mkdirSync(path.join(root, "directory.json"));
   expect(spawnSync("mkfifo", [path.join(root, "fifo.json")]).status).toBe(0);
-  // A FIFO with no writer would block an ordinary read forever.
-  for (const name of ["link.json", "dangling.json", "directory.json", "fifo.json"]) expect({ name, read: readRegularFile(path.join(root, name)) }).toEqual({ name, read: { status: "irregular" } });
-}, 10_000);
+  // A FIFO with no writer would block an ordinary read forever, beyond any test timeout, so each
+  // probe runs in a child process that a hard timeout kills.
+  const module = path.join(import.meta.dir, "files.ts");
+  for (const name of ["link.json", "dangling.json", "directory.json", "fifo.json"]) {
+    const probe = spawnSync(process.execPath, ["-e", `const { readRegularFile } = await import(${JSON.stringify(module)}); console.log(JSON.stringify(readRegularFile(${JSON.stringify(path.join(root, name))})));`], { encoding: "utf8", timeout: 5_000 });
+    expect({ name, signal: probe.signal, read: JSON.parse(probe.stdout || "null") }).toEqual({ name, signal: null, read: { status: "irregular" } });
+  }
+}, 30_000);
