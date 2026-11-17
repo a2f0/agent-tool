@@ -747,10 +747,12 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
 
 - It read the shell's exact argv: from `/proc` on Linux and from the kernel
   (`KERN_PROCARGS2`) on macOS, since `ps` joins positional arguments onto the
-  script. Elsewhere no loop is judged. Since `argv[0]` is the process's own
-  choice, the executable it runs must be that shell (for `sh`, any shell that
-  serves as it: macOS runs `/bin/bash`, Debian `dash`). Teardown never runs
-  anything the shell names.
+  script, and reads the script from it. Elsewhere no loop is judged. Since
+  `argv[0]` is the process's own choice, the executable it runs must be that
+  shell as installed in `/bin`, `/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`
+  or on PATH outside the repository (for `sh`, any shell that serves as it:
+  macOS runs `/bin/bash`, Debian `dash`). Teardown never runs anything the
+  shell names.
 - The shell belongs to no other agent-tool record: it carries no
   `AGENT_TOOL_PROCESS` (a `proc start --keep` from another checkout). Outside
   the session, a shell is judged only when its environment shows that; macOS
@@ -769,10 +771,12 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
   is one of the loop's, is itself expanded (`"$@"`), or runs other code
   (`sleep "$n"`, `eval "$x"`, `xargs`). A shell between commands proves
   nothing.
-- The body does nothing but `sleep`, no `timeout` command runs above the
-  shell, and neither the script nor any file around it sets a trap that runs
-  between commands or on failures (`DEBUG`, `ERR`, `RETURN`, zsh's `ZERR` and
-  `TRAPDEBUG`), which could leave the loop; nor a trap teardown cannot read.
+- The body does nothing but `sleep`, and no `timeout` command runs above the
+  shell. The script sets no trap with a handler (`trap '' TERM` and
+  `trap - TERM` set none), nor one teardown cannot read, since a handler can
+  leave the loop or run the loop's own commands once teardown signals the
+  shell; and no file around it sets one that runs between commands or on
+  failures (`DEBUG`, `ERR`, `RETURN`, zsh's `ZERR` and `TRAPDEBUG`).
 - The loop's commands run as what their names say, read without running
   anything: the script defines none of them as a function or alias; nor does
   any file it sources by literal path (nested sources are read the same way,
@@ -803,7 +807,8 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
   other way, such as `break`. Two checks settle:
   - `pgrep -f <pattern>`, with a literal pattern and output only discarded
     (redirected to `/dev/null`, or copied from a descriptor the same command
-    pointed there, so that no redirection can fail and skip the command),
+    pointed there and has not closed, so that no redirection can fail and skip
+    the command),
     stays true while it finds a process that cannot exit. procps `pgrep` (Linux)
     reports the shell that runs it, so there a loop whose own command line
     matches its pattern never ends; BSD and macOS `pgrep` leave out that shell

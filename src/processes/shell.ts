@@ -397,11 +397,18 @@ export interface Analysis {
    * doing it: a literal assignment, a sourced file, or something whose effect cannot be read.
    */
   path: PathEvent[];
-  /** Whether the script sets a trap that runs between commands or on failures (`STEP_TRAP`), or one teardown cannot read. */
+  /**
+   * Whether the script sets a trap with a handler, or one teardown cannot read: a handler can leave
+   * the loop, or run the loop's own commands when teardown signals the shell. `trap '' TERM` and
+   * `trap - TERM` set none.
+   */
   traps: boolean;
 }
 
-/** A trap the shell runs between commands or on failures (`DEBUG`, `ERR`, `RETURN`, zsh's `ZERR` and `TRAPDEBUG`), which can leave a loop. */
+/**
+ * A trap the shell runs between commands or on failures (`DEBUG`, `ERR`, `RETURN`, zsh's `ZERR` and
+ * `TRAPDEBUG`), which can leave a loop; in the script itself any trap with a handler counts too.
+ */
 export const STEP_TRAP = /\btrap\b[^\n]*(?<![\w-])(?:SIG)?(?:DEBUG|ERR|RETURN|ZERR)\b|\bTRAP(?:DEBUG|ZERR)\b/;
 
 export type PathEvent = { at: number } & ({ kind: "assign"; value: string } | { kind: "source"; file: string } | { kind: "unknown" });
@@ -436,7 +443,10 @@ function harmless(redirects: Redirect[]): boolean {
       discarded.add(1).add(2);
     } else if ([">", ">>", ">|", "<"].includes(operator) && target.text === "/dev/null") discarded.add(fd ?? (operator === "<" ? 0 : 1));
     else if ((operator === ">&" || operator === "<&") && (target.text === "-" || discarded.has(Number(target.text)))) {
-      if (target.text !== "-") discarded.add(fd ?? (operator === "<&" ? 0 : 1));
+      const into = fd ?? (operator === "<&" ? 0 : 1);
+      // A closed descriptor can no longer be copied.
+      if (target.text === "-") discarded.delete(into);
+      else discarded.add(into);
     } else return false;
   }
   return true;
@@ -539,7 +549,7 @@ function definitions(command: Simple, info: CommandInfo, at: number, analysis: A
   const path = (event: PathEvent) => analysis.path.push(nested ? { at, kind: "unknown" } : event);
   const operands = info.args.filter(arg => !arg.startsWith("-") && !arg.startsWith("+"));
   if (info.program === "alias") for (const arg of operands) { const name = /^([^=]+)=/.exec(arg)?.[1]; if (name) analysis.defines.add(name); }
-  if (info.program === "trap" && (info.expands || STEP_TRAP.test(["trap", ...info.args].join(" ")))) analysis.traps = true;
+  if (info.program === "trap" && (info.expands || (info.args[0] !== undefined && info.args[0] !== "" && info.args[0] !== "-" && !/^-[lp]$/.test(info.args[0])))) analysis.traps = true;
   if (info.program === "autoload" || info.program === "functions") for (const arg of operands) analysis.defines.add(arg.replace(/=.*$/, ""));
   if ((info.program === "source" || info.program === ".") && operands[0] && !info.expands) {
     analysis.sourced.push(operands[0]);
@@ -585,7 +595,7 @@ function collect(text: string, shell: string, analysis: Analysis, depth: number)
         });
       } else if (command.kind === "compound") {
         if (command.defines) analysis.defines.add(command.defines);
-        if (command.defines && /^TRAP(?:DEBUG|ZERR)$/.test(command.defines)) analysis.traps = true;
+        if (command.defines && /^TRAP[A-Z]+$/.test(command.defines)) analysis.traps = true;
         expanded([...(command.header ?? []), ...command.redirects.map(redirect => redirect.target)]);
         for (const inner of command.lists) visit(inner, true);
       } else {

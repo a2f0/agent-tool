@@ -416,11 +416,14 @@ function samePrograms(loop: WaitLoop, searchPath: string | undefined, root: stri
  * file's name (`zsh5` for `zsh`), or for `sh` any POSIX shell that serves as it (macOS's `/bin/sh`
  * runs `/bin/bash`, Debian's runs `dash`).
  */
-export function runsShell(shell: string, executable: string): boolean {
-  let real: string;
-  try { real = realpathSync(executable); } catch { return false; }
-  const family = /^([a-z]+?)[0-9.]*$/.exec(path.basename(real))?.[1];
-  return family === shell || (shell === "sh" && ["sh", "bash", "dash", "ash", "busybox"].includes(family ?? ""));
+export function runsShell(shell: string, executable: string, root = "/"): boolean {
+  const real = (file: string | undefined) => { try { return file ? realpathSync(file) : undefined; } catch { return undefined; } };
+  const running = real(executable);
+  if (!running) return false;
+  // Only the installed shells count, not any file that happens to bear a shell's name.
+  const names = shell === "sh" ? ["sh", "bash", "dash", "ash", "busybox"] : [shell];
+  const installed = names.flatMap(name => ["/bin", "/usr/bin", "/usr/local/bin", "/opt/homebrew/bin"].map(directory => path.join(directory, name)).concat(outsideExecutable(name, process.env, root)?.resolved ?? []));
+  return installed.some(file => real(file) === running);
 }
 
 export interface Candidate { seen: Seen; session: boolean; started: string; command: string }
@@ -436,33 +439,32 @@ export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number
   const children = childrenOf(table), found: FoundLoop[] = [], judged = new Map<number, WaitLoop>(), lineage = new Map<number, Set<number>>();
   const tools = new Map<string, string>(), confirmed = new Set<string>();
   for (const [pid, candidate] of [...candidates].sort(([a], [b]) => a - b)) {
-    const row = table.get(pid), parsed = row && shellScript(row.command);
-    if (!row || !parsed || row.started !== candidate.started || row.command !== candidate.command) continue;
+    const row = table.get(pid), shownScript = row && shellScript(row.command);
+    if (!row || !shownScript || row.started !== candidate.started || row.command !== candidate.command || !wordsInOrder(shownScript.script, UNPARSED_LOOP)) continue;
     const base = { row, seen: candidate.seen, cwd: cwd.get(pid) ?? null, state: { status: "waiting" } as LoopState };
-    const shown = analyzeScript(parsed.script, parsed.shell);
-    if (!shown) {
-      if (wordsInOrder(parsed.script, UNPARSED_LOOP)) found.push({ ...base, script: parsed.script });
-      continue;
-    }
-    if (shown.loops.length === 0) continue;
-    const kids = children.get(pid) ?? [], guess = runningLoop(shown, kids);
-    // `ps` joins positional arguments onto the script, so only the exact argv can prove which loop
-    // runs. Judge a loop only when the body only sleeps, the condition is simple checks, no
-    // `timeout` above will end it, and its commands run as what their names say.
-    const args = guess?.pure && guess.condition ? argsOf(pid, row.started) : undefined;
-    const owned = args?.environment?.has("AGENT_TOOL_PROCESS") || (!candidate.session && !args?.environment);
-    const exact = args && !owned ? shellArgvScript(args.argv) : undefined;
-    // argv[0] is whatever the process chose; the executable it runs must be that shell.
-    const analysis = exact && runsShell(exact.shell, args!.executable) ? analyzeScript(exact.script, exact.shell) : undefined;
-    const context = analysis ? contextOf(analysis, exact!.shell, exact!.login, args!.environment) : undefined;
+    // `ps` joins positional arguments onto the script, so the script is read from the exact argv
+    // where the system shows it, and only then judged. argv[0] is whatever the process chose: the
+    // executable it runs must be that shell.
+    const args = argsOf(pid, row.started), exact = args && shellArgvScript(args.argv);
+    const verified = !!exact && runsShell(exact.shell, args!.executable, root);
+    const parsed = verified ? exact! : shownScript;
+    const analysis = analyzeScript(parsed.script, parsed.shell);
+    if (!analysis) { found.push({ ...base, script: parsed.script }); continue; }
+    if (analysis.loops.length === 0) continue;
+    const kids = children.get(pid) ?? [];
+    // Judge a loop only when the body only sleeps, the condition is simple checks, no `timeout`
+    // above will end it, and its commands run as what their names say; and not one another
+    // agent-tool record owns, or one outside the session whose environment is hidden.
+    const owned = !verified || args!.environment?.has("AGENT_TOOL_PROCESS") || (!candidate.session && !args!.environment);
+    const context = owned ? undefined : contextOf(analysis, exact!.shell, exact!.login, args!.environment);
     // A call of a function defined around the script runs code teardown has not judged.
     const functions = new Set((context?.all ?? []).flatMap(text => [...definedNames(text)]));
-    const loop = analysis && context ? runningLoop(analysis, kids, functions) : undefined;
-    found.push({ ...base, script: (loop ?? guess ?? shown.loops[0]!).script, ...(loop ? { loop } : {}) });
+    const loop = context ? runningLoop(analysis, kids, functions) : undefined;
+    found.push({ ...base, script: (loop ?? runningLoop(analysis, kids) ?? analysis.loops[0]!).script, ...(loop ? { loop } : {}) });
     const above = ancestors(table, pid);
     // A trap that runs between commands or on failures can leave the loop, and so can unknown ones.
-    const trapped = !analysis || analysis.traps || !context || context.all.some(text => STEP_TRAP.test(text));
-    if (trapped || !analysis || !context || !loop?.pure || !loop.condition || [...above].some(other => TIMEOUTS.has(program(table.get(other)))) || !plainCommands(analysis, loop, exact!.shell, context)) continue;
+    const trapped = analysis.traps || !context || context.all.some(text => STEP_TRAP.test(text));
+    if (trapped || !context || !loop?.pure || !loop.condition || [...above].some(other => TIMEOUTS.has(program(table.get(other)))) || !plainCommands(analysis, loop, exact!.shell, context)) continue;
     const programs = samePrograms(loop, pathOf(analysis, loop, context), root);
     if (!programs) continue;
     for (const [name, file] of programs) tools.set(name, file);
@@ -570,7 +572,14 @@ export async function stopLoop(item: FoundLoop, recheck: () => boolean, grace = 
       try { process.kill(target.pid, signal); } catch { /* Gone, or no longer ours to signal. */ }
     }
   };
-  const resume = () => send(processTable(), [item.row], "SIGCONT");
+  // While teardown holds the shell it cannot exit, so its pid is still its own: resume it directly,
+  // with no snapshot that could fail first, unless a snapshot shows it gone.
+  const resume = () => {
+    let table: Map<number, ProcessRow> | undefined;
+    try { table = processTable(); } catch { table = undefined; }
+    if (table && !same(table, item.row)) return;
+    try { process.kill(item.row.pid, "SIGCONT"); } catch { /* Gone. */ }
+  };
   const held = (table: Map<number, ProcessRow>) => same(table, item.row) && (table.get(item.row.pid)?.stat?.startsWith("T") ?? false);
   // Suspends the shell and returns the snapshot that shows it held, or undefined.
   const hold = async () => {
@@ -592,16 +601,16 @@ export async function stopLoop(item: FoundLoop, recheck: () => boolean, grace = 
     const table = await hold();
     const children = table ? kids(table) : [];
     if (!table || children.length === 0 || children.some(row => !commands.has(row.command)) || !recheck()) {
-      state = stopTransition(state, { type: "declined" });
       resume();
+      state = stopTransition(state, { type: "declined" });
       return SKIPPED;
     }
     // The children's pids are pinned while the shell is held: kill them, then let the shell take SIGTERM.
     for (const child of children) signalled.set(child.pid, child);
     send(processTable(), children, "SIGKILL");
     send(processTable(), [item.row], "SIGTERM");
-    state = stopTransition(state, { type: "terminated" });
     resume();
+    state = stopTransition(state, { type: "terminated" });
     const alive = () => same(processTable(), item.row);
     for (const deadline = performance.now() + grace; alive() && performance.now() < deadline;) await pause(50);
     if (alive()) {

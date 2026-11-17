@@ -93,6 +93,8 @@ test("judges only checks whose outcome can be read from the script", () => {
   expect(checks(`! pgrep -f verify 2>&1 >/dev/null`)).toEqual(["other"]);
   expect(analyzeScript("until ! pgrep -f verify &>/dev/null; do sleep 5; done", "bash")!.loops[0]!.condition!.atoms[0]!.check.kind).toBe("pgrep");
   expect(checks(`! pgrep -f verify 2>/dev/null >&-`)).toEqual(["pgrep"]);
+  // A descriptor closed after it was discarded can no longer be copied.
+  expect(checks(`! pgrep -f verify 3>/dev/null 3>&- 2>&3`)).toEqual(["other"]);
   // An empty pattern after -e leaves grep reading its input, which may still arrive.
   expect(checks(`grep -q -e ""`)).toEqual(["other"]);
   expect(checks(`grep -q -- -e ""`)).toEqual(["missing-file"]);
@@ -236,8 +238,10 @@ test("reads the PATH a loop's shell searches", () => {
 });
 
 test("traps that run between commands or on failures are noticed", () => {
-  for (const script of [`trap '[ -f ready ] && exit' DEBUG`, `trap 'exit' ERR`, `trap "$handler" INT`, "TRAPDEBUG() { exit; }"]) expect(analyzeScript(`${script}; until [ -f "" ]; do sleep 5; done`, "zsh")!.traps).toBe(true);
-  expect(analyzeScript(`trap 'echo caught' TERM; until [ -f "" ]; do sleep 5; done`)!.traps).toBe(false);
+  // A handler can leave the loop, or run the loop's own commands once teardown signals the shell.
+  for (const script of [`trap '[ -f ready ] && exit' DEBUG`, `trap 'exit' ERR`, `trap "$handler" INT`, "TRAPDEBUG() { exit; }", "TRAPTERM() { sleep 5; }", `trap 'sleep 5' TERM`]) expect(analyzeScript(`${script}; until [ -f "" ]; do sleep 5; done`, "zsh")!.traps).toBe(true);
+  // Ignoring a signal, or restoring its default, sets no handler.
+  for (const script of [`trap '' TERM`, "trap - TERM"]) expect(analyzeScript(`${script}; until [ -f "" ]; do sleep 5; done`)!.traps).toBe(false);
 });
 
 test.each([
@@ -259,8 +263,12 @@ test("a process is judged as a shell only when it runs one", () => {
   expect(runsShell("sh", sh)).toBe(true);
   expect(runsShell("sh", "/bin/bash")).toBe(true);
   expect(runsShell("zsh", "/bin/bash")).toBe(false);
-  // argv[0] is the process's own choice: Bun calling itself `sh` is still Bun.
+  // argv[0] is the process's own choice: Bun calling itself `sh` is still Bun, and a file named
+  // `sh` is not a shell unless it is an installed one.
   expect(runsShell("sh", process.execPath)).toBe(false);
+  const renamed = path.join(directory("agent-tool-loops-renamed-"), "sh");
+  writeFileSync(renamed, readFileSync("/bin/echo"), { mode: 0o755 });
+  expect(runsShell("sh", renamed)).toBe(false);
 });
 
 test("a sourced FIFO is refused without blocking", () => {
@@ -432,11 +440,12 @@ test("a stuck wait loop in the repository is stopped with every sleep it starts,
   writeFileSync(path.join(bin, "pgrep"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   const named = (script: string) => ({ ...sh(script), argv0: path.join(bin, "sh") });
   const { pids, reports } = await underHarness(root, root, {
-    // The stuck shell survives SIGTERM, and its loop starts a new sleep when the old one is stopped.
-    trapped: named(`${PATHED}trap 'echo caught' TERM; until [ -f "" ]; do sleep 37; done`),
+    // The stuck shell ignores SIGTERM, inherited from the shell that started it, and its loop starts
+    // a new sleep when the old one is killed.
+    trapped: sh(`trap '' TERM; exec sh -c '${PATHED}until [ -f "" ]; do sleep 37; done'`),
     waiting: named(`${PATHED}until [ -f stop ]; do sleep 30; done`),
     // Its pgrep is not the one teardown would run, so nothing is proved about what it finds.
-    shimmed: named(`PATH="${bin}:/usr/bin:/bin"; until ! pgrep -f "agent-tool-shim-${id}" >/dev/null; do sleep 30; done`),
+    shimmed: sh(`PATH="${bin}:/usr/bin:/bin"; until ! pgrep -f "agent-tool-shim-${id}" >/dev/null; do sleep 30; done`),
   }, [[], ["--apply"]], 1500);
   const [before, applied] = reports;
   if (before!.json.unavailable.includes("working directories (lsof)")) return;
