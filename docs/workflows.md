@@ -348,7 +348,9 @@ options such as `-X dev`), and `coverage run -m <module>`; and `mise exec` or
 `mise x` with the command after `--` or a `-c` string. Their option values,
 whether separate (`uv --directory build`, `pdm run --venv test`) or attached
 to a short option as getopt reads it (`env -Cbuild`, `env -iu NAME`), are
-never read as the command. Scripts that `pdm run`, `hatch run`, or `pipenv run` look up by name
+never read as the command. `uv --directory`, `poetry -C`, and `mise -C` move
+the command; `pdm run` keeps its directory unless `--working-dir` names one,
+relative to the project root (`-p`, else the nearest `pyproject.toml`). Scripts that `pdm run`, `hatch run`, or `pipenv run` look up by name
 in `pyproject.toml`, `hatch.toml`, or `Pipfile` are leaves. `uv run` is also an
 install, because it syncs the project's environment before running its
 command, even with `--frozen` or `--locked`; `--no-sync`, `--no-project`,
@@ -395,7 +397,8 @@ environment syncs of `uv run` and `hatch run`, and the Python installs `pip
 install` (also `pip3` and `python -m pip`), `uv sync|add|remove`, `uv pip
 install|sync`, `poetry install|sync|add|remove|update`, `pdm
 install|sync|add|remove|update`, and `pipenv install|sync|update|upgrade`,
-unless they pass `--dry-run` or `--check`. Executables and script files are
+unless they only preview or lock (`--dry-run`, `uv sync --check`, or poetry's
+`--lock`; `pdm install --check` still installs). Executables and script files are
 leaves: their contents are not inspected. The report is:
 
 ```json

@@ -147,10 +147,10 @@ function workspaceDirectories(context: Context, root = context.root): string[] {
   return [...directories];
 }
 
-/** Package managers run scripts from the nearest `package.json` at or above the directory, within the repository. */
-function packageRoot(context: Context, directory: string): string {
+/** Package managers run scripts from the nearest `package.json` (or other `manifest`) at or above the directory, within the repository. */
+function packageRoot(context: Context, directory: string, manifest = "package.json"): string {
   let current = directory;
-  while (!existsSync(path.join(current, "package.json")) && current !== context.root && current.startsWith(`${context.root}${path.sep}`)) current = path.dirname(current);
+  while (!existsSync(path.join(current, manifest)) && current !== context.root && current.startsWith(`${context.root}${path.sep}`)) current = path.dirname(current);
   return current;
 }
 
@@ -244,7 +244,7 @@ function dispatch(context: Context, argv: string[], cwd: string, chain: string[]
   else if (testRunner(name, args)) report(context, "test", text, chain);
   else if (builds(name, args)) report(context, "build", text, chain);
   else if ((name === "pod" || name === "bundle") && args[0] === "install") report(context, "install", text, chain);
-  else if (/^pip[\d.]*$/.test(name) && options(args, PYTHON_TOOLS.pip).rest[0] === "install" && !previews(args)) report(context, "install", text, chain);
+  else if (/^pip[\d.]*$/.test(name) && options(args, PYTHON_TOOLS.pip).rest[0] === "install" && !previews("pip", "install", args)) report(context, "install", text, chain);
   else if (name === "bundle" && args[0] === "exec") visit(context, args.slice(1), cwd, chain, depth + 1);
 }
 
@@ -518,7 +518,8 @@ const PYTHON_TOOLS = {
     "--no-binary-package", "--refresh-package",
   ]),
   poetry: tool(["-C", "--directory", "-P", "--project"]),
-  pdm: tool(["-p", "--project", "-k", "--skip", "--venv", "--env", "--env-file", "--working-dir"]),
+  pdm: tool(["-c", "--config"]),
+  pdmRun: tool(["-p", "--project", "-k", "--skip", "--venv", "--env", "--env-file", "--working-dir"]),
   hatch: tool(["-e", "--env", "-p", "--project", "--data-dir", "--cache-dir", "--config"]),
   hatchEnvRun: tool(["-e", "--env", "-i", "--include", "-x", "--exclude", "-f", "--filter"]),
   pipenv: tool(["--python", "--pypi-mirror"]),
@@ -531,8 +532,8 @@ const MISE = tool(["-C", "--cd", "-E", "--env", "-j", "--jobs", "-c", "--command
 const PYTHON_INSTALLS: Partial<Record<keyof typeof PYTHON_TOOLS, readonly string[]>> = {
   uv: ["sync", "add", "remove"], poetry: ["install", "sync", "add", "remove", "update"], pdm: ["install", "sync", "add", "remove", "update"], pipenv: ["install", "sync", "update", "upgrade"],
 };
-/** A Python install that only reports what it would change. */
-const previews = (args: string[]) => args.some(arg => arg === "--dry-run" || arg === "--check");
+/** A Python install that only previews or locks: `--dry-run`, `uv sync --check`, or poetry's `--lock`. `pdm install --check` checks the lockfile and then installs. */
+const previews = (tool: string, sub: string | undefined, args: string[]) => args.some(arg => arg === "--dry-run" || (arg === "--check" && tool === "uv" && sub === "sync") || (arg === "--lock" && tool === "poetry"));
 const truthy = (value: string | undefined) => /^(?:1|t|true|y|yes|on)$/i.test(value ?? "");
 
 /** The directory a command runs in after options such as `--directory` or `-C`, applied in order. */
@@ -561,7 +562,7 @@ function uv(context: Context, args: string[], cwd: string, chain: string[], dept
     if (!run.rest.length) return;
     const module = sub === "run" && (run.seen.has("-m") || run.seen.has("--module"));
     visit(context, module ? ["python", "-m", ...run.rest] : run.rest, movedTo(cwd, ["--directory"], seen, run.seen), chain, depth + 1);
-  } else if ((PYTHON_INSTALLS.uv!.includes(sub ?? "") || (sub === "pip" && ["install", "sync"].includes(options(words, spec).rest[0] ?? ""))) && !previews(words)) report(context, "install", text, chain);
+  } else if ((PYTHON_INSTALLS.uv!.includes(sub ?? "") || (sub === "pip" && ["install", "sync"].includes(options(words, spec).rest[0] ?? ""))) && !previews("uv", sub, words)) report(context, "install", text, chain);
   else if (sub === "build") report(context, "build", text, chain);
 }
 
@@ -569,8 +570,10 @@ function uv(context: Context, args: string[], cwd: string, chain: string[], dept
  * `poetry run`, `pdm run`, `pipenv run`, and `pipx run` run their command as
  * given; `hatch run` and `hatch env run` first create and sync the
  * environment, and `hatch run` takes leading `+`/`-` matrix selectors and an
- * `env:` prefix. Script names they look up in `pyproject.toml`, `hatch.toml`,
- * or `Pipfile` are leaves.
+ * `env:` prefix. `poetry -C` moves the command; `pdm run` keeps its directory
+ * unless `--working-dir` names one, relative to the project root (`-p`, else
+ * the nearest `pyproject.toml`). Script names they look up in
+ * `pyproject.toml`, `hatch.toml`, or `Pipfile` are leaves.
  */
 function pythonProject(context: Context, name: "poetry" | "pdm" | "hatch" | "pipenv" | "pipx", args: string[], cwd: string, chain: string[], depth: number, text: string): void {
   const spec = PYTHON_TOOLS[name];
@@ -584,11 +587,17 @@ function pythonProject(context: Context, name: "poetry" | "pdm" | "hatch" | "pip
       const command = words[at] === "--" ? words.slice(at + 1) : words.slice(at);
       const prefix = command[0]?.indexOf(":") ?? -1;
       run = { rest: prefix === -1 ? command : [command[0]!.slice(prefix + 1), ...command.slice(1)], seen: new Map() };
-    } else run = scriptOptions(sub === "run" ? words : words.slice(1), name === "hatch" ? PYTHON_TOOLS.hatchEnvRun : spec);
+    } else run = scriptOptions(sub === "run" ? words : words.slice(1), name === "hatch" ? PYTHON_TOOLS.hatchEnvRun : name === "pdm" ? PYTHON_TOOLS.pdmRun : spec);
     if (!run.rest.length) return;
     if (name === "hatch") report(context, "install", text, chain);
-    visit(context, run.rest, movedTo(cwd, name === "poetry" ? ["-C", "--directory"] : name === "pdm" ? ["--working-dir"] : [], seen, run.seen), chain, depth + 1);
-  } else if (PYTHON_INSTALLS[name]?.includes(sub ?? "")) { if (!previews(words)) report(context, "install", text, chain); }
+    let directory = movedTo(cwd, name === "poetry" ? ["-C", "--directory"] : [], seen, run.seen);
+    const working = name === "pdm" ? run.seen.get("--working-dir") : undefined;
+    if (typeof working === "string") {
+      const project = run.seen.get("--project") ?? run.seen.get("-p");
+      directory = path.resolve(typeof project === "string" ? path.resolve(cwd, project) : packageRoot(context, cwd, "pyproject.toml"), working);
+    }
+    visit(context, run.rest, directory, chain, depth + 1);
+  } else if (PYTHON_INSTALLS[name]?.includes(sub ?? "")) { if (!previews(name, sub, words)) report(context, "install", text, chain); }
   else if (sub === "build" && name !== "pipenv" && name !== "pipx") report(context, "build", text, chain);
   else if (name === "hatch" && sub === "test") report(context, "test", text, chain);
 }
