@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config";
-import { assert, flag, git, output } from "./core";
+import { assert, flag, git, mutateGitCaptured, output } from "./core";
 
 const manifestName = ".agent-tool-hooks.json";
 interface Manifest { schemaVersion: 1; files: Record<string, { hash: string; executable: boolean }> }
@@ -126,7 +126,7 @@ function install(root: string, common: string, destination: string, sources: Hoo
   const temporary = path.join(destination, `.agent-tool-manifest-${randomUUID()}`);
   writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   renameSync(temporary, manifestFile);
-  if (configure) assert(spawnSync("git", ["config", "--local", "core.hooksPath", destination], { stdio: "inherit" }).status === 0, "Could not configure installed hooks.");
+  if (configure) mutateGitCaptured(["config", "--local", "core.hooksPath", destination]);
   const after = config(["--type=path", "--get", "core.hooksPath"]);
   assert(resolveDirectory(after ? path.resolve(root, after) : path.join(common, "hooks")) === destination, "Effective hooksPath does not match installation; inspect Git configuration.");
   output({ ok: true, applied: true, destination, changes, backups });

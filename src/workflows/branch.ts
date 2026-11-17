@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { loadConfig, type AgentToolConfig } from "../config";
 import { remoteBranchHead } from "../git/prContext";
 import { gitEnvironment } from "../git/environment";
-import { assert, clean, currentBranch, flag, git, head, mutateGit, nativeBranch, oid, option, output, repository } from "./core";
+import { assert, clean, currentBranch, flag, git, head, mutateGit, mutateGitCaptured, nativeBranch, oid, option, output, repository } from "./core";
 
 export function branchErrors(name: string, config: AgentToolConfig): string[] {
   const errors: string[] = [];
@@ -75,7 +75,7 @@ export function branchCommand(args: string[]): number {
     assert(baseOid, `Remote base '${base}' does not exist.`);
     git(["fetch", "--no-tags", remote, `refs/heads/${base}`]);
     assert(git(["rev-parse", "FETCH_HEAD"]) === baseOid && remoteBranchHead(url, base) === baseOid, "Base moved while fetching; retry creation.");
-    mutateGit(["switch", "--no-track", "-c", name, oid(baseOid)]);
+    mutateGitCaptured(["switch", "--no-track", "-c", name, oid(baseOid)]);
     assert(currentBranch() === name && head() === baseOid, "Checkout changed during branch creation.");
     output({ branch: name, headOid: baseOid, baseBranch: base, baseOid, remote }); return 0;
   }
