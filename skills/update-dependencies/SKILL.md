@@ -49,7 +49,10 @@ still differs, report the mismatch rather than deleting arbitrary dependencies.
 
 After upgrading agent-tool, run the repository's skill/permission sync commands
 (or `agent-tool skills install --harness <existing-scope> --apply`), preserve its
-harness scope, and commit ownership manifests with generated files. Hermes reads
+harness scope, and commit the ownership manifests with any generated files. The
+manifests record the agent-tool version, so every upgrade changes them, even
+when no skill or rule changed, and `skills check` and `permissions check` fail
+until the sync records the new version. Hermes reads
 the shared `.agents/skills` in a trusted project; the installer does not grant
 trust. If discovery is unavailable, read those files directly rather than silently
 using a stale global copy.

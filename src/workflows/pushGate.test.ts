@@ -499,6 +499,19 @@ test("the hooks, skills, and permissions guards use the shared drift checks", ()
   result = f.gate([["refs/heads/main", installed, "refs/heads/main", zero]]);
   expect(result.status).toBe(0);
   expect(JSON.parse(result.stdout).guards.map((item: { name: string }) => item.name)).toEqual(["hooks", "skills", "permissions", "branch", "ranges", "commits", "binaries"]);
+  // Manifests from another agent-tool release fail their guards, the shared skills manifest reported once.
+  for (const file of [".agent-tool-skills.json", ".agent-tool-permissions.json"]) {
+    const manifest = JSON.parse(readFileSync(path.join(f.root, file), "utf8"));
+    writeFileSync(path.join(f.root, file), JSON.stringify({ ...manifest, agentToolVersion: file.includes("skills") ? "0.0.1" : undefined }));
+  }
+  result = f.gate([["refs/heads/main", installed, "refs/heads/main", zero]]);
+  expect(result.status).toBe(1);
+  const version = f.run(["--version"]).stdout.trim();
+  expect(JSON.parse(result.stdout).guards.slice(1, 3)).toEqual([
+    expect.objectContaining({ name: "skills", ok: false, details: { harnesses: ["claude", "opencode"], changes: [{ path: ".agent-tool-skills.json", status: "outdated", recordedVersion: "0.0.1", currentVersion: version }] } }),
+    expect.objectContaining({ name: "permissions", ok: false, details: { harness: "codex", changes: [{ path: ".agent-tool-permissions.json", status: "outdated", recordedVersion: null, currentVersion: version }] } }),
+  ]);
+  f.git(["checkout", "--", ".agent-tool-skills.json", ".agent-tool-permissions.json"]);
   const skill = path.join(f.root, ".claude/skills/ship-pr/SKILL.md");
   writeFileSync(skill, `${readFileSync(skill, "utf8")}edited\n`);
   result = f.gate([["refs/heads/main", installed, "refs/heads/main", zero]]);

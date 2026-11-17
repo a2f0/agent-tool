@@ -233,7 +233,13 @@ do not act on this one. It then runs, in order:
    every harness their manifests record; `branch check --pre-push`; and, for
    every pushed ref that is not a deletion, `commits check` and `checks
    binaries` over the commits that push adds. Every guard runs and reports;
-   any failure refuses the push before a declared step starts.
+   any failure refuses the push before a declared step starts. Both manifests
+   record the agent-tool release whose install wrote them, so after a pin bump
+   the skills and permissions guards refuse the push until
+   `skills install --apply` and `permissions install --apply` record the new
+   one, even when no managed file changed; the skills guard reports the shared
+   manifest once, however many harnesses it covers
+   ([skill installation](reference.md#portable-skills)).
 2. The declared `steps`, through the run-group runner with the label
    `push-gate`, so every push leaves a source-bound report with per-step
    durations in `agent-tool runs list`. A failing step refuses the push with

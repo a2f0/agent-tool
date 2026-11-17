@@ -5,7 +5,7 @@ import path from "node:path";
 import { runCommand } from "../commands/run";
 import { assert, flag, option } from "../workflows/core";
 import { CLASSES } from "../permissions/catalog";
-import { checkPermissions } from "../permissions/install";
+import { checkPermissions, PERMISSIONS_MANIFEST } from "../permissions/install";
 import { projectCommands } from "../permissions/project";
 import { pinnedBun } from "./toolchain";
 import { workspacePackage } from "../system/workspace";
@@ -21,13 +21,14 @@ const EXECUTABLE = /^[\w.+-][\w.+-]*$/;
  * they are regenerated.
  */
 function assertCurrentRules(root: string, command: string): void {
-  if (!existsSync(path.join(root, ".agent-tool-permissions.json"))) return;
+  if (!existsSync(path.join(root, PERMISSIONS_MANIFEST))) return;
   // Only a current allow class matches whatever rules exist; a removed or asking class relies on fresh ones.
   const entry = projectCommands(root).find(item => item.command === command);
   if (entry && CLASSES[entry.class].decision === "allow") return;
-  const recorded = JSON.parse(readFileSync(path.join(root, ".agent-tool-permissions.json"), "utf8")) as { claude?: unknown; codex?: unknown };
+  const recorded = JSON.parse(readFileSync(path.join(root, PERMISSIONS_MANIFEST), "utf8")) as { claude?: unknown; codex?: unknown };
   const targets = [...(recorded.claude ? ["claude"] : []), ...(recorded.codex ? ["codex"] : [])];
-  const stale = targets.flatMap(target => checkPermissions(root, target)).filter(item => item.status !== "unchanged");
+  // Rule content decides this; a manifest from another agent-tool release with current rules allows nothing extra.
+  const stale = targets.flatMap(target => checkPermissions(root, target)).filter(item => item.status !== "unchanged" && item.path !== PERMISSIONS_MANIFEST);
   assert(!stale.length, `Permission rules predate the current class of '${command}'; regenerate them with approval (agent-tool permissions install --apply) before running it.`);
 }
 

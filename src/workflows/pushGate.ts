@@ -161,7 +161,8 @@ function runGuards(root: string, config: AgentToolConfig, tuples: PushTuple[], d
   const guards: Guard[] = [];
   guard(guards, "hooks", undefined, () => { const result = checkHooks(); return { ok: result.ok, details: { changes: result.changes.filter(change => change.status !== "unchanged"), blockers: result.blockers, configure: result.configure } }; });
   const skills = installedSkillHarnesses(root);
-  if (skills) guard(guards, "skills", undefined, () => { const changes = skills.flatMap(harness => checkSkills(root, harness)).filter(change => change.status !== "unchanged"); return { ok: !changes.length, details: { harnesses: skills, changes } }; });
+  // Each harness's check ends with the shared manifest's entry; report it once.
+  if (skills) guard(guards, "skills", undefined, () => { const changes = skills.flatMap(harness => checkSkills(root, harness)).filter((change, index, all) => change.status !== "unchanged" && all.findIndex(other => other.path === change.path) === index); return { ok: !changes.length, details: { harnesses: skills, changes } }; });
   const permissions = installedPermissionHarness(root);
   if (permissions) guard(guards, "permissions", undefined, () => { const changes = checkPermissions(root, permissions).filter(change => change.status !== "unchanged"); return { ok: !changes.length, details: { harness: permissions, changes } }; });
   guard(guards, "branch", undefined, () => { const branches = pushedBranches(tuples).map(name => ({ name, errors: branchErrors(name, config) })).filter(branch => branch.errors.length); return { ok: !branches.length, details: { branches } }; });

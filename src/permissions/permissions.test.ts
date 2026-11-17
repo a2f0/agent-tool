@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { CATALOG, CLASSES, INVOCATIONS, claudePermissions, codexRules, strictest, type PermissionClass } from "./catalog";
 import { checkPermissions, installPermissions } from "./install";
+import metadata from "../../package.json";
 import { HELP } from "../cli";
 import { parseConfig } from "../config";
 import { projectCommands } from "./project";
@@ -110,15 +111,15 @@ test("install keeps unrelated Claude settings and replaces only managed rules", 
   const root = project();
   mkdirSync(path.join(root, ".claude"));
   writeFileSync(path.join(root, ".claude/settings.json"), JSON.stringify({ env: { A: "1" }, permissions: { allow: ["Bash(make test)"], deny: ["Read(.secrets/**)"] } }));
-  expect(installPermissions(root, "all")).toEqual([{ path: ".claude/settings.json", status: "update" }, { path: ".codex/rules/agent-tool.rules", status: "create" }]);
-  expect(checkPermissions(root, "all").map(item => item.status)).toEqual(["outdated", "missing"]);
+  expect(installPermissions(root, "all")).toEqual([{ path: ".claude/settings.json", status: "update" }, { path: ".codex/rules/agent-tool.rules", status: "create" }, { path: ".agent-tool-permissions.json", status: "create" }]);
+  expect(checkPermissions(root, "all").map(item => item.status)).toEqual(["outdated", "missing", "missing"]);
   installPermissions(root, "all", true);
   const settings = JSON.parse(readFileSync(path.join(root, ".claude/settings.json"), "utf8"));
   expect(settings.env).toEqual({ A: "1" });
   expect(settings.permissions.deny).toEqual(["Read(.secrets/**)"]);
   expect(settings.permissions.allow[0]).toBe("Bash(make test)");
   expect(settings.permissions.allow.slice(1)).toEqual(claudePermissions().allow);
-  expect(checkPermissions(root, "all").map(item => item.status)).toEqual(["unchanged", "unchanged"]);
+  expect(checkPermissions(root, "all").map(item => item.status)).toEqual(["unchanged", "unchanged", "unchanged"]);
   // A rule dropped from the catalog is removed on reinstall; user rules stay.
   const manifestFile = path.join(root, ".agent-tool-permissions.json");
   const manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
@@ -181,7 +182,7 @@ test("Codex migration removes managed prompts while preserving separate user rul
   writeFileSync(userFile, user);
   writeFileSync(path.join(root, ".agent-tool-permissions.json"), JSON.stringify({ schemaVersion: 1, codex: { file: ".codex/rules/agent-tool.rules", sha256: createHash("sha256").update(earlier).digest("hex") } }));
   expect(checkPermissions(root, "codex")[0]!.status).toBe("outdated");
-  expect(installPermissions(root, "codex")).toEqual([{ path: ".codex/rules/agent-tool.rules", status: "update" }]);
+  expect(installPermissions(root, "codex")).toEqual([{ path: ".codex/rules/agent-tool.rules", status: "update" }, { path: ".agent-tool-permissions.json", status: "update" }]);
   expect(readFileSync(file, "utf8")).toBe(earlier);
   // Refuse locally edited managed rules before replacing anything.
   writeFileSync(file, earlier + user);
@@ -195,6 +196,41 @@ test("Codex migration removes managed prompts while preserving separate user rul
   expect(installPermissions(root, "codex", true)[0]!.status).toBe("unchanged");
 });
 
+test("install records the agent-tool version, and check requires the running one", () => {
+  const root = project();
+  installPermissions(root, "all", true);
+  const manifestFile = path.join(root, ".agent-tool-permissions.json");
+  const manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
+  // The version sits beside the schema, so an upgrade's manifest diff starts with it.
+  expect(Object.keys(manifest)).toEqual(["schemaVersion", "agentToolVersion", "claude", "codex"]);
+  expect(manifest).toMatchObject({ schemaVersion: 1, agentToolVersion: metadata.version });
+  expect(checkPermissions(root, "all").at(-1)).toEqual({ path: ".agent-tool-permissions.json", status: "unchanged", recordedVersion: metadata.version, currentVersion: metadata.version });
+  const settings = readFileSync(path.join(root, ".claude/settings.json"), "utf8"), rules = readFileSync(path.join(root, ".codex/rules/agent-tool.rules"), "utf8");
+
+  // A manifest from another release, or from one before the field, fails until the install runs,
+  // even though every generated file is current.
+  for (const recorded of ["0.0.1", undefined]) {
+    writeFileSync(manifestFile, `${JSON.stringify({ ...manifest, agentToolVersion: recorded }, null, 2)}\n`);
+    for (const harness of ["all", "claude", "codex"]) {
+      const checks = checkPermissions(root, harness);
+      expect(checks.slice(0, -1).every(item => item.status === "unchanged")).toBe(true);
+      expect(checks.at(-1)).toEqual({ path: ".agent-tool-permissions.json", status: "outdated", recordedVersion: recorded ?? null, currentVersion: metadata.version });
+    }
+    expect(installPermissions(root, "all").filter(item => item.status !== "unchanged")).toEqual([{ path: ".agent-tool-permissions.json", status: "update" }]);
+    // Reinstalling one harness keeps the other's ownership record.
+    expect(installPermissions(root, "claude", true).filter(item => item.status !== "unchanged")).toEqual([{ path: ".agent-tool-permissions.json", status: "update" }]);
+    expect(JSON.parse(readFileSync(manifestFile, "utf8"))).toEqual(manifest);
+    expect(checkPermissions(root, "all").every(item => item.status === "unchanged")).toBe(true);
+    expect(readFileSync(path.join(root, ".claude/settings.json"), "utf8")).toBe(settings);
+    expect(readFileSync(path.join(root, ".codex/rules/agent-tool.rules"), "utf8")).toBe(rules);
+  }
+  for (const invalid of [1, "", "0.1 beta", null]) {
+    writeFileSync(manifestFile, JSON.stringify({ ...manifest, agentToolVersion: invalid }));
+    expect(() => checkPermissions(root, "all")).toThrow("Invalid managed permissions manifest.");
+    expect(() => installPermissions(root, "all", true)).toThrow("Invalid managed permissions manifest.");
+  }
+});
+
 test("the CLI previews by default and rejects unknown harnesses", () => {
   const root = project();
   const cli = path.resolve(import.meta.dir, "../index.ts");
@@ -202,7 +238,16 @@ test("the CLI previews by default and rejects unknown harnesses", () => {
   expect(JSON.parse(preview.stdout)).toMatchObject({ applied: false });
   expect(spawnSync(process.execPath, [cli, "permissions", "check"], { cwd: root, encoding: "utf8" }).status).toBe(1);
   expect(spawnSync(process.execPath, [cli, "permissions", "show", "--harness", "opencode"], { cwd: root, encoding: "utf8" }).stderr).toMatch(/Unknown permissions harness/);
-});
+  // A stale recorded version fails the CLI check until the install records the running one.
+  expect(spawnSync(process.execPath, [cli, "permissions", "install", "--apply"], { cwd: root, encoding: "utf8" }).status).toBe(0);
+  const manifestFile = path.join(root, ".agent-tool-permissions.json");
+  writeFileSync(manifestFile, readFileSync(manifestFile, "utf8").replace(`"agentToolVersion": "${metadata.version}"`, `"agentToolVersion": "0.0.1"`));
+  const stale = spawnSync(process.execPath, [cli, "permissions", "check"], { cwd: root, encoding: "utf8" });
+  expect(stale.status).toBe(1);
+  expect(JSON.parse(stale.stdout).changes.filter((item: { status: string }) => item.status !== "unchanged")).toEqual([{ path: ".agent-tool-permissions.json", status: "outdated", recordedVersion: "0.0.1", currentVersion: metadata.version }]);
+  expect(spawnSync(process.execPath, [cli, "permissions", "install", "--apply"], { cwd: root, encoding: "utf8" }).status).toBe(0);
+  expect(JSON.parse(spawnSync(process.execPath, [cli, "permissions", "check"], { cwd: root, encoding: "utf8" }).stdout).ok).toBe(true);
+}, 30_000);
 
 test("only routine classified executables receive allow rules", () => {
   const root = project();
