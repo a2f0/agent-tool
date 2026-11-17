@@ -78,6 +78,9 @@ test("finds a wait loop inside a harness's eval wrapper and reads its condition"
 test("judges only checks whose outcome can be read from the script", () => {
   const checks = (condition: string) => loopOf(`until ${condition}; do sleep 5; done`).condition?.atoms.map(atom => atom.check.kind);
   expect(checks(`! pgrep -f "release verify" >/dev/null 2>&1`)).toEqual(["pgrep"]);
+  // pgrep's output must be discarded: into a pipe that closes, it would die of SIGPIPE.
+  expect(checks(`! pgrep -f "release verify"`)).toEqual(["other"]);
+  expect(checks(`! pgrep -f "release verify" 2>/dev/null`)).toEqual(["other"]);
   expect(checks(`grep -q '^exit ' "" 2>/dev/null`)).toEqual(["missing-file"]);
   expect(checks(`[ -s '' ]`)).toEqual(["missing-file"]);
   expect(checks(`test -f ""`)).toEqual(["missing-file"]);
@@ -92,17 +95,19 @@ test("judges only checks whose outcome can be read from the script", () => {
   expect(checks(`! pgrep -f verify >&3`)).toEqual(["other"]);
   expect(checks(`! pgrep -f verify 2>&1 >/dev/null`)).toEqual(["other"]);
   expect(analyzeScript("until ! pgrep -f verify &>/dev/null; do sleep 5; done", "bash")!.loops[0]!.condition!.atoms[0]!.check.kind).toBe("pgrep");
-  expect(checks(`! pgrep -f verify 2>/dev/null >&-`)).toEqual(["pgrep"]);
+  expect(checks(`! pgrep -f verify >/dev/null 2>&-`)).toEqual(["pgrep"]);
+  // With its output closed rather than discarded, what pgrep does is not read.
+  expect(checks(`! pgrep -f verify 2>/dev/null >&-`)).toEqual(["other"]);
   // A descriptor closed after it was discarded can no longer be copied.
   expect(checks(`! pgrep -f verify 3>/dev/null 3>&- 2>&3`)).toEqual(["other"]);
   // An empty pattern after -e leaves grep reading its input, which may still arrive.
   expect(checks(`grep -q -e ""`)).toEqual(["other"]);
   expect(checks(`grep -q -- -e ""`)).toEqual(["missing-file"]);
   // Bracket expressions, escapes and non-ASCII text can match differently under another locale.
-  expect(checks(`! pgrep -f "[[:alpha:]]x"`)).toEqual(["other"]);
-  expect(checks(`! pgrep -f "[r]elease verify"`)).toEqual(["other"]);
-  expect(checks(`! pgrep -f "caf\u00e9"`)).toEqual(["other"]);
-  expect(checks(`! pgrep -f 'a\\.b'`)).toEqual(["other"]);
+  expect(checks(`! pgrep -f "[[:alpha:]]x" >/dev/null`)).toEqual(["other"]);
+  expect(checks(`! pgrep -f "[r]elease verify" >/dev/null`)).toEqual(["other"]);
+  expect(checks(`! pgrep -f "caf\u00e9" >/dev/null`)).toEqual(["other"]);
+  expect(checks(`! pgrep -f 'a\\.b' >/dev/null`)).toEqual(["other"]);
   // A condition run in the background returns at once, and is not read at all.
   expect(loopOf(`until [ -f "" ] & do sleep 5; done`).condition).toBeUndefined();
   // A pipeline or a sequence in the condition is not read at all.
@@ -175,7 +180,7 @@ test("a loop is stuck only while its condition is settled by loops that cannot f
   // macOS and BSD pgrep leave out the shell that runs it: alone it would finish, but two loops on
   // one pattern each wait for the other.
   expect(stuckLoops(new Map([[10, waits("p")]]), facts(false, { p: [10] }, { 10: [1] })).size).toBe(0);
-  const pair = stuckLoops(new Map([[10, waits("p")], [11, loopOf(`while pgrep -f "p"; do sleep 10; done`)]]), facts(false, { p: [10, 11] }, { 10: [1], 11: [1] }));
+  const pair = stuckLoops(new Map([[10, waits("p")], [11, loopOf(`while pgrep -f "p" >/dev/null; do sleep 10; done`)]]), facts(false, { p: [10, 11] }, { 10: [1], 11: [1] }));
   expect([...pair.keys()]).toEqual([10, 11]);
   expect(pair.get(10)).toBe(`pgrep -f "p" always finds wait loop 11, which cannot finish either`);
   // A pattern that also matches a process that will end is still settled by the loop itself on
@@ -183,12 +188,12 @@ test("a loop is stuck only while its condition is settled by loops that cannot f
   expect(stuckLoops(new Map([[10, waits("p")]]), facts(true, { p: [10, 500] })).size).toBe(1);
   expect(stuckLoops(new Map([[10, waits("p")]]), facts(false, { p: [10, 500] }, { 10: [1] })).size).toBe(0);
   // A pattern matching only other processes waits for them.
-  expect(stuckLoops(new Map([[10, waits("[p]")]]), facts(true, { "[p]": [500] })).size).toBe(0);
+  expect(stuckLoops(new Map([[10, waits("q")]]), facts(true, { q: [500] })).size).toBe(0);
   // A loop whose partner waits on a real process is not stuck: the partner can finish first.
   const chain = new Map([[10, waits("a")], [11, waits("b")]]);
   expect(stuckLoops(chain, facts(false, { a: [11], b: [500] }, { 10: [1], 11: [1] })).size).toBe(0);
   // `&&` needs one settled side to keep `until` waiting; `||` needs both.
-  const both = (operator: string) => loopOf(`until ! pgrep -f a ${operator} ! pgrep -f b; do sleep 5; done`);
+  const both = (operator: string) => loopOf(`until ! pgrep -f a >/dev/null ${operator} ! pgrep -f b >/dev/null; do sleep 5; done`);
   expect(stuckLoops(new Map([[10, both("&&")]]), facts(true, { a: [10], b: [] })).size).toBe(1);
   expect(stuckLoops(new Map([[10, both("||")]]), facts(true, { a: [10], b: [] })).size).toBe(0);
   // A check teardown cannot read could leave the loop another way, such as `break`.
@@ -388,7 +393,8 @@ test("teardown fails on the session's wait loops that cannot finish, and leaves 
     pairB: sh(`${PATHED}sleep 2; while pgrep -f "agent-tool-stuck-${id}" >/dev/null; do sleep 3; done`),
     emptyName: sh(`${PATHED}until grep -q "^exit " "" 2>/dev/null; do sleep 30; done`),
     other: { argv: [process.execPath, "-e", "setInterval(() => {}, 1000)", `agent-tool-other-${id}`] },
-    waitsForOther: sh(`${PATHED}sleep 2; until ! pgrep -f "[a]gent-tool-other-${id}" >/dev/null; do sleep 1; done`),
+    // `oth*er` matches the other process's `other`, but not this loop's own command line.
+    waitsForOther: sh(`${PATHED}sleep 2; until ! pgrep -f "agent-tool-oth*er-${id}" >/dev/null; do sleep 1; done`),
     fileWait: sh(`${PATHED}until grep -q "^exit=" ${review} 2>/dev/null; do sleep 30; done`),
     sleeper: { argv: ["sleep", "300"] },
     shell: sh("sleep 300; :"),

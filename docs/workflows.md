@@ -731,8 +731,9 @@ that can never finish keeps running long after the work. Teardown reports such
 loops so a person can stop them; it never stops, suspends or signals one, with
 or without `--apply`. A stuck loop's `reason` ends with the pid to `kill` once
 you have checked it is yours. A report shows only the loop itself (`command`),
-written back out from what teardown read, never the commands around it, which
-may hold secrets.
+written back out from the shell's exact argv, never the commands around it,
+which may hold secrets; without the exact argv it shows a placeholder. A shell
+that ends while teardown inspects it is left out of the report.
 
 Teardown reads the script of every `-c` shell (`sh -c`, `zsh -c`, `bash -lc`)
 among the untracked processes and among the agent session's other shells. A
@@ -771,7 +772,8 @@ judged only when all of these hold:
   in the background, of checks that all settle for good. Two checks settle:
   - `pgrep -f <pattern>`, with a literal pattern of printable ASCII and no
     bracket expressions or escapes (whose meaning can depend on the locale),
-    and output only discarded (to `/dev/null`), stays true while it finds a process that cannot exit.
+    and its output sent to `/dev/null` (into a pipe that closes it would die),
+    stays true while it finds a process that cannot exit.
     procps `pgrep` (Linux) reports the shell that runs it, so there a loop whose
     own command line matches its pattern never ends; BSD and macOS `pgrep` leave
     out that shell and its ancestors, so there it takes loops whose patterns

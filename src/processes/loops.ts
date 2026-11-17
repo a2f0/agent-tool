@@ -12,7 +12,7 @@ import { plainText } from "../commands/output";
 import { outsideExecutable } from "../system/executable";
 import { readRegularFile } from "../system/files";
 import { analyzeScript, definedNames, exclusive, isShell, shellArgvScript, shellScript, STEP_TRAP, wordsInOrder, type Analysis, type WaitLoop } from "./shell";
-import { ancestors, argsOf, type ProcessRow } from "./table";
+import { ancestors, argsOf, processTable, type ProcessRow } from "./table";
 
 export type LoopState = { status: "waiting" } | { status: "stuck"; reason: string };
 export type LoopEvent = { type: "proved"; reason: string };
@@ -248,13 +248,9 @@ export function definesAny(text: string, names: Iterable<string>, read: (file: s
     const forms = [`\\balias\\b[^\\n]*${edge}${word}=`, `\\bfunction\\s+${word}${end}`, `${edge}${word}\\s*\\(\\s*\\)`, `\\b(?:autoload|functions)\\b[^\\n]*${edge}${word}${end}`, `\\bfunctions\\[${word}\\]`];
     if (forms.some(form => new RegExp(form).test(text))) return true;
   }
-  for (const [, target] of text.matchAll(SOURCE)) {
-    const file = target!.replace(/^["']|["']$/g, "").replace(/^~(?=\/)|^\$HOME(?=\/)|^\$\{HOME\}(?=\/)/, homedir());
-    if (depth >= 3 || /[$`*?]/.test(file) || !path.isAbsolute(file)) return true;
-    const nested = read(file);
-    if (nested === undefined || (nested !== null && definesAny(nested, names, read, depth + 1))) return true;
-  }
-  return false;
+  // Files it sources in turn: `withSources` reads each once, within a budget.
+  const texts = withSources(text, read, depth);
+  return !texts || texts.slice(1).some(nested => definesAny(nested, names, () => null));
 }
 
 // A line that may change PATH in a way a reader cannot follow.
@@ -318,15 +314,20 @@ function startupFiles(shell: string, login: boolean, environment: (name: string)
  * A file's text and the texts of the files it sources in turn, by literal path (`~` and `$HOME`
  * expanded); undefined when one cannot be read or its path is found any other way.
  */
-export function withSources(text: string, read: (file: string) => string | null | undefined = readText, depth = 0): string[] | undefined {
+export function withSources(text: string, read: (file: string) => string | null | undefined = readText, depth = 0, budget = { files: 64, bytes: 16 * 1024 * 1024, seen: new Set<string>() }): string[] | undefined {
   const texts = [text];
   for (const [, target] of text.matchAll(SOURCE)) {
     const file = target!.replace(/^["']|["']$/g, "").replace(/^~(?=\/)|^\$HOME(?=\/)|^\$\{HOME\}(?=\/)/, homedir());
     if (depth >= 3 || /[$`*?]/.test(file) || !path.isAbsolute(file)) return undefined;
+    // Each file is read once, and only so many files and bytes in all: past that, anything may be defined.
+    if (budget.seen.has(file)) continue;
+    budget.seen.add(file);
+    if ((budget.files -= 1) < 0) return undefined;
     const nested = read(file);
     if (nested === undefined) return undefined;
     if (nested === null) continue;
-    const more = withSources(nested, read, depth + 1);
+    if ((budget.bytes -= nested.length) < 0) return undefined;
+    const more = withSources(nested, read, depth + 1, budget);
     if (!more) return undefined;
     texts.push(...more);
   }
@@ -463,7 +464,9 @@ export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number
     const verified = !!exact && runsShell(exact.shell, args!.executable, root);
     const parsed = verified ? exact! : shownScript;
     const analysis = analyzeScript(parsed.script, parsed.shell);
-    if (!analysis) { found.push({ ...base, script: `(a ${parsed.shell} script teardown cannot read)` }); continue; }
+    // Without the exact argv, positional arguments may read as part of the script: show none of it.
+    const unread = `(a ${parsed.shell} script teardown cannot read exactly)`;
+    if (!analysis) { found.push({ ...base, script: unread }); continue; }
     if (analysis.loops.length === 0) continue;
     const kids = children.get(pid) ?? [];
     // Judge a loop only when the body only sleeps, the condition is simple checks, no `timeout`
@@ -474,7 +477,7 @@ export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number
     // A call of a function defined around the script runs code teardown has not judged.
     const functions = new Set([...analysis.defines, ...(context?.all ?? []).flatMap(text => [...definedNames(text)])]);
     const loop = context ? runningLoop(analysis, kids, functions) : undefined;
-    found.push({ ...base, script: (loop ?? runningLoop(analysis, kids) ?? analysis.loops[0]!).text, ...(loop ? { loop } : {}) });
+    found.push({ ...base, script: verified ? (loop ?? runningLoop(analysis, kids) ?? analysis.loops[0]!).text : unread, ...(loop ? { loop } : {}) });
     const above = ancestors(table, pid);
     // A trap that runs between commands or on failures can leave the loop, and so can unknown ones.
     const trapped = analysis.traps || !context || context.all.some(text => STEP_TRAP.test(text) || TRAP_HANDLER.test(text));
@@ -500,12 +503,16 @@ export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number
     ancestors: lineage,
     failing: confirmed,
   };
-  const stuck = stuckLoops(judged, facts);
-  for (const item of found) {
+  // The probes ran after the snapshot: a shell that has gone or changed since is judged and
+  // reported no more.
+  const now = processTable(), current = (row: ProcessRow) => now.get(row.pid)?.started === row.started && now.get(row.pid)?.command === row.command;
+  for (const pid of [...judged.keys()]) if (!current(table.get(pid)!)) judged.delete(pid);
+  const stuck = stuckLoops(judged, facts), present = found.filter(item => current(item.row));
+  for (const item of present) {
     const reason = stuck.get(item.row.pid);
     if (reason !== undefined) item.state = loopTransition(item.state, { type: "proved", reason: `${reason}; teardown never stops it: once you know it is yours, \`kill ${item.row.pid}\`` });
   }
-  return found;
+  return present;
 }
 
 const MAX_COMMAND = 200;

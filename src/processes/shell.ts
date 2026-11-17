@@ -447,11 +447,16 @@ const INTERPRETERS = /^(?:python|pypy)[0-9.]*$|^(?:node|nodejs|bun|deno)$/;
  * 2>&1`). A copy of any other descriptor fails when it is closed, and the command never runs.
  */
 function harmless(redirects: Redirect[]): boolean {
+  return discarded(redirects) !== undefined;
+}
+
+/** The descriptors the redirections leave pointing at `/dev/null`, or undefined when one could fail. */
+function discarded(redirects: Redirect[]): Set<number> | undefined {
   const discarded = new Set<number>();
   for (const { operator, fd, target } of redirects) {
-    if (!target.literal) return false;
+    if (!target.literal) return undefined;
     if (operator === "&>" || operator === "&>>") {
-      if (target.text !== "/dev/null") return false;
+      if (target.text !== "/dev/null") return undefined;
       discarded.add(1).add(2);
     } else if ([">", ">>", ">|", "<"].includes(operator) && target.text === "/dev/null") discarded.add(fd ?? (operator === "<" ? 0 : 1));
     else if ((operator === ">&" || operator === "<&") && (target.text === "-" || discarded.has(Number(target.text)))) {
@@ -459,15 +464,17 @@ function harmless(redirects: Redirect[]): boolean {
       // A closed descriptor can no longer be copied.
       if (target.text === "-") discarded.delete(into);
       else discarded.add(into);
-    } else return false;
+    } else return undefined;
   }
-  return true;
+  return discarded;
 }
 
 function check(command: Command): Check {
   if (command.kind !== "simple" || command.assignments > 0 || !harmless(command.redirects) || !command.words.every(plain)) return { kind: "other" };
   const words = command.words.map(word => word.text);
-  if (words[0] === "pgrep" && words[1] === "-f") {
+  // pgrep prints what it finds: into a pipe that closes it would die of SIGPIPE, so its output
+  // must go to `/dev/null`.
+  if (words[0] === "pgrep" && words[1] === "-f" && discarded(command.redirects)?.has(1)) {
     const rest = words[2] === "--" ? words.slice(3) : words.slice(2);
     // Bracket expressions, escapes and text outside printable ASCII can match differently under
     // another locale than teardown's; such a pattern is not judged.
@@ -680,8 +687,10 @@ export function exclusive(analysis: Analysis, loop: WaitLoop, functions: Readonl
 /** The names shell text defines as functions or aliases at the start of a line, as a shell snapshot lists them. */
 export function definedNames(text: string): Set<string> {
   const names = new Set<string>();
-  for (const match of text.matchAll(/^[ \t]*(?:function[ \t]+([^\s(){};&|]+)|([^\s(){};&|=]+)[ \t]*\([ \t]*\))/gm)) names.add((match[1] ?? match[2])!);
-  for (const match of text.matchAll(/^[ \t]*alias[ \t]+(?:-\S+[ \t]+)*(?:--[ \t]+)?['"]?([^=\s'"]+)=/gm)) names.add(match[1]!);
+  // At the start of a line or of a command after `;`, `&&`, `||`, `{` or `(`.
+  const start = "(?:^|[;&|{(])[ \\t]*";
+  for (const match of text.matchAll(new RegExp(`${start}(?:function[ \\t]+([^\\s(){};&|]+)|([^\\s(){};&|=]+)[ \\t]*\\([ \\t]*\\))`, "gm"))) names.add((match[1] ?? match[2])!);
+  for (const match of text.matchAll(new RegExp(`${start}alias[ \\t]+(?:-\\S+[ \\t]+)*(?:--[ \\t]+)?['"]?([^=\\s'"]+)=`, "gm"))) names.add(match[1]!);
   return names;
 }
 
