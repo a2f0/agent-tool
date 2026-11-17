@@ -12,7 +12,7 @@ const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 const WRAPPERS: ReadonlyMap<string, ReadonlySet<string>> = new Map(Object.entries({
   exec: ["-a"], command: [], nohup: [], nice: ["-n", "--adjustment"], time: ["-o", "--output", "-f", "--format"],
   timeout: ["-s", "--signal", "-k", "--kill-after"], stdbuf: ["-i", "-o", "-e", "--input", "--output", "--error"],
-  env: ["-u", "--unset", "-C", "--chdir", "-S", "--split-string", "-P", "-L", "-U"],
+  env: ["-u", "--unset", "-C", "--chdir", "-S", "--split-string", "-a", "--argv0", "--env0-from", "-P", "-L", "-U"],
 }).map(([name, values]) => [name, new Set(values)]));
 const KEYWORDS = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "fi", "done", "esac"]);
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -710,26 +710,49 @@ function agentTool(context: Context, input: string[], invokedIn: string, chain: 
 
 /**
  * Split a shell string into simple commands at `&&`, `||`, `;`, `|`, `&`,
- * newlines, and parentheses, honoring quotes; `cd <dir>` moves later commands.
- * Command substitutions, functions, and loops are not interpreted.
+ * newlines, and parentheses, honoring quotes; `cd <dir>` moves later commands,
+ * and `export`, `unset`, and assignments to exported variables change the
+ * variables they see. Command substitutions, functions, and loops are not
+ * interpreted.
  */
 function visitShell(context: Context, script: string, cwd: string, chain: string[], depth: number): void {
-  let directory = cwd;
-  // A `cd` inside parentheses ends with its subshell.
-  const outer: string[] = [];
+  let directory = cwd, env = context.env;
+  // A `cd` or variable change inside parentheses ends with its subshell.
+  const outer: { directory: string; env: Context["env"] }[] = [];
   const items = parseShell(script);
   for (const [index, item] of items.entries()) {
     if (item === "&") continue;
-    if (item === "(") { outer.push(directory); continue; }
-    if (item === ")") { directory = outer.pop() ?? directory; continue; }
+    if (item === "(") { outer.push({ directory, env }); continue; }
+    if (item === ")") { ({ directory, env } = outer.pop() ?? { directory, env }); continue; }
     const words = item;
-    // A backgrounded `cd dir &` runs in its own process and moves nothing after it.
+    // A backgrounded `cd dir &` runs in its own process and moves nothing after it; so does a backgrounded variable change.
     if (words[0] === "cd" && items[index + 1] === "&") continue;
     while (words.length && KEYWORDS.has(words[0]!)) words.shift();
     if (!words.length || words[0] === "for" || words[0] === "case" || /\(\)$/.test(words[0]!)) continue;
     if (words[0] === "cd") { if (words[1] && words[1] !== "-" && !words[1].startsWith("$")) directory = path.resolve(directory, words[1]); continue; }
-    visit(context, words, directory, chain, depth + 1);
+    if (words[0] === "export" || words[0] === "unset" || words.every(word => ASSIGNMENT.test(word))) { if (items[index + 1] !== "&") env = shellVariables(env, words); continue; }
+    const inherited = context.env;
+    context.env = env;
+    try { visit(context, words, directory, chain, depth + 1); } finally { context.env = inherited; }
   }
+}
+
+/**
+ * The exported variables after `export NAME=value`, `export -n NAME`, `unset
+ * NAME`, or plain `NAME=value` assignments, which change only variables the
+ * shell already exports.
+ */
+function shellVariables(env: Context["env"], [command, ...args]: string[]): Context["env"] {
+  const next: Record<string, string> = { ...env };
+  const names = args.filter(arg => !arg.startsWith("-"));
+  if (command === "unset") { if (!args.includes("-f")) for (const name of names) delete next[name]; return next; }
+  for (const word of command === "export" ? names : [command!, ...args]) {
+    const equals = word.indexOf("=");
+    const name = equals === -1 ? word : word.slice(0, equals);
+    if (command === "export" && args.includes("-n")) delete next[name];
+    else if (equals !== -1 && (command === "export" || Object.hasOwn(next, name))) next[name] = word.slice(equals + 1);
+  }
+  return next;
 }
 
 export function splitShell(script: string): string[][] {
