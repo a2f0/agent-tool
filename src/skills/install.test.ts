@@ -132,8 +132,11 @@ test("install records the agent-tool version, and check requires the running one
     expect(installSkills(root, "all", true).filter(change => change.status !== "unchanged")).toEqual([{ path: MANIFEST, status: "update" }]);
     expect(JSON.parse(readFileSync(manifestFile, "utf8"))).toEqual(manifest);
   }
-  writeFileSync(manifestFile, JSON.stringify({ ...manifest, schemaVersion: 2 }));
-  expect(() => checkSkills(root, "all")).toThrow("Invalid managed skill manifest.");
+  for (const invalid of [{ ...manifest, schemaVersion: 2 }, { ...manifest, files: [] }, [], null]) {
+    writeFileSync(manifestFile, JSON.stringify(invalid));
+    expect(() => checkSkills(root, "all")).toThrow("Invalid managed skill manifest.");
+    expect(() => installSkills(root, "all", true)).toThrow("Invalid managed skill manifest.");
+  }
 });
 
 test("the CLI check fails on a stale recorded version and passes once the install records the current one", () => {

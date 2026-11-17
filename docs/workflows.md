@@ -272,9 +272,10 @@ uncommitted or untracked changes; it warns that the steps checked something
 other than what the push sends, and records it under `worktree`. The hooks,
 skills, and permissions guards read the working tree too, with the agent-tool
 installed there, so they cannot see a pin bump whose package is not yet
-installed, or regenerated files left uncommitted; CI, which installs the pinned
+installed, or regenerated files left uncommitted. Only CI can catch those, so
+each repository configures a merge-gating CI job that installs the pinned
 release for the pushed commit and runs `skills check` and `permissions check`
-against what was committed, catches both.
+with the same `--harness` scopes as its installs.
 
 Steps that need the push itself, such as a per-commit message linter or a
 changed-path classifier, read `AGENT_TOOL_PUSH_GATE`, the path of a private

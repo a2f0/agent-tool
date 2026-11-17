@@ -51,10 +51,17 @@ function atomicWrite(file: string, contents: string): void {
 function readManifest(root: string): Recorded {
   const file = destination(root, PERMISSIONS_MANIFEST);
   if (!existsSync(file)) return { manifest: { schemaVersion: 1 } };
+  // Reading a FIFO or device would block a hook or CI; only a regular file can be a manifest.
+  if (!lstatSync(file).isFile()) throw new Error(`Managed permissions manifest is not a regular file: ${PERMISSIONS_MANIFEST}`);
   const raw = readFileSync(file, "utf8");
-  const { agentToolVersion, ...value } = JSON.parse(raw) as Manifest;
+  const parsed: unknown = JSON.parse(raw);
+  const object = (item: unknown): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item);
   const strings = (items: unknown) => Array.isArray(items) && items.every(item => typeof item === "string");
-  if (value.schemaVersion !== 1 || (value.claude && !(strings(value.claude.allow) && strings(value.claude.ask))) || (value.codex && !(typeof value.codex.file === "string" && /^[a-f0-9]{64}$/.test(value.codex.sha256)))) throw new Error("Invalid managed permissions manifest.");
+  // Present ownership entries must be well formed; a falsy one must not drop its harness from the check.
+  if (!object(parsed) || parsed.schemaVersion !== 1
+    || (parsed.claude !== undefined && !(object(parsed.claude) && strings(parsed.claude.allow) && strings(parsed.claude.ask)))
+    || (parsed.codex !== undefined && !(object(parsed.codex) && typeof parsed.codex.file === "string" && typeof parsed.codex.sha256 === "string" && /^[a-f0-9]{64}$/.test(parsed.codex.sha256)))) throw new Error("Invalid managed permissions manifest.");
+  const { agentToolVersion, ...value } = parsed as unknown as Manifest;
   // The version is provenance, not ownership: an unusable one counts as none, which the check reports and the install replaces.
   return { raw, manifest: { ...value, ...(validVersion(agentToolVersion) ? { agentToolVersion } : {}) } };
 }

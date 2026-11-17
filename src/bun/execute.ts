@@ -1,11 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { accessSync, constants as files, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants as files, existsSync, realpathSync, statSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
 import { runCommand } from "../commands/run";
 import { assert, flag, option } from "../workflows/core";
 import { CLASSES } from "../permissions/catalog";
-import { checkPermissions, PERMISSIONS_MANIFEST } from "../permissions/install";
+import { checkInstalledPermissions, PERMISSIONS_MANIFEST } from "../permissions/install";
 import { projectCommands } from "../permissions/project";
 import { pinnedBun } from "./toolchain";
 import { workspacePackage } from "../system/workspace";
@@ -25,10 +25,9 @@ function assertCurrentRules(root: string, command: string): void {
   // Only a current allow class matches whatever rules exist; a removed or asking class relies on fresh ones.
   const entry = projectCommands(root).find(item => item.command === command);
   if (entry && CLASSES[entry.class].decision === "allow") return;
-  const recorded = JSON.parse(readFileSync(path.join(root, PERMISSIONS_MANIFEST), "utf8")) as { claude?: unknown; codex?: unknown };
-  const targets = [...(recorded.claude ? ["claude"] : []), ...(recorded.codex ? ["codex"] : [])];
-  // Rule content decides this; a manifest from another agent-tool release with current rules allows nothing extra.
-  const stale = targets.flatMap(target => checkPermissions(root, target)).filter(item => item.status !== "unchanged" && item.path !== PERMISSIONS_MANIFEST);
+  // Check every harness the manifest records. Rule content decides: a manifest from another
+  // agent-tool release, or with no usable version, over current rules allows nothing extra.
+  const stale = (checkInstalledPermissions(root)?.changes ?? []).filter(item => item.status !== "unchanged" && item.path !== PERMISSIONS_MANIFEST);
   assert(!stale.length, `Permission rules predate the current class of '${command}'; regenerate them with approval (agent-tool permissions install --apply) before running it.`);
 }
 

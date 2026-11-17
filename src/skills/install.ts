@@ -52,9 +52,11 @@ interface SkillManifest { raw?: string; agentToolVersion?: string; files: Record
 function readManifest(root: string): SkillManifest {
   const file = safeDestination(root, SKILLS_MANIFEST);
   if (!existsSync(file)) return { files: {} };
+  // Reading a FIFO or device would block a hook or CI; only a regular file can be a manifest.
+  if (!lstatSync(file).isFile()) throw new Error(`Managed skill manifest is not a regular file: ${SKILLS_MANIFEST}`);
   const raw = readFileSync(file, "utf8");
   const value = JSON.parse(raw);
-  if (value.schemaVersion !== 1 || !value.files || typeof value.files !== "object" || Array.isArray(value.files) || Object.values(value.files).some(item => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item))) throw new Error("Invalid managed skill manifest.");
+  if (!value || typeof value !== "object" || Array.isArray(value) || value.schemaVersion !== 1 || !value.files || typeof value.files !== "object" || Array.isArray(value.files) || Object.values(value.files).some(item => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item))) throw new Error("Invalid managed skill manifest.");
   // The version is provenance, not ownership: an unusable one counts as none, which the check reports and the install replaces.
   return { raw, ...(validVersion(value.agentToolVersion) ? { agentToolVersion: value.agentToolVersion } : {}), files: value.files };
 }

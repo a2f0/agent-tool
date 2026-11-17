@@ -515,17 +515,29 @@ test("the hooks, skills, and permissions guards use the shared drift checks", ()
   writeFileSync(path.join(f.root, ".agent-tool-skills.json"), JSON.stringify({ schemaVersion: 1, agentToolVersion: "0.0.1", files: {} }));
   result = f.gate([["refs/heads/main", installed, "refs/heads/main", zero]]);
   expect(JSON.parse(result.stdout).guards[1]).toEqual(expect.objectContaining({ name: "skills", ok: false, details: { harnesses: [], changes: [{ path: ".agent-tool-skills.json", status: "outdated", recordedVersion: "0.0.1", currentVersion: version }] } }));
-  // Unreadable manifests fail their own guards, and every other guard still runs and reports.
+  // Unreadable manifests fail their own guards, and every other guard still runs and reports. A
+  // falsy ownership entry is malformed rather than absent, so it cannot drop Claude from the check.
+  const permissions = JSON.parse(readFileSync(path.join(f.root, ".agent-tool-permissions.json"), "utf8"));
+  const unreadable = (skillsError: string, permissionsError: string) => {
+    result = f.gate([["refs/heads/main", installed, "refs/heads/main", zero]]);
+    expect(result.status).toBe(1);
+    const guards = JSON.parse(result.stdout).guards;
+    expect(guards.map((item: { name: string }) => item.name)).toEqual(["hooks", "skills", "permissions", "branch", "ranges", "commits", "binaries"]);
+    expect(guards.slice(1, 3)).toEqual([
+      expect.objectContaining({ name: "skills", ok: false, error: skillsError }),
+      expect.objectContaining({ name: "permissions", ok: false, error: permissionsError }),
+    ]);
+  };
   writeFileSync(path.join(f.root, ".agent-tool-skills.json"), JSON.stringify({ schemaVersion: 2, files: {} }));
-  writeFileSync(path.join(f.root, ".agent-tool-permissions.json"), JSON.stringify({ schemaVersion: 1, codex: { file: ".codex/rules/agent-tool.rules", sha256: "edited" } }));
-  result = f.gate([["refs/heads/main", installed, "refs/heads/main", zero]]);
-  expect(result.status).toBe(1);
-  const unreadable = JSON.parse(result.stdout).guards;
-  expect(unreadable.map((item: { name: string }) => item.name)).toEqual(["hooks", "skills", "permissions", "branch", "ranges", "commits", "binaries"]);
-  expect(unreadable.slice(1, 3)).toEqual([
-    expect.objectContaining({ name: "skills", ok: false, error: "Invalid managed skill manifest." }),
-    expect.objectContaining({ name: "permissions", ok: false, error: "Invalid managed permissions manifest." }),
-  ]);
+  writeFileSync(path.join(f.root, ".agent-tool-permissions.json"), JSON.stringify({ ...permissions, claude: false }));
+  unreadable("Invalid managed skill manifest.", "Invalid managed permissions manifest.");
+  // A FIFO would block a read forever; the guards refuse it without opening it.
+  for (const file of [".agent-tool-skills.json", ".agent-tool-permissions.json"]) {
+    rmSync(path.join(f.root, file));
+    expect(spawnSync("mkfifo", [path.join(f.root, file)]).status).toBe(0);
+  }
+  unreadable("Managed skill manifest is not a regular file: .agent-tool-skills.json", "Managed permissions manifest is not a regular file: .agent-tool-permissions.json");
+  for (const file of [".agent-tool-skills.json", ".agent-tool-permissions.json"]) rmSync(path.join(f.root, file));
   f.git(["checkout", "--", ".agent-tool-skills.json", ".agent-tool-permissions.json"]);
   const skill = path.join(f.root, ".claude/skills/ship-pr/SKILL.md");
   writeFileSync(skill, `${readFileSync(skill, "utf8")}edited\n`);

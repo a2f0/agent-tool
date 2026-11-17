@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CATALOG, CLASSES, INVOCATIONS, claudePermissions, codexRules, strictest, type PermissionClass } from "./catalog";
-import { checkPermissions, installPermissions } from "./install";
+import { checkInstalledPermissions, checkPermissions, installPermissions } from "./install";
 import metadata from "../../package.json";
 import { HELP } from "../cli";
 import { parseConfig } from "../config";
@@ -231,8 +231,13 @@ test("install records the agent-tool version, and check requires the running one
     expect(installPermissions(root, "all", true).filter(item => item.status !== "unchanged")).toEqual([{ path: ".agent-tool-permissions.json", status: "update" }]);
     expect(JSON.parse(readFileSync(manifestFile, "utf8"))).toEqual(manifest);
   }
-  writeFileSync(manifestFile, JSON.stringify({ ...manifest, schemaVersion: 2 }));
-  expect(() => checkPermissions(root, "all")).toThrow("Invalid managed permissions manifest.");
+  // Ownership entries that are present must be well formed, so a falsy one cannot drop its harness.
+  for (const invalid of [{ ...manifest, schemaVersion: 2 }, { ...manifest, claude: false }, { ...manifest, codex: null }, { ...manifest, claude: { allow: "Bash(x)", ask: [] } }, { ...manifest, codex: { file: 1, sha256: manifest.codex.sha256 } }, [], null]) {
+    writeFileSync(manifestFile, JSON.stringify(invalid));
+    expect(() => checkPermissions(root, "all")).toThrow("Invalid managed permissions manifest.");
+    expect(() => checkInstalledPermissions(root)).toThrow("Invalid managed permissions manifest.");
+    expect(() => installPermissions(root, "all", true)).toThrow("Invalid managed permissions manifest.");
+  }
 });
 
 test("the CLI previews by default and rejects unknown harnesses", () => {
