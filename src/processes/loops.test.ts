@@ -1,9 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { definesAny, failsTeardown, findLoops, loopTransition, pathAfter, programOf, resolveIn, runningLoop, runsShell, sessionProcesses, stopLoop, stopTransition, stuckLoops, TRAP_HANDLER, withSources, type LoopFacts, type LoopState, type StopState } from "./loops";
+import { claimStop, definesAny, failsTeardown, findLoops, loopTransition, pathAfter, programOf, resolveIn, runningLoop, runsShell, sessionProcesses, shellsUpTo, stopLoop, stopTransition, stuckLoops, TRAP_HANDLER, withSources, type LoopFacts, type LoopState, type StopState } from "./loops";
 import { analyzeScript, definedNames, parseScript, shellArgvScript, shellScript, wordsInOrder, type WaitLoop } from "./shell";
 import { processTable, type ProcessRow } from "./table";
 
@@ -133,6 +133,8 @@ test("proves which loop a shell is running from its children", () => {
     expect(runningLoop(analyzeScript(`${before}; until ! pgrep -f x; do sleep 5; done`)!, [child("sleep 5")])).toBeUndefined();
     expect(runningLoop(analyzeScript(`until ! pgrep -f x; do sleep 5; done; ${before}`)!, [child("sleep 5")])).toBeUndefined();
   }
+  // So could a command substitution nested in a parameter expansion.
+  expect(runningLoop(analyzeScript("x=${y:-$(exec sleep 5)}; until ! pgrep -f x; do sleep 5; done")!, [child("sleep 5")])).toBeUndefined();
   // So could a command substitution in a `for` header or a compound command's redirection.
   expect(runningLoop(analyzeScript("for i in $(sleep 5); do :; done; until ! pgrep -f x; do sleep 5; done")!, [child("sleep 5")])).toBeUndefined();
   expect(runningLoop(analyzeScript("{ :; } > \"$(sleep 5)\"; until ! pgrep -f x; do sleep 5; done")!, [child("sleep 5")])).toBeUndefined();
@@ -223,6 +225,11 @@ test("reads the PATH a loop's shell searches", () => {
   expect(pathAfter("export PATH='/a b:/usr/bin'\n# done\n", "/x")).toBe("/a b:/usr/bin");
   expect(pathAfter("alias ll='ls -l'\n", "/usr/bin")).toBe("/usr/bin");
   for (const text of ['eval "$(brew shellenv)"\n', 'PATH="$HOME/bin:$PATH"\n', 'path_prepend() { :; }\n', ". ~/.cargo/env\n", "export PATH=/usr/bin\nhash -r\n"]) expect(pathAfter(text, "/usr/bin")).toBeUndefined();
+  // A `return` or `exit` outside a function body may end the file before its last line.
+  expect(pathAfter("return\nexport PATH=/usr/bin\n", "/x")).toBeUndefined();
+  expect(pathAfter("[ -n \"$DONE\" ] && exit 0\nexport PATH=/usr/bin\n", "/x")).toBeUndefined();
+  expect(pathAfter("f () {\n\treturn 1\n}\nexport PATH=/usr/bin\n", "/x")).toBe("/usr/bin");
+  expect(pathAfter("f () {\nexport PATH=/usr/bin\n", "/x")).toBeUndefined();
   const pgrep = spawnSync("sh", ["-c", "command -v pgrep"], { encoding: "utf8" }).stdout.trim();
   expect(resolveIn(path.dirname(pgrep), "pgrep")).toBe(realpathSync(pgrep));
   expect(resolveIn(`.:${path.dirname(pgrep)}`, "pgrep")).toBeUndefined();
@@ -288,6 +295,22 @@ test("a held shell is resumed when teardown is cancelled", async () => {
   expect(exited).toBe("SIGTERM");
   expect(await until(() => !stat().startsWith("T"), 5_000)).toBe(true);
 }, 30_000);
+
+test("one teardown at a time claims a stop", () => {
+  const where = directory("agent-tool-loops-claims-"), row = { pid: 999_997, ppid: 1, pgid: 999_997, uid: 501, started: "Tue Nov 17 10:00:00 2026", command: "sh -c x" };
+  const release = claimStop(row, where)!;
+  expect(release).toBeDefined();
+  expect(claimStop(row, where)).toBeUndefined();
+  release();
+  // A claim left by a teardown that has exited is taken over.
+  claimStop(row, where);
+  const [file] = readdirSync(where);
+  writeFileSync(path.join(where, file!), String(spawnSync("true").pid));
+  const taken = claimStop(row, where);
+  expect(taken).toBeDefined();
+  taken!();
+  expect(readdirSync(where)).toEqual([]);
+});
 
 test("a process is judged as a shell only when it runs one", () => {
   const sh = realpathSync(spawnSync("sh", ["-c", "command -v sh"], { encoding: "utf8" }).stdout.trim());
@@ -357,6 +380,9 @@ test("the session is an agent harness's other children, found past package runne
   ].map(item => [item.pid, item]));
   expect([...sessionProcesses(table, 33)].sort((a, b) => a - b)).toEqual([40, 41, 50, 70, 71, 72, 73, 74]);
   expect([...sessionProcesses(table, 73)].sort((a, b) => a - b)).toEqual([30, 31, 32, 33, 40, 41, 50]);
+  // Only a chain of shells up to the harness makes a process the session's own work.
+  const session = sessionProcesses(table, 33);
+  expect([40, 41, 70, 72, 74].map(pid => shellsUpTo(table, pid, session))).toEqual([true, false, true, false, false]);
   // From an interactive shell there is no harness.
   expect(sessionProcesses(new Map([row(1, 0, "launchd"), row(10, 1, "-zsh"), row(11, 10, "agent-tool teardown"), row(12, 10, "sleep 9")].map(item => [item.pid, item])), 11).size).toBe(0);
 });
@@ -423,6 +449,9 @@ test("teardown fails on the session's wait loops that cannot finish, --apply sto
     fileWait: sh(`${PATHED}until grep -q "^exit=" ${review} 2>/dev/null; do sleep 30; done`),
     sleeper: { argv: ["sleep", "300"] },
     shell: sh("sleep 300; :"),
+    // A stuck loop under another process the harness started, carrying another record's
+    // AGENT_TOOL_PROCESS, as `proc start` from another checkout would: not this session's to stop.
+    kept: { argv: [process.execPath, "-e", `require("node:child_process").spawn("sh", ["-c", ${JSON.stringify(`: agent-tool-kept-${id}; ${PATHED}until [ -f "" ]; do sleep 30; done`)}], { stdio: "ignore", env: { ...process.env, AGENT_TOOL_PROCESS: "0badc0de" } }); setInterval(() => {}, 1000)`] },
     // Its condition never changes, but a DEBUG trap leaves the loop once a file appears.
     debugTrap: { argv: ["bash", "-c", `trap '[ -f ${path.join(elsewhere, "ready")} ] && exit 0' DEBUG; ${PATHED}until [ -f "" ]; do sleep 1; done`] },
   }, [[], ["--apply"], []], 4000);
@@ -435,6 +464,7 @@ test("teardown fails on the session's wait loops that cannot finish, --apply sto
   expect(found.get(pids.emptyName)).toMatchObject({ state: "stuck", reason: expect.stringContaining("empty name") });
   expect(found.get(pids.waitsForOther)).toMatchObject({ state: "waiting", seen: "session" });
   expect(found.get(pids.debugTrap)).toMatchObject({ state: "waiting", seen: "session" });
+  expect(before!.json.loops.find(loop => loop.command.includes(`agent-tool-kept-${id}`))).toMatchObject({ state: "waiting" });
   expect(found.get(pids.fileWait)).toMatchObject({ state: "waiting", command: `${PATHED}until grep -q "^exit=" ${review} 2>/dev/null; do sleep 30; done` });
   expect(found.get(pids.fileWait)!.ageSeconds).toBeGreaterThanOrEqual(0);
   expect(found.get(pids.waitsForOther)!.reason).toBeUndefined();
@@ -532,4 +562,22 @@ test("a stop that rechecks and finds the loop no longer stuck signals nothing", 
   await expect(stopLoop({ row, seen: "session", cwd: null, script: loop.script, loop, state: { status: "stuck", reason: "r" } }, () => { throw new Error("inspection failed"); })).rejects.toThrow("inspection failed");
   expect(stat()).not.toMatch(/^T/);
   expect(alive(shell.pid!)).toBe(true);
+}, 30_000);
+
+test("a shell that outlived SIGTERM is killed only if its loop is still stuck", async () => {
+  // It ignores SIGTERM, inherited from the shell that started it.
+  const script = `${PATHED}until [ -f "" ]; do sleep 30; done`;
+  const shell = spawn("sh", ["-c", `trap '' TERM; exec sh -c '${script}'`], { detached: true, stdio: "ignore" });
+  children.push(shell);
+  await sleep(700);
+  const table = processTable(), row = table.get(shell.pid!)!;
+  const analysis = analyzeScript(script)!, loop = runningLoop(analysis, [...table.values()].filter(item => item.ppid === row.pid))!;
+  expect(loop).toBeDefined();
+  // Stuck when the stop begins; no longer by the time it would escalate, as when a peer exits.
+  let checks = 0;
+  const result = await stopLoop({ row, seen: "session", cwd: null, script: loop.script, loop, state: { status: "stuck", reason: "r" } }, () => (checks += 1) === 1, 500);
+  expect(result.outcome).toBe("skipped");
+  expect(checks).toBe(2);
+  expect(alive(shell.pid!)).toBe(true);
+  expect(spawnSync("ps", ["-o", "stat=", "-p", String(shell.pid)], { encoding: "utf8" }).stdout.trim()).not.toMatch(/^T/);
 }, 30_000);

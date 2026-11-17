@@ -9,7 +9,7 @@ import { createLog } from "../commands/logFile";
 import { plainText } from "../commands/output";
 import { assert, git, output } from "../workflows/core";
 import { claimedBy, ledgerDirectory, membersOf, newId, observe, readRecords, removeRecord, saveRecord, type ProcessRecord, type ProcessState } from "./ledger";
-import { failsTeardown, loopReport, sessionProcesses, settleLoops, type Candidate, type LoopReport, type Seen } from "./loops";
+import { failsTeardown, loopReport, sessionProcesses, settleLoops, shellsUpTo, type Candidate, type LoopReport, type Seen } from "./loops";
 import { ancestors, carrying, listeningPorts, processTable, startOf, workingDirectories, type ProcessRow } from "./table";
 
 const STOP_GRACE_MS = 5000;
@@ -253,7 +253,7 @@ function survey(root: string, directory: string): Survey {
   for (const [pid, where] of seen) {
     const row = table.get(pid);
     if (!row || excluded.has(pid) || owned.has(pid) || row.ppid === process.pid || (uid !== undefined && row.uid !== uid)) continue;
-    candidates.set(pid, { seen: where, session: session.has(pid), started: row.started, command: row.command });
+    candidates.set(pid, { seen: where, session: session.has(pid) && shellsUpTo(table, pid, session), started: row.started, command: row.command });
   }
   const worktrees: { path: string; branch: string | null }[] = [];
   let current: { path: string; branch: string | null } | undefined;

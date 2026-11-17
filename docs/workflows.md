@@ -754,9 +754,10 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
   macOS runs `/bin/bash`, Debian `dash`). Teardown never runs anything the
   shell names.
 - The shell belongs to no other agent-tool record: it carries no
-  `AGENT_TOOL_PROCESS` (a `proc start --keep` from another checkout). Outside
-  the session, a shell is judged only when its environment shows that; macOS
-  hides a protected shell's, so there only session shells are judged.
+  `AGENT_TOOL_PROCESS` (a `proc start --keep` from another checkout). A shell is
+  the session's own only when every process between it and the harness is a
+  shell; any other shell is judged only when its environment shows that, and
+  macOS hides a protected shell's, so there only the session's own are judged.
 - The shell is running that loop now: each of its children runs that loop's
   `sleep` or one of its checks, and nothing else in the script could start a
   process that looks the same. That rules out a script with the same command
@@ -767,7 +768,7 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
   alias or function that the script, a sourced file or a startup file defines,
   a command substitution
   (`x=$(...)`, whose subshell may run its command in place, including in a
-  `for` header or a redirection), `eval`ed text
+  `for` header, a redirection or `${x:-$(...)}`), `eval`ed text
   that cannot be read, and a command whose words are expanded when its program
   is one of the loop's, is itself expanded (`"$@"`), or runs other code
   (`sleep "$n"`, `eval "$x"`, `xargs`). A shell between commands proves
@@ -798,7 +799,8 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
 - Its programs are the ones teardown runs: the shell's PATH (the one it
   started with where the system shows it, then each startup file, literal
   assignment and sourced file before the loop, in order; a harness's shell
-  snapshot ends by setting it) finds each of `pgrep`, `grep` and `sleep` at the
+  snapshot ends by setting it, and counts only when no `return` or `exit`
+  outside a function body can end the file first) finds each of `pgrep`, `grep` and `sleep` at the
   same file teardown finds outside the repository. A PATH step teardown cannot
   read (an `eval`, a function, an expanded assignment, `hash`, or one that may
   not run: after `&&` or `||`, in a pipeline, in the background, inside a
@@ -842,7 +844,11 @@ Then its children are killed, and the shell gets SIGTERM and is resumed to act
 on it; a shell that outlives two seconds is held again and killed with any loop
 command it started since. Whatever fails, a shell teardown suspended is
 resumed, and so is one held when SIGINT, SIGTERM or SIGHUP ends teardown (only
-SIGKILL, which no process can catch, would leave it suspended). Every signal goes only to a process that a fresh snapshot shows is
+SIGKILL, which no process can catch, would leave it suspended). A shell is
+stopped by one teardown at a time: each claims it, by pid and start time, in a
+private per-user directory, and a concurrent teardown leaves it alone. Before a
+shell that outlived SIGTERM is killed, every loop is judged again, since a peer
+may have exited meanwhile. Every signal goes only to a process that a fresh snapshot shows is
 still the same one; between that snapshot and the signal, a pid can only name
 another process if the system's pids wrap around, as for `proc stop`. After
 each stop the loops are judged again, and a released loop is left to finish. A

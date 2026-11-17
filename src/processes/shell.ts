@@ -71,7 +71,8 @@ export function shellArgvScript(argv: string[]): { shell: string; script: string
   return found && { shell: found.shell, script: argv[found.index]!, login: found.login };
 }
 
-const runs = (text: string, at: number) => text[at] === "`" || text[at + 1] === "(";
+// Whether the expansion from `at` to `end` runs a command, including one nested in `${x:-$(...)}`.
+const runs = (text: string, at: number, end: number) => /\$\(|`/.test(text.slice(at, end));
 
 function readDouble(text: string, start: number): { value: string; literal: boolean; substitution: boolean; end: number } | undefined {
   let value = "", literal = true, substitution = false;
@@ -87,7 +88,7 @@ function readDouble(text: string, start: number): { value: string; literal: bool
     if (char === "$" || char === "`") {
       const end = skipExpansion(text, at);
       if (end === undefined) return undefined;
-      substitution ||= runs(text, at);
+      substitution ||= runs(text, at, end);
       value += text.slice(at, end); literal = false; at = end; continue;
     }
     value += char; at += 1;
@@ -157,7 +158,7 @@ function readWord(text: string, start: number): { word: Word; end: number } | un
     if (char === "$" || char === "`") {
       const end = skipExpansion(text, at);
       if (end === undefined) return undefined;
-      substitution ||= runs(text, at);
+      substitution ||= runs(text, at, end);
       value += text.slice(at, end); literal = false; at = end; continue;
     }
     // Globs, brace expansion and `~` give the word a value the shell decides.

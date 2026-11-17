@@ -4,9 +4,9 @@
 // never finish on its own; teardown fails on those and `--apply` stops them. Every other loop is
 // waiting: reported, never failed on, never stopped.
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { accessSync, constants, realpathSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { createHash, randomUUID } from "node:crypto";
+import { accessSync, constants, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { plainText } from "../commands/output";
 import { outsideExecutable } from "../system/executable";
@@ -107,6 +107,19 @@ export function sessionProcesses(table: Map<number, ProcessRow>, self = process.
     return found;
   }
   return found;
+}
+
+/**
+ * Whether a session process is the harness's own shell work: every process between it and the
+ * harness is a shell. A descendant of anything else, such as `agent-tool proc start` or a build
+ * tool, may belong to something with its own claim on it.
+ */
+export function shellsUpTo(table: Map<number, ProcessRow>, pid: number, session: Set<number>): boolean {
+  for (let current = table.get(pid); current; current = table.get(current.ppid)) {
+    if (!session.has(current.pid)) return true;
+    if (!isShell(current.command)) return false;
+  }
+  return false;
 }
 
 /**
@@ -267,6 +280,15 @@ const LITERAL_PATH = /^(?:export[ \t]+)?PATH=(?:'([^'$`]*)'|"([^"$`\\]*)"|([^\s'
  */
 export function pathAfter(text: string, before: string | undefined): string | undefined {
   const lines = text.split("\n").map(line => line.trim()).filter(line => line && !line.startsWith("#"));
+  // A `return` or `exit` outside a function body may end the file before its last line. Braces
+  // mark function bodies, as a shell snapshot prints them; unbalanced ones leave it unknown.
+  let depth = 0;
+  for (const line of lines) {
+    if (depth === 0 && /(?:^|[;&|])\s*(?:return|exit)\b/.test(line)) return undefined;
+    depth += (line.match(/\{/g)?.length ?? 0) - (line.match(/\}/g)?.length ?? 0);
+    if (depth < 0) return undefined;
+  }
+  if (depth !== 0) return undefined;
   const last = lines.length ? LITERAL_PATH.exec(lines.at(-1)!) : null;
   if (last) return last[1] ?? last[2] ?? last[3];
   // A function may change PATH when called; an alias only stands for words.
@@ -586,7 +608,45 @@ export function resumeOnCancel(resume: () => void): () => void {
  * act on it, and a shell that outlives the grace period is held again and killed with any loop
  * command it started since. `remaining` lists what outlived it all.
  */
+/**
+ * Claims the stop of one process, by pid and start time, for this teardown alone, so concurrent
+ * teardowns never both hold it: a lock file under a private per-user directory, naming the claiming
+ * process. A claim whose holder has exited is stale and taken over. Returns its release, or
+ * undefined when another live teardown holds it.
+ */
+export function claimStop(row: ProcessRow, directory = path.join(tmpdir(), `agent-tool-loop-stops-${process.getuid?.() ?? "user"}`)): (() => void) | undefined {
+  try {
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const stat = lstatSync(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || (process.getuid && stat.uid !== process.getuid())) return undefined;
+  } catch { return undefined; }
+  const file = path.join(directory, `${row.pid}-${createHash("sha256").update(row.started).digest("hex").slice(0, 16)}`);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      writeFileSync(file, String(process.pid), { flag: "wx", mode: 0o600 });
+      return () => { try { if (readFileSync(file, "utf8") === String(process.pid)) rmSync(file, { force: true }); } catch { /* Already gone. */ } };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") return undefined;
+      let holder = NaN;
+      try { holder = Number(readFileSync(file, "utf8")); } catch { /* Unreadable: treat as held. */ }
+      let live = true;
+      try { if (Number.isInteger(holder) && holder > 0) process.kill(holder, 0); } catch (kill) { live = (kill as NodeJS.ErrnoException).code === "EPERM"; }
+      if (live) return undefined;
+      try { rmSync(file, { force: true }); } catch { return undefined; }
+    }
+  }
+  return undefined;
+}
+
 export async function stopLoop(item: FoundLoop, recheck: () => boolean, grace = 2000): Promise<{ outcome: "stopped" | "skipped" | "survived"; gone: number[]; remaining: number[] }> {
+  // Another teardown stopping the same shell owns its suspension: leave it to that one.
+  const release = claimStop(item.row);
+  if (!release) return SKIPPED;
+  try { return await stopClaimed(item, recheck, grace); }
+  finally { release(); }
+}
+
+async function stopClaimed(item: FoundLoop, recheck: () => boolean, grace: number): Promise<{ outcome: "stopped" | "skipped" | "survived"; gone: number[]; remaining: number[] }> {
   const commands = new Set(item.loop?.commands ?? []), signalled = new Map<number, ProcessRow>();
   let state: StopState = { status: "ready" }, removeCancel = () => {};
   const send = (table: Map<number, ProcessRow>, targets: ProcessRow[], signal: NodeJS.Signals) => {
@@ -640,12 +700,17 @@ export async function stopLoop(item: FoundLoop, recheck: () => boolean, grace = 
     if (alive()) {
       state = stopTransition(state, { type: "escalated" });
       const again = await hold();
-      if (again) {
-        const later = kids(again).filter(row => commands.has(row.command));
-        for (const child of later) signalled.set(child.pid, child);
-        send(again, later, "SIGKILL");
-        send(processTable(), [item.row], "SIGKILL");
+      // A shell that ignored SIGTERM may have left the loop since (a peer it waited on exited):
+      // kill it only while it is still in the loop and the loop is still stuck.
+      const later = again ? kids(again) : [];
+      if (!again || later.some(row => !commands.has(row.command)) || !recheck()) {
+        resume();
+        state = stopTransition(state, { type: "declined" });
+        return SKIPPED;
       }
+      for (const child of later) signalled.set(child.pid, child);
+      send(again, later, "SIGKILL");
+      send(processTable(), [item.row], "SIGKILL");
       for (let tries = 0; tries < 20 && alive(); tries += 1) await pause(50);
     }
     const now = processTable(), remaining = [item.row, ...signalled.values()].filter(target => same(now, target)).map(target => target.pid);
