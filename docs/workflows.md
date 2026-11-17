@@ -714,8 +714,10 @@ It exits 1 while a leftover runs, an untracked process listens on a port, a
 stuck wait loop runs, or an inspection is unavailable or a record unreadable,
 since a running process could then go unseen. `proc start` refuses to start
 anything when `ps` cannot run. `--apply` stops leftovers and removes finished
-records; it never signals untracked processes, wait loops (stuck or not) or
-kept ones, and never removes worktrees, since they may be someone else's. Stop those deliberately, then run `teardown` again. An unrecorded
+records; it never signals untracked processes, the wait loops below (stuck or
+not) or kept ones, and never removes worktrees, since they may be someone
+else's. A loop started with `proc start` is a recorded process, not one of those
+wait loops, and `--apply` stops it like any other leftover. Stop those deliberately, then run `teardown` again. An unrecorded
 descendant that outlives its parent, leaves the group, and clears or hides its
 ownership tag cannot be recovered by ownership inspection. If it also changes
 out of the repository, cwd inspection cannot report it either. From a matrix-style
@@ -728,7 +730,9 @@ Agents wait in the background with loops such as
 that can never finish keeps running long after the work. Teardown reports such
 loops so a person can stop them; it never stops, suspends or signals one, with
 or without `--apply`. A stuck loop's `reason` ends with the pid to `kill` once
-you have checked it is yours.
+you have checked it is yours. A report shows only the loop itself (`command`),
+written back out from what teardown read, never the commands around it, which
+may hold secrets.
 
 Teardown reads the script of every `-c` shell (`sh -c`, `zsh -c`, `bash -lc`)
 among the untracked processes and among the agent session's other shells. A
@@ -763,17 +767,19 @@ judged only when all of these hold:
   proves nothing.
 - The body does nothing but `sleep`, no `timeout` runs above the shell, and no
   trap handler is set in the script or in files it reads.
-- The condition is one `&&`/`||` list, optionally negated with `!`, of checks
-  that all settle for good. Two checks settle:
-  - `pgrep -f <pattern>`, with a literal pattern and output only discarded
-    (to `/dev/null`), stays true while it finds a process that cannot exit.
+- The condition is one `&&`/`||` list, optionally negated with `!` and not run
+  in the background, of checks that all settle for good. Two checks settle:
+  - `pgrep -f <pattern>`, with a literal pattern of printable ASCII and no
+    bracket expressions or escapes (whose meaning can depend on the locale),
+    and output only discarded (to `/dev/null`), stays true while it finds a process that cannot exit.
     procps `pgrep` (Linux) reports the shell that runs it, so there a loop whose
     own command line matches its pattern never ends; BSD and macOS `pgrep` leave
     out that shell and its ancestors, so there it takes loops whose patterns
     match each other. A set of loops is stuck when each one's condition is
     settled while all of them keep running, since none can be the first to
     finish. Teardown asks the same `pgrep` the loop runs which processes match,
-    and probes which of the two kinds it is.
+    in the C locale and a UTF-8 one, counting only what both report, and
+    probes which of the two kinds it is.
   - `grep` with one empty file operand (`grep -q x ""`, confirmed by running the
     same `grep`), `[ -f "" ]`, `test -e ""` and the other file tests never
     succeed.

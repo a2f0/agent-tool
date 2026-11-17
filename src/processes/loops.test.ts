@@ -77,7 +77,7 @@ test("finds a wait loop inside a harness's eval wrapper and reads its condition"
 
 test("judges only checks whose outcome can be read from the script", () => {
   const checks = (condition: string) => loopOf(`until ${condition}; do sleep 5; done`).condition?.atoms.map(atom => atom.check.kind);
-  expect(checks(`! pgrep -f "[r]elease verify" >/dev/null 2>&1`)).toEqual(["pgrep"]);
+  expect(checks(`! pgrep -f "release verify" >/dev/null 2>&1`)).toEqual(["pgrep"]);
   expect(checks(`grep -q '^exit ' "" 2>/dev/null`)).toEqual(["missing-file"]);
   expect(checks(`[ -s '' ]`)).toEqual(["missing-file"]);
   expect(checks(`test -f ""`)).toEqual(["missing-file"]);
@@ -98,6 +98,13 @@ test("judges only checks whose outcome can be read from the script", () => {
   // An empty pattern after -e leaves grep reading its input, which may still arrive.
   expect(checks(`grep -q -e ""`)).toEqual(["other"]);
   expect(checks(`grep -q -- -e ""`)).toEqual(["missing-file"]);
+  // Bracket expressions, escapes and non-ASCII text can match differently under another locale.
+  expect(checks(`! pgrep -f "[[:alpha:]]x"`)).toEqual(["other"]);
+  expect(checks(`! pgrep -f "[r]elease verify"`)).toEqual(["other"]);
+  expect(checks(`! pgrep -f "caf\u00e9"`)).toEqual(["other"]);
+  expect(checks(`! pgrep -f 'a\\.b'`)).toEqual(["other"]);
+  // A condition run in the background returns at once, and is not read at all.
+  expect(loopOf(`until [ -f "" ] & do sleep 5; done`).condition).toBeUndefined();
   // A pipeline or a sequence in the condition is not read at all.
   expect(checks(`pgrep -f x | grep -q .`)).toBeUndefined();
   expect(checks(`true; ! pgrep -f x`)).toBeUndefined();
@@ -235,6 +242,8 @@ test("reads the PATH a loop's shell searches", () => {
   expect(resolveIn(`.:${path.dirname(pgrep)}`, "pgrep")).toBeUndefined();
   // Literal assignments and sources are recorded where they run; nested or expanded ones are unknown.
   expect(analyzeScript(`PATH=/usr/bin:/bin; source /tmp/snap.sh; export PATH="$HOME/bin"; if true; then PATH=/x; fi; until [ -f "" ]; do sleep 5; done`)!.path.map(event => event.kind === "assign" ? event.value : event.kind)).toEqual(["/usr/bin:/bin", "source", "unknown", "unknown"]);
+  // An assignment before `eval` or `.` can reach the code it runs.
+  expect(analyzeScript(`PATH=/x eval 'true'; until [ -f "" ]; do sleep 5; done`)!.path).toEqual([{ at: 0, guards: [], kind: "unknown" }]);
   // A quoted value is still an assignment.
   expect(analyzeScript(`PATH="/custom/bin:/usr/bin:/bin"; until [ -f "" ]; do sleep 5; done`)!.path).toEqual([{ at: 0, guards: [], kind: "assign", value: "/custom/bin:/usr/bin:/bin" }]);
   // A change in an eval the shell may skip counts only for a loop inside that eval.
@@ -385,7 +394,7 @@ test("teardown fails on the session's wait loops that cannot finish, and leaves 
     shell: sh("sleep 300; :"),
     // A stuck loop under another process the harness started, carrying another record's
     // AGENT_TOOL_PROCESS, as `proc start` from another checkout would: not this session's to stop.
-    kept: { argv: [process.execPath, "-e", `require("node:child_process").spawn("sh", ["-c", ${JSON.stringify(`: agent-tool-kept-${id}; ${PATHED}until [ -f "" ]; do sleep 30; done`)}], { stdio: "ignore", env: { ...process.env, AGENT_TOOL_PROCESS: "0badc0de" } }); setInterval(() => {}, 1000)`] },
+    kept: { argv: [process.execPath, "-e", `require("node:child_process").spawn("sh", ["-c", ${JSON.stringify(`${PATHED}until [ -f "" ]; do sleep 31; done`)}], { stdio: "ignore", env: { ...process.env, AGENT_TOOL_PROCESS: "0badc0de" } }); setInterval(() => {}, 1000)`] },
     // Its condition never changes, but a DEBUG trap leaves the loop once a file appears.
     debugTrap: { argv: ["bash", "-c", `trap '[ -f ${path.join(elsewhere, "ready")} ] && exit 0' DEBUG; ${PATHED}until [ -f "" ]; do sleep 1; done`] },
   }, [[], ["--apply"]], 4000);
@@ -404,8 +413,9 @@ test("teardown fails on the session's wait loops that cannot finish, and leaves 
   expect(found.get(pids.emptyName)).toMatchObject({ state: "stuck", reason: expect.stringContaining("empty name") });
   expect(found.get(pids.waitsForOther)).toMatchObject({ state: "waiting", seen: "session" });
   expect(found.get(pids.debugTrap)).toMatchObject({ state: "waiting", seen: "session" });
-  expect(before!.json.loops.find(loop => loop.command.includes(`agent-tool-kept-${id}`))).toMatchObject({ state: "waiting" });
-  expect(found.get(pids.fileWait)).toMatchObject({ state: "waiting", command: `${PATHED}until grep -q "^exit=" ${review} 2>/dev/null; do sleep 30; done` });
+  expect(before!.json.loops.find(loop => loop.command.includes("sleep 31"))).toMatchObject({ state: "waiting" });
+  // The report shows the loop alone, never the commands around it.
+  expect(found.get(pids.fileWait)).toMatchObject({ state: "waiting", command: `until grep -q ^exit= ${review} 2>/dev/null; do sleep 30; done` });
   expect(found.get(pids.fileWait)!.ageSeconds).toBeGreaterThanOrEqual(0);
   expect(found.get(pids.waitsForOther)!.reason).toBeUndefined();
   for (const name of ["other", "sleeper", "shell"] as const) expect(found.has(pids[name])).toBe(false);
@@ -466,3 +476,17 @@ test("a loop another checkout's agent-tool started and kept is not judged here",
   expect(alive(record.pid)).toBe(true);
   expect(spawnSync(process.execPath, [cli, "proc", "stop", record.id], { cwd: theirs, encoding: "utf8", timeout: 30_000 }).status).toBe(0);
 }, 90_000);
+
+test("a wait loop started with proc start is a recorded process, which --apply stops as before", async () => {
+  const root = repository();
+  const started = spawnSync(process.execPath, [cli, "proc", "start", "--", "sh", "-c", `${PATHED}until [ -f "" ]; do sleep 30; done`], { cwd: root, encoding: "utf8", timeout: 30_000 });
+  const record = JSON.parse(started.stdout) as { id: string; pid: number; log: string };
+  groups.push(record.pid);
+  temporary.push(path.dirname(record.log));
+  await sleep(1000);
+  const result = spawnSync(process.execPath, [cli, "teardown", "--apply"], { cwd: root, encoding: "utf8", timeout: 60_000 });
+  const report = JSON.parse(result.stdout) as Report & { stopped: { id: string; stopped: boolean }[] };
+  expect(report.stopped).toEqual([expect.objectContaining({ id: record.id, stopped: true })]);
+  expect(report.loops.map(loop => loop.pid)).not.toContain(record.pid);
+  expect(alive(record.pid)).toBe(false);
+}, 60_000);

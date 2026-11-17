@@ -375,6 +375,8 @@ export interface WaitLoop {
   keyword: "until" | "while";
   /** The script holding the loop, unwrapped from `eval`. */
   script: string;
+  /** The loop alone, written back out from what was read. */
+  text: string;
   /** The condition, when it is one and-or list of simple commands. */
   condition?: { atoms: Atom[]; operators: ("&&" | "||")[] };
   /** The body runs nothing but `sleep`. */
@@ -467,7 +469,10 @@ function check(command: Command): Check {
   const words = command.words.map(word => word.text);
   if (words[0] === "pgrep" && words[1] === "-f") {
     const rest = words[2] === "--" ? words.slice(3) : words.slice(2);
-    if (rest.length === 1 && rest[0] !== "" && (words[2] === "--" || !rest[0]!.startsWith("-"))) return { kind: "pgrep", pattern: rest[0]! };
+    // Bracket expressions, escapes and text outside printable ASCII can match differently under
+    // another locale than teardown's; such a pattern is not judged.
+    const pattern = rest[0];
+    if (rest.length === 1 && pattern && /^[\x20-\x7e]+$/.test(pattern) && !/[[\\]/.test(pattern) && (words[2] === "--" || !pattern.startsWith("-"))) return { kind: "pgrep", pattern };
   }
   if (words[0] === "grep") {
     let index = 1;
@@ -505,7 +510,8 @@ function evaluated(command: Simple): string | undefined {
 }
 
 function condition(list: List): WaitLoop["condition"] {
-  if (list.length !== 1) return undefined;
+  // A condition run in the background (`until check &`) returns at once, whatever the check does.
+  if (list.length !== 1 || list[0]!.background) return undefined;
   const [andOr] = list;
   const atoms: Atom[] = [];
   for (const pipeline of andOr!.pipelines) {
@@ -514,6 +520,20 @@ function condition(list: List): WaitLoop["condition"] {
     atoms.push({ negated: pipeline.negated, text: command.kind === "simple" ? commandText(command.words) : command.kind, check: check(command) });
   }
   return { atoms, operators: andOr!.operators };
+}
+
+// A word as it could be typed again: quoted when it is empty or holds anything special.
+const quote = (text: string) => text !== "[" && text !== "]" && (text === "" || /[\s"'$`\\;&|<>()*?[\]{}~#]/.test(text)) ? `"${text.replace(/["\\$`]/g, "\\$&")}"` : text;
+
+/** Writes a list back out as shell text, for reporting; compound commands other than loops are elided. */
+function render(list: List): string {
+  const command = (item: Command): string => {
+    const redirects = item.redirects.map(({ operator, fd, target }) => ` ${fd ?? ""}${operator}${quote(target.text)}`).join("");
+    if (item.kind === "simple") return item.words.map(word => quote(word.text)).join(" ") + redirects;
+    if (item.kind === "loop") return `${item.keyword} ${render(item.condition)}; do ${render(item.body)}; done${redirects}`;
+    return `{ …; }${redirects}`;
+  };
+  return list.map(andOr => andOr.pipelines.map((pipeline, index) => `${index ? ` ${andOr.operators[index - 1]} ` : ""}${pipeline.negated ? "! " : ""}${pipeline.commands.map(command).join(" | ")}`).join("") + (andOr.background ? " &" : "")).join("; ");
 }
 
 const sleeps = (list: List): boolean => [...simpleCommands(list)].some(command => command.words[command.assignments]?.text === "sleep");
@@ -573,6 +593,8 @@ function definitions(command: Simple, info: CommandInfo, at: number, analysis: A
     if (/^PATH\+?=/.test(word.text)) path(word.literal && !word.text.startsWith("PATH+=") ? { kind: "assign", value: word.text.slice(5) } : { kind: "unknown" });
   }
   if (info.program === "hash" || info.program === "rehash" || (info.program === undefined && words.length > 0)) path({ kind: "unknown" });
+  // Before a builtin such as `eval` or `.`, an assignment can apply to the code it runs, or persist.
+  else if (words.length > 0 && command.words.slice(0, command.assignments).some(word => /^PATH\+?=/.test(word.text))) path({ kind: "unknown" });
 }
 
 function collect(text: string, shell: string, analysis: Analysis, depth: number, scope: Scope, next: () => number): boolean {
@@ -599,6 +621,7 @@ function collect(text: string, shell: string, analysis: Analysis, depth: number,
         analysis.loops.push({
           keyword: command.keyword,
           script: text,
+          text: render([{ pipelines: [{ negated: false, commands: [command] }], operators: [] }]),
           condition: condition(command.condition),
           pure: harmless(command.redirects) && [...commandsOf(command.body)].every(inner => inner.kind === "simple") && body.every(inner => inner.assignments === 0 && harmless(inner.redirects) && inner.words.length === 2 && inner.words[0]!.text === "sleep" && inner.words.every(word => word.literal) && SLEEP.test(inner.words[1]!.text)),
           commands: inside.map(inner => commandText(inner.words)),

@@ -27,7 +27,7 @@ export type Seen = "repository" | "session";
 export interface LoopReport {
   pid: number;
   ageSeconds: number;
-  /** The script holding the loop, unwrapped from a harness's `eval`, at most 200 characters. */
+  /** The loop itself, as teardown reads it, at most 200 characters; never the rest of the script. */
   command: string;
   cwd: string | null;
   seen: Seen;
@@ -40,6 +40,7 @@ export interface FoundLoop {
   row: ProcessRow;
   seen: Seen;
   cwd: string | null;
+  /** The loop as reported: its own text, without the commands around it, which may hold secrets. */
   script: string;
   /** The loop the shell is running, when its children prove which one. */
   loop?: WaitLoop;
@@ -194,11 +195,19 @@ function pgrepSeesAncestors(pgrep: string): boolean | undefined {
   return undefined;
 }
 
+// A process counts as matched only when it matches in the C locale and in a UTF-8 one, so the
+// loop's own locale, which teardown may not see, cannot change the answer.
+const LOCALES = ["C", process.platform === "darwin" ? "en_US.UTF-8" : "C.UTF-8"];
+
 function pgrepMatches(pgrep: string, pattern: string): Set<number> | undefined {
-  const result = spawnSync(pgrep, ["-f", "--", pattern], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "ignore"] });
-  if (result.status === 1) return new Set();
-  if (result.status !== 0) return undefined;
-  return new Set(result.stdout.split("\n").map(line => line.trim()).filter(line => /^\d+$/.test(line)).map(Number));
+  let found: Set<number> | undefined;
+  for (const locale of LOCALES) {
+    const result = spawnSync(pgrep, ["-f", "--", pattern], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, LC_ALL: locale } });
+    if (result.status !== 0 && result.status !== 1) return undefined;
+    const pids = new Set(result.status === 1 ? [] : result.stdout.split("\n").map(line => line.trim()).filter(line => /^\d+$/.test(line)).map(Number));
+    found = found ? new Set([...found].filter(pid => pids.has(pid))) : pids;
+  }
+  return found;
 }
 
 // A trap with a handler, or a zsh TRAP function, in text around the script: `trap '' TERM` and
@@ -454,7 +463,7 @@ export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number
     const verified = !!exact && runsShell(exact.shell, args!.executable, root);
     const parsed = verified ? exact! : shownScript;
     const analysis = analyzeScript(parsed.script, parsed.shell);
-    if (!analysis) { found.push({ ...base, script: parsed.script }); continue; }
+    if (!analysis) { found.push({ ...base, script: `(a ${parsed.shell} script teardown cannot read)` }); continue; }
     if (analysis.loops.length === 0) continue;
     const kids = children.get(pid) ?? [];
     // Judge a loop only when the body only sleeps, the condition is simple checks, no `timeout`
@@ -465,7 +474,7 @@ export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number
     // A call of a function defined around the script runs code teardown has not judged.
     const functions = new Set([...analysis.defines, ...(context?.all ?? []).flatMap(text => [...definedNames(text)])]);
     const loop = context ? runningLoop(analysis, kids, functions) : undefined;
-    found.push({ ...base, script: (loop ?? runningLoop(analysis, kids) ?? analysis.loops[0]!).script, ...(loop ? { loop } : {}) });
+    found.push({ ...base, script: (loop ?? runningLoop(analysis, kids) ?? analysis.loops[0]!).text, ...(loop ? { loop } : {}) });
     const above = ancestors(table, pid);
     // A trap that runs between commands or on failures can leave the loop, and so can unknown ones.
     const trapped = analysis.traps || !context || context.all.some(text => STEP_TRAP.test(text) || TRAP_HANDLER.test(text));
