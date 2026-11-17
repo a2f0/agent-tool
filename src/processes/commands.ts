@@ -9,7 +9,7 @@ import { createLog } from "../commands/logFile";
 import { plainText } from "../commands/output";
 import { assert, git, output } from "../workflows/core";
 import { claimedBy, ledgerDirectory, membersOf, newId, observe, readRecords, removeRecord, saveRecord, type ProcessRecord, type ProcessState } from "./ledger";
-import { loopReport, sessionProcesses, settleLoops, type Candidate, type LoopReport, type Seen } from "./loops";
+import { failsTeardown, loopReport, sessionProcesses, settleLoops, type Candidate, type LoopReport, type Seen } from "./loops";
 import { ancestors, carrying, listeningPorts, processTable, startOf, workingDirectories, type ProcessRow } from "./table";
 
 const STOP_GRACE_MS = 5000;
@@ -297,7 +297,7 @@ export async function teardownCommand(args: string[]): Promise<number> {
   const untracked = rest.untracked.filter(item => !gone.has(item.pid)), loops = settled.loops.map(item => loopReport(item));
   // A clean report needs every inspection: without lsof a listening server would go unseen.
   // Unreadable records may name running processes, so they fail teardown too.
-  const ok = rest.leftover.length === 0 && untracked.every(item => item.ports.length === 0) && loops.every(item => item.state !== "stuck") && rest.unavailable.length === 0 && rest.skipped.length === 0;
+  const ok = rest.leftover.length === 0 && untracked.every(item => item.ports.length === 0) && !loops.some(item => failsTeardown(item.state)) && rest.unavailable.length === 0 && rest.skipped.length === 0;
   output({ ok, applied: apply, root: rest.root, leftover: rest.leftover, kept: rest.kept, finished: rest.finished, untracked, loops, worktrees: rest.worktrees, unavailable: rest.unavailable, skipped: rest.skipped, stopped } satisfies TeardownReport);
   return ok ? 0 : 1;
 }

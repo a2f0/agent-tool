@@ -388,7 +388,15 @@ const commandText = (words: Word[]) => words.map(word => word.text).join(" ").tr
 const SLEEP = /^\d+(?:\.\d+)?[smhd]?$/;
 const FILE_TESTS = new Set(["-e", "-f", "-s", "-r", "-w", "-x", "-d", "-L", "-h", "-p", "-S", "-b", "-c"]);
 // Commands that run code or another program given in their arguments.
-const RUNNERS = new Set(["eval", "exec", "command", "builtin", "source", ".", "env", "nohup", "nice", "xargs", "time", "stdbuf", "sudo", "doas", "timeout", "gtimeout"]);
+const RUNNERS = new Set(["eval", "source", ".", "env", "nohup", "nice", "xargs", "time", "stdbuf", "sudo", "doas", "timeout", "gtimeout"]);
+// Programs that can turn into another program in place, keeping their pid and parent, so that a
+// finite command such as `sh -c 'exec sleep 30'` looks exactly like the loop's own `sleep 30`:
+// shells, exec wrappers, and interpreters with an exec call.
+const IMPERSONATORS = new Set([
+  ...SHELLS, "fish", "busybox", "env", "nohup", "nice", "stdbuf", "sudo", "doas", "su", "setsid", "chrt", "taskset", "ionice", "caffeinate", "chroot", "unshare", "nsenter", "flock",
+  "perl", "ruby", "php", "lua", "tclsh", "expect", "osascript",
+]);
+const INTERPRETERS = /^(?:python|pypy)[0-9.]*$|^(?:node|nodejs|bun|deno)$/;
 
 /** Redirections that only discard or merge output, which change nothing a loop waits on. */
 function harmless(redirects: Redirect[]): boolean {
@@ -453,10 +461,19 @@ function condition(list: List): WaitLoop["condition"] {
 
 const sleeps = (list: List): boolean => [...simpleCommands(list)].some(command => command.words[command.assignments]?.text === "sleep");
 
+// Precommand modifiers, which run the command after them in place.
+const MODIFIERS = new Set(["builtin", "command", "exec", "noglob", "nocorrect", "-"]);
+
 function describe(command: Simple): CommandInfo {
-  const words = command.words.slice(command.assignments), all = [...command.words, ...command.redirects.map(redirect => redirect.target)];
+  const all = [...command.words, ...command.redirects.map(redirect => redirect.target)];
+  // The process it starts: without assignments, and past modifiers and their options (`exec -a name`).
+  let words = command.words.slice(command.assignments);
+  while (words[0]?.literal && MODIFIERS.has(words[0].text)) {
+    words = words.slice(1);
+    while (words[0]?.literal && /^-[A-Za-z]+$/.test(words[0].text)) words = words.slice(words[0].text === "-a" ? 2 : 1);
+  }
   return {
-    text: commandText(command.words),
+    text: commandText(words),
     ...(words[0]?.literal ? { program: words[0].text } : {}),
     args: words.slice(1).map(word => word.text),
     expands: all.some(word => !word.literal),
@@ -527,20 +544,30 @@ function collect(text: string, shell: string, analysis: Analysis, depth: number)
 /**
  * Whether nothing in the script outside the loop could start a process that looks like one of the
  * loop's own: no command with the same words, no command naming one of its programs as an
- * argument (`env sleep 30`), no command whose program or arguments are found by expansion when it
- * runs one of its programs or runs other code (`sleep "$n"`, `"$@"`, `eval "$x"`), and no command
- * substitution, whose subshell may run the command directly. Functions and sourced files are taken
- * at their word: they are not read.
+ * argument (`env sleep 30`), no shell, exec wrapper or interpreter that could turn into one in
+ * place (`sh -c 'exec sleep 30'`), no call of a function defined elsewhere (`functions`, from
+ * sourced files), no command whose program or arguments are found by expansion when it runs one
+ * of its programs or runs other code (`sleep "$n"`, `"$@"`, `eval "$x"`), no `eval`ed text that
+ * could not be read, and no command substitution, whose subshell may run the command directly.
  */
-export function exclusive(analysis: Analysis, loop: WaitLoop): boolean {
+export function exclusive(analysis: Analysis, loop: WaitLoop, functions: ReadonlySet<string> = new Set()): boolean {
   const own = new Set(loop.own), texts = new Set(loop.commands);
   const programs = new Set(loop.commands.map(text => text.split(" ")[0]!));
   return analysis.commands.every((command, index) => own.has(index) || !(
     texts.has(command.text)
     || command.substitutes
     || command.args.some(arg => programs.has(arg))
+    || (command.program !== undefined && (IMPERSONATORS.has(command.program) || INTERPRETERS.test(command.program) || functions.has(command.program)))
     || (command.expands && (command.program === undefined || programs.has(command.program) || RUNNERS.has(command.program)))
   ));
+}
+
+/** The names shell text defines as functions or aliases at the start of a line, as a shell snapshot lists them. */
+export function definedNames(text: string): Set<string> {
+  const names = new Set<string>();
+  for (const match of text.matchAll(/^[ \t]*(?:function[ \t]+([^\s(){};&|]+)|([^\s(){};&|=]+)[ \t]*\([ \t]*\))/gm)) names.add((match[1] ?? match[2])!);
+  for (const match of text.matchAll(/^[ \t]*alias[ \t]+(?:-\S+[ \t]+)*(?:--[ \t]+)?['"]?([^=\s'"]+)=/gm)) names.add(match[1]!);
+  return names;
 }
 
 /** Whether the words occur in this order, as whole words, anywhere in the text; linear in its length. */

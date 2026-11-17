@@ -705,14 +705,15 @@ SIGTERM to the group and to members outside it, SIGKILL after the grace period
   described below, each with its `pid`, `ageSeconds`, the script holding it
   (`command`, unwrapped from a harness's `eval`, at most 200 characters), `cwd`,
   where it was `seen` (`repository` or `session`), its `state` (`waiting`,
-  `stuck`, or `stopped` by `--apply`), and, unless waiting, the `reason` it can
-  never finish;
+  `stuck`, `stopped` by `--apply`, or `stop-failed` with the `remaining` pids
+  that outlived the stop), and, unless waiting, the `reason` it can never
+  finish;
 - `worktrees`: worktrees added to the repository, which may need removing;
 - `unavailable`: inspections that could not run (`lsof` missing or failing);
 - `skipped`: record files that could not be read.
 
 It exits 1 while a leftover runs, an untracked process listens on a port, a
-stuck wait loop runs, or an inspection is unavailable or a record unreadable,
+stuck wait loop runs or outlived its stop, or an inspection is unavailable or a record unreadable,
 since a running process could then go unseen. `proc start` refuses to start
 anything when `ps` cannot run. `--apply` stops leftovers and stuck wait loops
 and removes finished records; it never signals untracked processes, waiting
@@ -750,21 +751,30 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
 - The shell is running that loop now: each of its children runs that loop's
   `sleep` or one of its checks, and nothing else in the script could start a
   process that looks the same. That rules out a script with the same command
-  elsewhere, a command naming one of the loop's programs as an argument
-  (`nohup sleep 15`), a command substitution (`x=$(...)`, whose subshell may run
-  its command in place), `eval`ed text that cannot be read, and a command whose
-  words are expanded when its program is one of the loop's, is itself expanded
-  (`"$@"`), or runs other code (`sleep "$n"`, `eval "$x"`, `exec`, `xargs`). A
-  shell between commands proves nothing.
+  elsewhere (past assignments and modifiers such as `command` or `exec`), a
+  command naming one of the loop's programs as an argument (`nohup sleep 15`),
+  a shell, exec wrapper or interpreter that could turn into one in place
+  (`sh -c 'exec sleep 15'`, `env`, `python3`), a call of a function that a
+  sourced or startup file defines, a command substitution (`x=$(...)`, whose
+  subshell may run its command in place), `eval`ed text that cannot be read,
+  and a command whose words are expanded when its program is one of the loop's,
+  is itself expanded (`"$@"`), or runs other code (`sleep "$n"`, `eval "$x"`,
+  `xargs`). A shell between commands proves nothing.
 - The body does nothing but `sleep`, and no `timeout` command runs above the
   shell.
-- The loop's commands run as what their names say: the script defines none of
-  them as a function or alias, no file it sources by literal path does (nested
-  sources are read the same way, and one whose path is expanded may define
-  anything), and a fresh instance of the same shell, which reads the same
-  startup files (`.zshenv`, `$BASH_ENV`), reports each as a program or builtin.
-  A harness's shell snapshot can redefine `grep`, as Claude Code's does. A
-  definition a sourced file makes through `eval` is not seen.
+- The loop's commands run as what their names say. Teardown runs nothing to find
+  out; it reads: the script defines none of them as a function or alias; nor
+  does any file it sources by literal path (nested sources are read the same
+  way, and one whose path is expanded may define anything) or any startup file
+  of its shell (zsh's `zshenv` files, bash's `$BASH_ENV`); and for bash, also
+  as `sh`, no exported function in the environment replaces one. The
+  environment is the shell's own on Linux, and teardown's on macOS, where a
+  shell's cannot be read; a harness's commands share it. Files are read only
+  when regular (never a FIFO or device), up to 4 MB, and one that cannot be
+  read stops the proof. A harness's shell snapshot can redefine `grep`, as
+  Claude Code's does. Text a sourced or startup file runs through `eval`, such
+  as `eval "$(mise activate zsh)"`, is not read, nor is what a sourced file
+  runs at its top level.
 - The condition is one `&&`/`||` list, optionally negated with `!`, of checks
   that all settle for good; any other command in it could leave the loop some
   other way, such as `break`. Two checks settle:
@@ -773,8 +783,9 @@ every other loop is `waiting`. Teardown proves it only when all of these hold:
     reports the shell that runs it, so there a loop whose own command line
     matches its pattern never ends; BSD and macOS `pgrep` leave out that shell
     and its ancestors, so there it takes loops whose patterns match each other.
-    Teardown asks `pgrep` itself which processes match, and probes which of the
-    two it is.
+    Teardown asks `pgrep` itself (the one on its own `PATH`, which the loop's
+    shell is taken to share) which processes match, and probes which of the two
+    it is.
   - `grep` with one empty file operand (`grep -q x ""`), `[ -f "" ]`,
     `test -e ""` and the other file tests never succeed. `grep -e ""` is an
     empty pattern on the standard input, which can still arrive.
@@ -787,14 +798,18 @@ replaced by a build or by a process that holds its path internally, so those
 loops are reported as waiting, with their age.
 
 Stuck loops fail teardown. `--apply` stops them one at a time. Stopping one
-loop can release another that waited on it, so before each stop the loops are
+loop can release another that waited on it, so after each stop the loops are
 judged again in a fresh process snapshot, and a released loop is left to
 finish. A candidate counts only while its pid names the same process (start
-time and command), so a reused pid inherits nothing. The stop acts on the
-snapshot the loop was judged in: the shell and its children, which all ran the
-loop's commands, get SIGTERM; a shell that outlives two seconds is stopped with
-SIGSTOP, so it cannot start another command, then killed with every loop
-command it started since. Each is signalled only while it is the same process.
+time and command), so a reused pid inherits nothing. Immediately before the
+first signal, a fresh snapshot must still show the shell running the loop: the
+same process, with children that each run a loop command; otherwise nothing is
+signalled. The shell and those children get SIGTERM; a shell that outlives two
+seconds is stopped with SIGSTOP, so it cannot start another command, then
+killed with every loop command it started since. Each is signalled only while
+it is the same process. A loop whose processes outlive all of it is
+`stop-failed`, with their pids, and still fails teardown.
+
 Write waits that cannot match themselves: wait on a pid, or use a pattern such
 as `pgrep -f '[r]elease verify'`.
 
