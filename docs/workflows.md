@@ -358,14 +358,14 @@ Scripts that `pdm run`, `hatch run`, or `pipenv run` look up by name in
 tasks. `uv run` is also an install, because it syncs the project's environment
 before running its command, even with `--frozen` or `--locked`; `--no-sync`,
 `--no-project`, `--script`, `--gui-script`, or a true `UV_NO_SYNC` skips the
-sync. That variable counts when an assignment before the command, or before a
-command that runs it, sets it (directly or through `env`), unless `env -i` or
-`exec -c` clears it; a shell string's `export`, `unset`, or assignment that
-changes it may never run, behind `&&`, `||`, or a branch, so later commands no
-longer count it either way, so `uv run --no-sync mypy` reports nothing. `hatch
-run` and `hatch env run` are installs too, since they create and sync the
-environment. A runner that installs before its command, such as `uv run
-pytest`, reports both the install and what its command does. Cached tool
+sync, so `uv run --no-sync mypy` reports nothing. That variable counts when an
+assignment before the command, or before a command that runs it, sets it
+(directly or through `env`), unless `env -i` or `exec -c` clears it; a shell
+string's `export`, `unset`, or assignment that changes it may never run,
+behind `&&`, `||`, or a branch, so later commands no longer count it either
+way. `hatch run` and `hatch env run` are installs too, since they create and
+sync the environment. A runner that installs before its command, such as `uv
+run pytest`, reports both the install and what its command does. Cached tool
 environments (`uvx`, `pipx run`, `uv run --with`) and the tools `mise exec`
 installs are not dependency installs, like the packages `npx` fetches.
 Test runs are `bun test`, `jest`, `vitest`, `mocha`, `ava`, `playwright
