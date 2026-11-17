@@ -13,6 +13,7 @@ const WRAPPERS: ReadonlyMap<string, ReadonlySet<string>> = new Map(Object.entrie
   exec: ["-a"], command: [], nohup: [], nice: ["-n", "--adjustment"], time: ["-o", "--output", "-f", "--format"],
   timeout: ["-s", "--signal", "-k", "--kill-after"], stdbuf: ["-i", "-o", "-e", "--input", "--output", "--error"],
   env: ["-u", "--unset", "-C", "--chdir", "-S", "--split-string", "-a", "--argv0", "--env0-from", "-P", "-L", "-U"],
+  xargs: ["-a", "--arg-file", "-d", "--delimiter", "-E", "-I", "-J", "-L", "--max-lines", "-n", "--max-args", "-P", "--max-procs", "-R", "-S", "-s", "--max-chars", "--process-slot-var"],
 }).map(([name, values]) => [name, new Set(values)]));
 const KEYWORDS = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "fi", "done", "esac"]);
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -711,9 +712,9 @@ function agentTool(context: Context, input: string[], invokedIn: string, chain: 
 /**
  * Split a shell string into simple commands at `&&`, `||`, `;`, `|`, `&`,
  * newlines, and parentheses, honoring quotes; `cd <dir>` moves later commands,
- * and `export`, `unset`, and assignments to exported variables change the
- * variables they see. Command substitutions, functions, and loops are not
- * interpreted.
+ * and a variable that `export`, `unset`, or an assignment changes stops
+ * counting as set for them. Command substitutions, functions, and loops are
+ * not interpreted.
  */
 function visitShell(context: Context, script: string, cwd: string, chain: string[], depth: number): void {
   let directory = cwd, env = context.env;
@@ -738,19 +739,21 @@ function visitShell(context: Context, script: string, cwd: string, chain: string
 }
 
 /**
- * The exported variables after `export NAME=value`, `export -n NAME`, `unset
- * NAME`, or plain `NAME=value` assignments, which change only variables the
- * shell already exports.
+ * The variables later commands of a shell string can rely on after `export`,
+ * `unset`, or plain `NAME=value` assignments. The change may never run, behind
+ * `&&`, `||`, a pipe, or a branch, so a variable it changes or removes stops
+ * counting as set either way: anything it could have suppressed, such as the
+ * sync `UV_NO_SYNC` skips, is reported. A variable it sets to its current value
+ * keeps it.
  */
 function shellVariables(env: Context["env"], [command, ...args]: string[]): Context["env"] {
+  if (command === "unset" && args.includes("-f")) return env;
+  const removes = command === "unset" || (command === "export" && args.includes("-n"));
   const next: Record<string, string> = { ...env };
-  const names = args.filter(arg => !arg.startsWith("-"));
-  if (command === "unset") { if (!args.includes("-f")) for (const name of names) delete next[name]; return next; }
-  for (const word of command === "export" ? names : [command!, ...args]) {
+  for (const word of command === "export" || command === "unset" ? args.filter(arg => !arg.startsWith("-")) : [command!, ...args]) {
     const equals = word.indexOf("=");
     const name = equals === -1 ? word : word.slice(0, equals);
-    if (command === "export" && args.includes("-n")) delete next[name];
-    else if (equals !== -1 && (command === "export" || Object.hasOwn(next, name))) next[name] = word.slice(equals + 1);
+    if (removes || (equals !== -1 && next[name] !== word.slice(equals + 1))) delete next[name];
   }
   return next;
 }

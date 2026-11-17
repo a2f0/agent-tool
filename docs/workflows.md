@@ -329,9 +329,7 @@ it has no gate. Steps are resolved through `bun run`, `npm run`, `pnpm run`,
 and `yarn` package scripts (with their `pre` and `post` scripts and appended
 arguments, from the nearest `package.json` at or above the directory; npm's
 own options count anywhere before `--`), recursively, splitting shell strings at `&&`, `||`, `;`, `|`,
-`&`, and newlines and following `cd` and changes to exported variables
-(`export`, `unset`, and assignments to variables already exported), which end
-with their subshell; through `sh -c` and `bash -c`; through
+`&`, and newlines and following `cd` (which ends with its subshell); through `sh -c` and `bash -c`; through
 `bunx`, `npx`, `bun x`, and `exec` (a version selector such as `vitest@4`
 is ignored, and a `--call` string is split like a script), and `agent-tool
 [--repo <dir>] run -- <command>`; and through
@@ -342,32 +340,34 @@ Commands are also followed through what runs them, as the command it runs
 would be classified directly: `NAME=value` assignments; the wrappers `env`
 (whose `-C` moves the command and whose `-S` string is split into words),
 `nice`, `time`, `timeout`, `nohup`, `exec` (whose `-c` clears the
-environment), `stdbuf`, and `command` (but not `command -v`), with their
-options; the Python runners `uv run`, `uvx` and `uv tool run`, `poetry run`,
-`pdm run`, `pipenv run`, `pipx run` (where a requirement such as `pytest==8`
-or `tox[uv]` names its command, as for `uvx`), `hatch run` (after its `+`/`-`
-matrix selectors and an `env:` prefix) and `hatch env run`, `python -m
-<module>` (also `python3` and versioned names, after interpreter options such
-as `-X dev`), and `coverage run -m <module>`; and `mise exec` or `mise x` with
-the command after `--` or a `-c` string. Their option values, whether separate
-(`uv --directory build`, `pdm run --venv test`) or attached to a short option
-as getopt reads it (`env -Cbuild`, `env -iu NAME`), are never read as the
-command. `uv --directory`, `poetry -C`, and `mise -C` move the command; `pdm
-run` keeps its directory unless `--working-dir` names one, relative to the
-project root (`-p`, else the nearest `pyproject.toml`). Scripts that `pdm
-run`, `hatch run`, or `pipenv run` look up by name in `pyproject.toml`,
-`hatch.toml`, or `Pipfile` are leaves, and so are `mise run` tasks. `uv run`
-is also an install, because it syncs the project's environment before running
-its command, even with `--frozen` or `--locked`; `--no-sync`, `--no-project`,
-`--script`, `--gui-script`, or a true `UV_NO_SYNC` set for that command (by an
-assignment before it or a command that runs it, `env`, or `export`, and not
-cleared by `unset`, `env -i`, or `exec -c`) skips the sync, so `uv run
---no-sync mypy` reports nothing. `hatch run` and `hatch env run` are installs
-too, since they create and sync the environment. A runner that installs before
-its command, such as `uv run pytest`, reports both the install and what its
-command does. Cached tool environments (`uvx`, `pipx run`, `uv run --with`)
-and the tools `mise exec` installs are not dependency installs, like the
-packages `npx` fetches.
+environment), `stdbuf`, `xargs`, and `command` (but not `command -v`), with
+their options; the Python runners `uv run`, `uvx` and `uv tool run`, `poetry
+run`, `pdm run`, `pipenv run`, `pipx run` (where a requirement such as
+`pytest==8` or `tox[uv]` names its command, as for `uvx`), `hatch run` (after
+its `+`/`-` matrix selectors and an `env:` prefix) and `hatch env run`,
+`python -m <module>` (also `python3` and versioned names, after interpreter
+options such as `-X dev`), and `coverage run -m <module>`; and `mise exec` or
+`mise x` with the command after `--` or a `-c` string. Their option values,
+whether separate (`uv --directory build`, `pdm run --venv test`) or attached
+to a short option as getopt reads it (`env -Cbuild`, `env -iu NAME`), are
+never read as the command. `uv --directory`, `poetry -C`, and `mise -C` move
+the command; `pdm run` keeps its directory unless `--working-dir` names one,
+relative to the project root (`-p`, else the nearest `pyproject.toml`).
+Scripts that `pdm run`, `hatch run`, or `pipenv run` look up by name in
+`pyproject.toml`, `hatch.toml`, or `Pipfile` are leaves, and so are `mise run`
+tasks. `uv run` is also an install, because it syncs the project's environment
+before running its command, even with `--frozen` or `--locked`; `--no-sync`,
+`--no-project`, `--script`, `--gui-script`, or a true `UV_NO_SYNC` skips the
+sync. That variable counts when an assignment before the command, or before a
+command that runs it, sets it (directly or through `env`), unless `env -i` or
+`exec -c` clears it; a shell string's `export`, `unset`, or assignment that
+changes it may never run, behind `&&`, `||`, or a branch, so later commands no
+longer count it either way, so `uv run --no-sync mypy` reports nothing. `hatch
+run` and `hatch env run` are installs too, since they create and sync the
+environment. A runner that installs before its command, such as `uv run
+pytest`, reports both the install and what its command does. Cached tool
+environments (`uvx`, `pipx run`, `uv run --with`) and the tools `mise exec`
+installs are not dependency installs, like the packages `npx` fetches.
 Test runs are `bun test`, `jest`, `vitest`, `mocha`, `ava`, `playwright
 test`, `maestro`, `detox`, `node --test`, `pytest`, `py.test`, `python -m
 pytest`, `python -m unittest`, `tox`, `nox`, `hatch test`, `rspec`, `go
