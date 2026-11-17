@@ -174,12 +174,15 @@ reviewed head to the new head and accepts only:
   whose tree is Git's own merge of its parents (`git merge-tree --write-tree`,
   Git 2.38 or newer). Conflicts are allowed only in versioned manifests, and
   each must be resolved byte for byte as `versions resolve-conflicts` resolves
-  it.
+  it. Custom merge drivers never run: each configured `merge.<name>.driver`
+  becomes the shell's `false` and `merge.renormalize` is off, so the check runs
+  no repository code, and a merge that relied on a driver needs a new review.
 - **Version commits**: a commit that changes only the `version` field of
   versioned manifests and, when `versions.lockfile` is set, only the workspace
-  versions in `bun.lock`, which must match the manifests, and that leaves every
-  package at the version `versions prepare` targets against the newest base
-  commit the branch contains.
+  versions in `bun.lock`, which must match the manifests, and that sets every
+  package to the version `versions prepare` targets on the commit's parent
+  against the newest base commit it contains. A new major or minor version in
+  that commit is therefore refused.
 
 It prints `{ ok, reviewedHead, head, base: { ref, oid }, steps, reasons }`.
 Each step is `{ commit, kind, ok, paths, reason }`, with `kind` `base-merge`

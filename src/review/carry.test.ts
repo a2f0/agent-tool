@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { existsSync, rmSync } from "node:fs";
 import { commitAll, FRONTEND, git, mainOid, manifest, mergeMain, read, write } from "../version/version.testUtils";
 import { versionPreparationFixture } from "../version/versionPreparation.testUtils";
 
@@ -118,11 +119,37 @@ test("a content edit hidden in a version commit needs a new review", () => {
   commitAll(rootDir, "chore: bump package versions");
   ({ code, report } = carry(fixture, reviewed, head(fixture)));
   expect(report.steps).toMatchObject([{ kind: "base-merge", ok: true }, { kind: "versions", ok: false, reason: `changes ${FRONTEND} beyond its version field.` }]);
-  // So is a version that versions prepare would not choose.
-  git(rootDir, ["reset", "-q", "--hard", merged]);
-  write(rootDir, FRONTEND, manifest("frontend", "0.7.109"));
-  commitAll(rootDir, "chore: bump package versions");
-  expect(carry(fixture, reviewed, head(fixture)).report.steps[1]).toMatchObject({ kind: "versions", ok: false, reason: expect.stringContaining(`${FRONTEND} at 0.7.109, not 0.7.103`) });
+  // So is a version that versions prepare would not choose, including a new minor release it would keep.
+  for (const version of ["0.7.109", "0.8.0"]) {
+    git(rootDir, ["reset", "-q", "--hard", merged]);
+    write(rootDir, FRONTEND, manifest("frontend", version));
+    commitAll(rootDir, "chore: bump package versions");
+    expect(carry(fixture, reviewed, head(fixture)).report.steps[1]).toMatchObject({ kind: "versions", ok: false, reason: expect.stringContaining(`${FRONTEND} at ${version}, not 0.7.103`) });
+  }
+}, 60_000);
+
+test("a configured merge driver never runs, and a merge that relied on one needs a new review", () => {
+  const fixture = versionPreparationFixture();
+  const { rootDir } = fixture;
+  const marker = `${rootDir}/.git/driver-ran`;
+  write(rootDir, ".gitattributes", "README.md merge=custom\n");
+  commitAll(rootDir, "chore: merge README.md with a custom driver");
+  git(rootDir, ["branch", "-f", "main", "HEAD"]);
+  git(rootDir, ["config", "merge.custom.driver", `touch ${marker}`]);
+  write(rootDir, "README.md", "feature\n");
+  const reviewed = commitAll(rootDir, "docs: feature readme");
+  git(rootDir, ["checkout", "-q", "main"]);
+  write(rootDir, "README.md", "main\n");
+  commitAll(rootDir, "docs: main readme");
+  git(rootDir, ["checkout", "-q", "feature"]);
+  // The real merge ran the driver, which kept the branch's side.
+  expect(mergeMain(rootDir)).toBe(0);
+  expect(existsSync(marker)).toBe(true);
+  rmSync(marker);
+  const { code, report } = carry(fixture, reviewed, head(fixture));
+  expect(existsSync(marker)).toBe(false);
+  expect([code, report.ok]).toEqual([1, false]);
+  expect(report.steps).toMatchObject([{ kind: "base-merge", ok: false, reason: "resolves conflicts outside the versioned manifests by hand: README.md." }]);
 }, 60_000);
 
 test("a merge of a branch the base does not contain needs a new review", () => {

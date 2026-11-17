@@ -353,8 +353,9 @@ build`, `docker buildx build|bake`, and `docker-compose build`). Static checks
 are not builds: `tsc` (with `--noEmit` or `-b`), `cargo check|clippy|fmt`,
 `swift-format`, `swiftlint`, `ktlint`, `detekt`, linters, formatters, `knip`,
 and dependency-cruiser. A turbo task also counts as a test run or build when it
-depends, through `dependsOn` in the root `turbo.json` (or `turbo.jsonc`, or
-turbo 1's `pipeline`) or a workspace package's own, on a task named `test*` or
+depends, through `dependsOn` in the root `turbo.json` (or `turbo.jsonc`, the
+file `--root-turbo-json` names, or turbo 1's `pipeline`) or a workspace
+package's own, on a task named `test*` or
 `build*`, unless the command passes `--only`; the chain then ends with the
 `dependsOn` entries that led there. The package scripts turbo runs are not
 followed. A command that both builds and tests, such as `cargo test`, is

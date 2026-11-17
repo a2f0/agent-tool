@@ -37,8 +37,9 @@ type Git = ReturnType<typeof gitReader>;
  * tree is Git's own merge of its parents (conflicts allowed only in versioned
  * manifests, resolved exactly as `versions resolve-conflicts` resolves them),
  * or a commit that changes only the version fields of versioned manifests and
- * the lockfile's workspace versions, leaving every package at the version
- * `versions prepare` targets against the base it contains. Read-only.
+ * the lockfile's workspace versions, setting every package to the version
+ * `versions prepare` targets on its parent. Read-only, and runs no repository
+ * code: custom merge drivers are disabled.
  */
 export function carryReview(root: string, reviewedHead: string, head: string, base: { ref: string; oid: string }): CarryReport {
   const git = gitReader(root);
@@ -98,7 +99,7 @@ export function carryReviewCommand(root: string, args: string[]): number {
 function baseMerge(root: string, git: Git, commit: string, ours: string, theirs: string, base: { ref: string; oid: string }): CarryStep {
   const step = (ok: boolean, paths: string[], reason: string | null): CarryStep => ({ commit, kind: "base-merge", ok, paths, reason });
   if (!git.succeeds(["merge-base", "--is-ancestor", theirs, base.oid])) return step(false, [], `merges ${theirs}, which ${base.ref} (${base.oid}) does not contain.`);
-  const merged = spawnSync("git", ["merge-tree", "--write-tree", "-z", "--no-messages", ours, theirs], { cwd: root, env: git.env, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+  const merged = spawnSync("git", ["merge-tree", "--write-tree", "-z", "--no-messages", ours, theirs], { cwd: root, env: inertMergeEnvironment(root, git.env), encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
   if (merged.status !== 0 && merged.status !== 1) throw new Error(`git merge-tree failed: ${merged.stderr.trim()}`);
   const [tree, ...entries] = merged.stdout.split("\0").filter(Boolean);
   // Conflict entries are `<mode> <object> <stage>\t<path>`, one per stage present.
@@ -127,6 +128,27 @@ function baseMerge(root: string, git: Git, commit: string, ours: string, theirs:
     if (git.blob(commit, file) !== resolved || mode(commit) !== mode(tree!)) return step(false, conflicted, `resolves ${file} differently from versions resolve-conflicts.`);
   }
   return step(true, conflicted, null);
+}
+
+/**
+ * Keep `git merge-tree` from running programs the repository's configuration
+ * names, so this read-only check executes no repository code: every custom
+ * merge driver becomes the shell's `false`, so its paths conflict instead, and
+ * renormalization, which would run clean filters, is off. A merge that relied
+ * on such a driver then needs a new review.
+ */
+function inertMergeEnvironment(root: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const listed = spawnSync("git", ["config", "-z", "--get-regexp", "^merge\\..+\\.driver$"], { cwd: root, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  // Exit 1 means no driver is configured.
+  if (listed.status !== 0 && listed.status !== 1) throw new Error(`git config failed: ${listed.stderr.trim()}`);
+  const drivers = listed.status === 0 ? listed.stdout.split("\0").filter(Boolean).map(entry => entry.split("\n", 1)[0]!) : [];
+  const result: NodeJS.ProcessEnv = { ...env };
+  let count = Number(result.GIT_CONFIG_COUNT ?? "0");
+  for (const [key, value] of [...drivers.map(driver => [driver, "false"] as const), ["merge.renormalize", "false"] as const]) {
+    result[`GIT_CONFIG_KEY_${count}`] = key; result[`GIT_CONFIG_VALUE_${count}`] = value; count++;
+  }
+  result.GIT_CONFIG_COUNT = String(count);
+  return result;
 }
 
 const deepEqual = (left: unknown, right: unknown) => Bun.deepEquals(left, right, true);
@@ -170,9 +192,13 @@ function versionCommit(root: string, git: Git, commit: string, parent: string, b
       if (source === null || after.versions.get(directory) !== readVersion(source)) return step(false, `leaves ${lockfile} recording another version of ${directory || "."} than its manifest.`);
     }
   }
-  // `versions prepare` leaves every package at its target against the base it was given, which the branch contains.
-  const integrated = git.read(["merge-base", commit, baseOid]).trim();
-  const stale = planVersions(root, integrated, commit).filter(plan => plan.headVersion !== plan.targetVersion);
-  if (stale.length) return step(false, `leaves ${stale.map(plan => `${plan.manifest} at ${plan.headVersion}, not ${plan.targetVersion}`).join(", ")}, which versions prepare against ${integrated} would not.`);
+  // `versions prepare` ran on the parent against the newest base commit it contains, and sets each package to its
+  // target there. Planned from the parent, so a new major or minor version in this commit is never its own target.
+  const integrated = git.read(["merge-base", parent, baseOid]).trim();
+  const plans = new Map(planVersions(root, integrated, parent).map(plan => [plan.manifest, plan]));
+  const unplanned = paths.filter(file => manifests.has(file) && !plans.has(file));
+  if (unplanned.length) return step(false, `changes the version of ${unplanned.join(", ")}, which versions prepare does not set.`);
+  const wrong = [...plans.values()].map(plan => ({ plan, version: readVersion(git.blob(commit, plan.manifest)!) })).filter(({ plan, version }) => version !== plan.targetVersion);
+  if (wrong.length) return step(false, `leaves ${wrong.map(({ plan, version }) => `${plan.manifest} at ${version}, not ${plan.targetVersion}`).join(", ")}, which versions prepare against ${integrated} would not.`);
   return step(true, null);
 }

@@ -300,20 +300,27 @@ function readTurboConfig(context: Context, file: string): TurboConfig | null {
 const turboFile = (directory: string) => ["turbo.json", "turbo.jsonc"].map(name => path.join(directory, name)).find(file => existsSync(file));
 
 /**
- * Every turbo configuration that can define a task: the root one, the nearest
- * at or above the directory turbo starts in (`--cwd`) without `extends`, then
- * each workspace package's.
+ * Every turbo configuration that can define a task: the root one, then each
+ * workspace package's. The root one is `--root-turbo-json` when given (read
+ * from the directory turbo starts in and from the repository root, wherever it
+ * exists), else the nearest at or above the directory turbo starts in
+ * (`--cwd`) without `extends`.
  */
 function turboConfigs(context: Context, args: string[], cwd: string): TurboConfig[] {
   const loaded = new Map<string, TurboConfig | null>();
   const load = (file: string) => { if (!loaded.has(file)) loaded.set(file, readTurboConfig(context, file)); return loaded.get(file)!; };
-  let root: string | undefined;
-  for (let current = path.resolve(cwd, optionValue(args, "--cwd") ?? "."); ; current = path.dirname(current)) {
+  const start = path.resolve(cwd, optionValue(args, "--cwd") ?? ".");
+  const explicit = optionValue(args, "--root-turbo-json");
+  const roots: string[] = [];
+  if (explicit !== undefined) {
+    roots.push(...new Set([path.resolve(start, explicit), path.resolve(context.root, explicit)].filter(file => existsSync(file))));
+    if (!roots.length) context.errors.push(`Cannot read ${explicit} (--root-turbo-json): no such file.`);
+  } else for (let current = start; ; current = path.dirname(current)) {
     const file = turboFile(current);
-    if (file && load(file) && !load(file)!.extends) { root = file; break; }
+    if (file && load(file) && !load(file)!.extends) { roots.push(file); break; }
     if (current === context.root || !current.startsWith(`${context.root}${path.sep}`)) break;
   }
-  const files = new Set([...(root ? [root] : []), ...workspaceDirectories(context).flatMap(directory => turboFile(directory) ?? [])]);
+  const files = new Set([...roots, ...workspaceDirectories(context).flatMap(directory => turboFile(directory) ?? [])]);
   return [...files].flatMap(file => load(file) ?? []);
 }
 
