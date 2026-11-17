@@ -9,6 +9,22 @@ export const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 export interface RunReceipt { status: string; label?: string; exitCode: number; signal: string | null; durationMs: number; outputBytes: number; log: string; leftoverProcessGroup?: number }
 
 /**
+ * Whether a process group still has members. macOS answers EPERM, not ESRCH,
+ * for a group whose only members are zombies awaiting their reaper, such as a
+ * descendant that exited after its parent and before launchd reaped it, and
+ * for a group holding only processes this user cannot signal. Both still exist.
+ */
+export function processGroupExists(group: number): boolean {
+  try { process.kill(-group, 0); return true; }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return false;
+    if (code === "EPERM") return true;
+    throw error;
+  }
+}
+
+/**
  * Run directly into a private file: child output never accumulates in memory.
  * A caller that must record the interruption before exiting passes
  * `reraiseInterrupt: false` and re-raises the signal itself.
@@ -46,7 +62,10 @@ export async function runCommand(args: string[], record?: (receipt: RunReceipt) 
         if (grouped) process.kill(-child.pid, value);
         else child.kill(value);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        // ESRCH: the group is gone. EPERM: no member could be signalled, as in
+        // a group of zombies on macOS; there is nothing left to stop.
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== "ESRCH" && code !== "EPERM") throw error;
       }
     };
     for (const value of FORWARDED_SIGNALS) {
@@ -72,12 +91,7 @@ export async function runCommand(args: string[], record?: (receipt: RunReceipt) 
     if (interrupted) {
       // The direct child can exit before its descendants finish cleanup. Keep
       // the original grace period for the remaining process group as well.
-      while (grouped && child.pid && performance.now() < cancelDeadline) {
-        try { process.kill(-child.pid, 0); }
-        catch (error) {
-          if ((error as NodeJS.ErrnoException).code === "ESRCH") break;
-          throw error;
-        }
+      while (grouped && child.pid && performance.now() < cancelDeadline && processGroupExists(child.pid)) {
         await new Promise(resolve => setTimeout(resolve, 25));
       }
       forward("SIGKILL");
