@@ -89,6 +89,9 @@ test("an executable that asks is refused while the generated rules predate its c
   // A recorded harness whose rules are gone is stale.
   writeFileSync(manifestFile, JSON.stringify({ schemaVersion: 1, codex: manifest.codex }));
   expect(f.run(["x", "wrangler"]).stderr).toMatch(/Permission rules predate the current class of 'bun x wrangler'/);
+  // A manifest link, even a dangling one, is refused rather than read as no manifest.
+  rmSync(manifestFile); symlinkSync(path.join(f.project, "missing.json"), manifestFile);
+  expect(f.run(["x", "wrangler"]).stderr).toMatch(/Refusing permissions destination symlink/);
 }, 30_000);
 
 test("--cwd cannot reach another checkout, and options must precede --", () => {

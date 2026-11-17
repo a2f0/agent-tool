@@ -561,7 +561,10 @@ installed package is older than the pin: reinstall dependencies first, and
 rerun the install only when the running version matches the pin, as after an
 intentional downgrade.
 The field is additive, so `schemaVersion` stays 1, older manifests remain
-readable, and older releases still read newer ones.
+readable, and older releases still read newer ones. The version says which
+release last installed, not that nothing else remains: a skill a release
+retires keeps its files and ownership record, which neither install nor check
+visits, so remove both by hand.
 `.agent-tool-permissions.json` records and checks the version the same way
 ([permissions](permissions.md#generated-rules)).
 

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { accessSync, constants as files, existsSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants as files, existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
 import { runCommand } from "../commands/run";
@@ -21,7 +21,9 @@ const EXECUTABLE = /^[\w.+-][\w.+-]*$/;
  * they are regenerated.
  */
 function assertCurrentRules(root: string, command: string): void {
-  if (!existsSync(path.join(root, PERMISSIONS_MANIFEST))) return;
+  // Only a missing manifest means no rules; a link, even a dangling one, is refused by the check below.
+  try { lstatSync(path.join(root, PERMISSIONS_MANIFEST)); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
   // Only a current allow class matches whatever rules exist; a removed or asking class relies on fresh ones.
   const entry = projectCommands(root).find(item => item.command === command);
   if (entry && CLASSES[entry.class].decision === "allow") return;
