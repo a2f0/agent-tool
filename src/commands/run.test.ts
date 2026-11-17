@@ -117,3 +117,46 @@ test("cancellation lets descendants finish cleanup after the direct child exits 
     expect(receipt.exitCode).toBe(143);
   } finally { child.kill("SIGKILL"); }
 }, 10000);
+
+test("cancellation waits out a process group that holds only an unreaped zombie", async () => {
+  // The cancelled command's group is left holding one exited, unreaped member:
+  // a reaper in its own group forks that member into the command's group and
+  // reaps it two seconds later. Linux reports such a group as present; macOS
+  // answers EPERM rather than ESRCH. That is the state a descendant leaves after
+  // its parent exits, until launchd reaps it, so the wait used to throw there.
+  const cwd = mkdtempSync(path.join(tmpdir(), "agent-tool-command-test-")); temporary.push(cwd);
+  const ready = path.join(cwd, "ready");
+  const script = [
+    "import os, sys, time",
+    "group, ready = os.getpgid(0), sys.argv[1]",
+    "if os.fork() == 0:",
+    "    os.setpgid(0, 0)",
+    "    readable, writable = os.pipe()",
+    "    member = os.fork()",
+    "    if member == 0:",
+    "        os.close(writable); os.read(readable, 1); os._exit(0)",
+    "    os.setpgid(member, group)",
+    "    os.close(writable)",
+    "    open(ready, 'w').close()",
+    "    time.sleep(2)",
+    "    os.waitpid(member, 0)",
+    "    os._exit(0)",
+    "time.sleep(10)",
+  ].join("\n");
+  const child = spawn(process.execPath, [cli, "run", "--", "python3", "-I", "-c", script, ready], { stdio: ["ignore", "pipe", "pipe"] });
+  let output = ""; let errors = "";
+  child.stdout.on("data", chunk => output += chunk);
+  child.stderr.on("data", chunk => errors += chunk);
+  const closed = new Promise<NodeJS.Signals | null>(resolve => child.once("close", (_code, signal) => resolve(signal)));
+  try {
+    const deadline = Date.now() + 5000;
+    while (!existsSync(ready) && Date.now() < deadline) await Bun.sleep(10);
+    expect(existsSync(ready)).toBe(true);
+    child.kill("SIGTERM");
+    const signal = await closed;
+    expect(errors).not.toContain("EPERM");
+    expect(signal).toBe("SIGTERM");
+    const receipt = JSON.parse(output); temporary.push(path.dirname(receipt.log));
+    expect(receipt).toMatchObject({ exitCode: 143, signal: "SIGTERM" });
+  } finally { child.kill("SIGKILL"); }
+}, 15000);
