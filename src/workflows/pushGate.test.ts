@@ -196,7 +196,9 @@ test("Python runners, environment managers, and wrappers are followed to the com
   const cases: [string[], StepFinding["kind"][]][] = [
     // `uv run` syncs the environment first, even with --frozen or --locked, unless --no-sync, --no-project, a script, or UV_NO_SYNC says otherwise.
     [["uv", "run", "pytest"], ["install", "test"]], [["uv", "run", "--frozen", "mypy"], ["install"]], [["uv", "run", "--locked", "--", "ruff", "check"], ["install"]],
-    [["uv", "run", "--no-sync", "pytest"], ["test"]], [["uv", "run", "--no-project", "pytest"], ["test"]], [["uv", "run", "--script", "tools/check.py"], []],
+    [["uv", "run", "--no-sync", "pytest"], ["test"]], [["uv", "run", "--no-project", "pytest"], ["test"]], [["uv", "run", "--script", "tools/check.py"], []], [["uv", "run", "-qs", "tools/check.py"], []],
+    // Without a command, `uv run` still syncs before listing what it could run.
+    [["uv", "run"], ["install"]], [["uv", "run", "--no-sync"], []],
     [["uv", "run", "--no-sync", "--with", "pytest-cov", "--", "pytest", "--cov"], ["test"]], [["uv", "run", "--no-sync", "-m", "pytest"], ["test"]], [["uv", "run", "--no-sync", "--module", "build"], ["build"]],
     [["uv", "--directory", "build", "run", "--no-sync", "--with", "test", "mypy"], []], [["uv", "--directory", "build", "run", "--no-sync", "npm", "test"], ["test"]],
     [["UV_NO_SYNC=1", "uv", "run", "pytest"], ["test"]], [["env", "UV_NO_SYNC=true", "uv", "run", "mypy"], []], [["UV_NO_SYNC=1", "env", "-u", "UV_NO_SYNC", "uv", "run", "mypy"], ["install"]], [["UV_NO_SYNC=0", "uv", "run", "mypy"], ["install"]],
@@ -212,6 +214,9 @@ test("Python runners, environment managers, and wrappers are followed to the com
     [["mise", "exec", "python@3.12", "--", "pytest"], ["test"]], [["mise", "x", "-C", "build", "--", "npm", "test"], ["test"]], [["mise", "-C", "build", "x", "--", "mypy"], []], [["mise", "x", "-c", "uv run --no-sync pytest"], ["test"]],
     [["nice", "-n", "10", "pytest"], ["test"]], [["nice", "-5", "pytest"], ["test"]], [["time", "-p", "pytest"], ["test"]], [["timeout", "-k", "5", "60", "pytest"], ["test"]], [["nohup", "pytest"], ["test"]], [["stdbuf", "-o", "L", "pytest"], ["test"]],
     [["env", "-i", "-C", "build", "PATH=/bin", "npm", "test"], ["test"]], [["/usr/bin/env", "-S", "uv run --no-sync pytest"], ["test"]], [["exec", "-a", "tests", "pytest"], ["test"]], [["command", "-v", "pytest"], []],
+    // Short options take a value attached to them or after bundled flags, as getopt reads them.
+    [["env", "-Cbuild", "npm", "test"], ["test"]], [["env", "-iCbuild", "npm", "test"], ["test"]], [["env", "-Suv run --no-sync pytest"], ["test"]], [["env", "-uCI", "pytest"], ["test"]],
+    [["UV_NO_SYNC=1", "env", "-iu", "UV_NO_SYNC", "uv", "run", "mypy"], ["install"]], [["command", "-pv", "pytest"], []], [["nice", "-n10", "pytest"], ["test"]], [["poetry", "-Cbuild", "run", "npm", "test"], ["test"]], [["mise", "x", "-Cbuild", "--", "npm", "test"], ["test"]],
     [["bun", "run", "unit"], ["test"]], [["bun", "run", "types"], []], [["bun", "run", "gate"], []], [["bun", "run", "synced"], ["install"]],
   ];
   for (const [command, kinds] of cases) expect({ command, kinds: resolveStep(root, command).findings.map(finding => finding.kind) }).toEqual({ command, kinds });

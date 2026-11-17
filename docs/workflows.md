@@ -346,8 +346,9 @@ tool run`, `poetry run`, `pdm run`, `pipenv run`, `pipx run`, `hatch run`
 `python -m <module>` (also `python3` and versioned names, after interpreter
 options such as `-X dev`), and `coverage run -m <module>`; and `mise exec` or
 `mise x` with the command after `--` or a `-c` string. Their option values,
-such as `uv --directory build` or `pdm run --venv test`, are never read as the
-command. Scripts that `pdm run`, `hatch run`, or `pipenv run` look up by name
+whether separate (`uv --directory build`, `pdm run --venv test`) or attached
+to a short option as getopt reads it (`env -Cbuild`, `env -iu NAME`), are
+never read as the command. Scripts that `pdm run`, `hatch run`, or `pipenv run` look up by name
 in `pyproject.toml`, `hatch.toml`, or `Pipfile` are leaves. `uv run` is also an
 install, because it syncs the project's environment before running its
 command, even with `--frozen` or `--locked`; `--no-sync`, `--no-project`,

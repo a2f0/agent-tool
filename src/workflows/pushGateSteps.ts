@@ -60,16 +60,34 @@ function report(context: Context, kind: StepFinding["kind"], runner: string, cha
   context.findings.push({ kind, runner, chain: chain.at(-1) === runner ? chain : [...chain, runner] });
 }
 
+/**
+ * The options in one word, as getopt reads them: `--name=value`, `--name`
+ * with its value in the next word, or bundled short options (`-iC dir`,
+ * `-Cdir`), where the first that takes a value takes the rest of the word or,
+ * when nothing is left, the next word, which `next` supplies.
+ */
+function optionWords(word: string, takesValue: ReadonlySet<string>, next: () => string | undefined): [string, string | undefined][] {
+  if (word.startsWith("--") || word.length <= 2) {
+    const equals = word.indexOf("=");
+    return equals > 0 ? [[word.slice(0, equals), word.slice(equals + 1)]] : [[word, takesValue.has(word) ? next() : undefined]];
+  }
+  const found: [string, string | undefined][] = [];
+  for (let at = 1; at < word.length; at++) {
+    const name = `-${word[at]}`;
+    if (!takesValue.has(name)) { found.push([name, undefined]); continue; }
+    const rest = word.slice(at + 1).replace(/^=/, "");
+    found.push([name, rest || next()]);
+    break;
+  }
+  return found;
+}
+
 /** Skip leading options, consuming the separate value of the ones that take one; returns the options seen. */
 function options(argv: string[], spec: Tool): { rest: string[]; seen: Map<string, string | true> } {
   const seen = new Map<string, string | true>();
   let index = 0;
   while (index < argv.length && argv[index]!.startsWith("-") && argv[index] !== "--") {
-    const value = argv[index]!;
-    const equals = value.indexOf("=");
-    if (equals > 0) seen.set(value.slice(0, equals), value.slice(equals + 1));
-    else if (spec.values.has(value) && index + 1 < argv.length) { seen.set(value, argv[index + 1]!); index++; }
-    else seen.set(value, true);
+    for (const [name, value] of optionWords(argv[index]!, spec.values, () => index + 1 < argv.length ? argv[++index] : undefined)) seen.set(name, value ?? true);
     index++;
   }
   return { rest: argv.slice(index), seen };
@@ -176,18 +194,17 @@ function unwrap(input: string[], cwd: string, inherited: Context["env"]): { argv
     while (argv[0]?.startsWith("-")) {
       const option = argv.shift()!;
       if (option === "--") break;
-      const equals = option.startsWith("--") ? option.indexOf("=") : -1;
-      const name = equals > 0 ? option.slice(0, equals) : option;
-      const value = equals > 0 ? option.slice(equals + 1) : takesValue.has(name) ? argv.shift() : undefined;
-      // `command -v` and `command -V` only describe the command.
-      if (wrapper === "command" && /^-[pvV]*[vV]/.test(option)) return null;
-      if (wrapper !== "env") continue;
-      if (name === "-" || name === "-i" || name === "--ignore-environment") env = {};
-      else if (value === undefined) continue;
-      else if (name === "-u" || name === "--unset") env = Object.fromEntries(Object.entries(env).filter(([key]) => key !== value));
-      else if (name === "-C" || name === "--chdir") directory = path.resolve(directory, value);
-      // `env -S 'a b'` reads its words as if they were given separately.
-      else if (name === "-S" || name === "--split-string") argv.unshift(...splitShell(value).flat());
+      for (const [name, value] of optionWords(option, takesValue, () => argv.shift())) {
+        // `command -v` and `command -V` only describe the command.
+        if (wrapper === "command" && (name === "-v" || name === "-V")) return null;
+        if (wrapper !== "env") continue;
+        if (name === "-" || name === "-i" || name === "--ignore-environment") env = {};
+        else if (value === undefined) continue;
+        else if (name === "-u" || name === "--unset") env = Object.fromEntries(Object.entries(env).filter(([key]) => key !== value));
+        else if (name === "-C" || name === "--chdir") directory = path.resolve(directory, value);
+        // `env -S 'a b'` reads its words as if they were given separately.
+        else if (name === "-S" || name === "--split-string") argv.unshift(...splitShell(value).flat());
+      }
     }
     // `timeout` takes its duration before the command.
     if (wrapper === "timeout") argv.shift();
@@ -459,10 +476,7 @@ function scatteredOptions(args: string[], spec: Tool): { rest: string[]; seen: M
   for (let index = 0; index < before.length; index++) {
     const value = before[index]!;
     if (!value.startsWith("-")) { positional.push(value); continue; }
-    const equals = value.indexOf("=");
-    if (equals > 0) seen.set(value.slice(0, equals), value.slice(equals + 1));
-    else if (spec.values.has(value) && index + 1 < before.length) seen.set(value, before[++index]!);
-    else seen.set(value, true);
+    for (const [name, found] of optionWords(value, spec.values, () => index + 1 < before.length ? before[++index] : undefined)) seen.set(name, found ?? true);
   }
   return { rest: separator === -1 ? positional : [...positional, ...args.slice(separator)], seen };
 }
@@ -541,9 +555,10 @@ function uv(context: Context, args: string[], cwd: string, chain: string[], dept
   const sub = rest[0], words = rest.slice(1);
   if (sub === "run" || (sub === "tool" && words[0] === "run")) {
     const run = scriptOptions(sub === "run" ? words : words.slice(1), spec);
-    if (!run.rest.length) return;
     const flags = new Set([...seen.keys(), ...run.seen.keys()]);
+    // Even without a command, `uv run` syncs before it lists what it could run.
     if (sub === "run" && !["--no-sync", "--no-project", "-s", "--script", "--gui-script"].some(flag => flags.has(flag)) && !truthy(context.env.UV_NO_SYNC)) report(context, "install", text, chain);
+    if (!run.rest.length) return;
     const module = sub === "run" && (run.seen.has("-m") || run.seen.has("--module"));
     visit(context, module ? ["python", "-m", ...run.rest] : run.rest, movedTo(cwd, ["--directory"], seen, run.seen), chain, depth + 1);
   } else if ((PYTHON_INSTALLS.uv!.includes(sub ?? "") || (sub === "pip" && ["install", "sync"].includes(options(words, spec).rest[0] ?? ""))) && !previews(words)) report(context, "install", text, chain);
