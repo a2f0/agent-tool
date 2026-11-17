@@ -214,7 +214,7 @@ test("Python runners, environment managers, and wrappers are followed to the com
     [["pipenv", "run", "pytest"], ["test"]], [["pipx", "run", "--spec", "build", "tox"], ["test"]], [["pipx", "run", "black", "--check", "."], []],
     [["python", "-m", "pytest"], ["test"]], [["python3", "-X", "dev", "-m", "pytest"], ["test"]], [["python3.12", "-Bm", "pytest"], ["test"]], [["python", "-mpytest"], ["test"]], [["python", "-W", "error", "-m", "mypy", "src"], []],
     [["python", "-c", "import pytest"], []], [["python", "scripts/pytest.py"], []], [["python", "-m", "pip", "install", "-r", "requirements.txt"], ["install"]], [["python", "-m", "build"], ["build"]], [["python", "-m", "unittest", "discover"], ["test"]],
-    [["coverage", "run", "--source", "src", "-m", "pytest"], ["test"]], [["coverage", "run", "pytest.py"], []],
+    [["coverage", "run", "--source", "src", "-m", "pytest"], ["test"]], [["coverage", "run", "--save-signal", "USR1", "-p", "-m", "pytest"], ["test"]], [["coverage", "run", "pytest.py"], []],
     [["mise", "exec", "python@3.12", "--", "pytest"], ["test"]], [["mise", "x", "-C", "build", "--", "npm", "test"], ["test"]], [["mise", "-C", "build", "x", "--", "mypy"], []], [["mise", "x", "-c", "uv run --no-sync pytest"], ["test"]],
     [["nice", "-n", "10", "pytest"], ["test"]], [["nice", "-5", "pytest"], ["test"]], [["time", "-p", "pytest"], ["test"]], [["timeout", "-k", "5", "60", "pytest"], ["test"]], [["nohup", "pytest"], ["test"]], [["stdbuf", "-o", "L", "pytest"], ["test"]],
     [["env", "-i", "-C", "build", "PATH=/bin", "npm", "test"], ["test"]], [["/usr/bin/env", "-S", "uv run --no-sync pytest"], ["test"]], [["exec", "-a", "tests", "pytest"], ["test"]], [["UV_NO_SYNC=1", "bash", "-c", "exec -c uv run mypy"], ["install"]],

@@ -526,7 +526,7 @@ const PYTHON_TOOLS = {
   pipenv: tool(["--python", "--pypi-mirror"]),
   pipx: tool(["--python-args", "--with", "--spec", "--python", "--fetch-python", "--index-url", "--pip-args", "--cooldown", "--backend"]),
   pip: tool(["--python", "--log", "--log-file", "--proxy", "--retries", "--resume-retries", "--timeout", "--exists-action", "--trusted-host", "--cert", "--client-cert", "--cache-dir", "--use-feature", "--use-deprecated", "--keyring-provider"]),
-  coverage: tool(["--rcfile", "--source", "--include", "--omit", "--context", "--concurrency", "--data-file", "--debug"]),
+  coverage: tool(["--rcfile", "--source", "--include", "--omit", "--context", "--concurrency", "--data-file", "--debug", "--save-signal"]),
 } as const;
 const MISE = tool(["-C", "--cd", "-E", "--env", "-j", "--jobs", "-c", "--command", "--allow-env", "--allow-net", "--allow-read", "--allow-write", "--secrets"]);
 /** Subcommands that install a Python project's dependencies into its environment. */
