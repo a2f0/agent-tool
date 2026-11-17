@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, constants, fstatSync, ftruncateSync, lstatSync, openSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, ftruncateSync, lstatSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 /** Refuses symbolic links below the base, so a committed link cannot redirect a write outside it. */
@@ -11,6 +11,28 @@ export function assertNoLinks(base: string, destination: string): void {
     try { link = lstatSync(current).isSymbolicLink(); } catch { return; }
     if (link) throw new Error(`Refusing to write through symbolic link ${path.relative(base, current)}.`);
   }
+}
+
+/** What `readRegularFile` found: nothing, something other than a regular file, or a file's text. */
+export type RegularFile = { status: "missing" } | { status: "irregular" } | { status: "file"; contents: string };
+
+/**
+ * Reads a regular file through one descriptor opened without following a final symbolic link
+ * and without blocking, then checks that descriptor, so a path replaced between a check and the
+ * read can neither redirect it nor stall it on a FIFO or device.
+ */
+export function readRegularFile(file: string): RegularFile {
+  let descriptor: number;
+  try { descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return { status: "missing" };
+    // O_NOFOLLOW reports a final symbolic link as ELOOP (EMLINK on some BSDs).
+    if (code === "ELOOP" || code === "EMLINK") return { status: "irregular" };
+    throw error;
+  }
+  try { return fstatSync(descriptor).isFile() ? { status: "file", contents: readFileSync(descriptor, "utf8") } : { status: "irregular" }; }
+  finally { closeSync(descriptor); }
 }
 
 /**

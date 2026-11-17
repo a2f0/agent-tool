@@ -86,6 +86,16 @@ test("refuses directory, file and dangling symlinks without following them", () 
   }
 });
 
+test("a FIFO at a skill destination or the manifest is refused without blocking", () => {
+  for (const relative of [".agents/skills/ship-pr/SKILL.md", MANIFEST]) {
+    const root = fixture(), file = path.join(root, relative);
+    mkdirSync(path.dirname(file), { recursive: true });
+    expect(spawnSync("mkfifo", [file]).status).toBe(0);
+    expect(() => checkSkills(root, "codex")).toThrow("not a regular file");
+    expect(() => installSkills(root, "codex", true)).toThrow("not a regular file");
+  }
+}, 10_000);
+
 test("check is read-only and detects missing skills and ownership records", () => {
   const root = fixture();
   expect(checkSkills(root, "all").every(change => change.status === "missing")).toBe(true);

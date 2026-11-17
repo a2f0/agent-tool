@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { readRegularFile } from "../system/files";
 import { AGENT_TOOL_VERSION, manifestVersionCheck, validVersion, type CheckStatus } from "../system/manifestVersion";
 import { claudePermissions, codexRules, type CatalogEntry, type ClaudePermissions } from "./catalog";
 import { projectCommands } from "./project";
@@ -49,11 +50,11 @@ function atomicWrite(file: string, contents: string): void {
 }
 
 function readManifest(root: string): Recorded {
-  const file = destination(root, PERMISSIONS_MANIFEST);
-  if (!existsSync(file)) return { manifest: { schemaVersion: 1 } };
-  // Reading a FIFO or device would block a hook or CI; only a regular file can be a manifest.
-  if (!lstatSync(file).isFile()) throw new Error(`Managed permissions manifest is not a regular file: ${PERMISSIONS_MANIFEST}`);
-  const raw = readFileSync(file, "utf8");
+  // One descriptor, refusing links, FIFOs, and devices, so a hook or CI can be neither redirected nor stalled.
+  const read = readRegularFile(destination(root, PERMISSIONS_MANIFEST));
+  if (read.status === "missing") return { manifest: { schemaVersion: 1 } };
+  if (read.status === "irregular") throw new Error(`Managed permissions manifest is not a regular file: ${PERMISSIONS_MANIFEST}`);
+  const raw = read.contents;
   const parsed: unknown = JSON.parse(raw);
   const object = (item: unknown): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item);
   const strings = (items: unknown) => Array.isArray(items) && items.every(item => typeof item === "string");
@@ -67,9 +68,9 @@ function readManifest(root: string): Recorded {
 }
 
 type Settings = Record<string, unknown> & { permissions?: Record<string, unknown> };
-function readSettings(file: string): Settings {
-  if (!existsSync(file)) return {};
-  const value = JSON.parse(readFileSync(file, "utf8")) as unknown;
+function parseSettings(source: string | undefined): Settings {
+  if (source === undefined) return {};
+  const value = JSON.parse(source) as unknown;
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${CLAUDE_SETTINGS} is not a JSON object.`);
   const permissions = (value as Settings).permissions;
   if (permissions !== undefined && (typeof permissions !== "object" || Array.isArray(permissions))) throw new Error(`${CLAUDE_SETTINGS} has an invalid permissions object.`);
@@ -99,11 +100,12 @@ function pending(root: string, targets: Harness[], manifest: Manifest, project: 
   return targets.map(harness => {
     const relative = harness === "claude" ? CLAUDE_SETTINGS : CODEX_RULES;
     const file = destination(root, relative);
-    const exists = existsSync(file);
-    if (exists && !lstatSync(file).isFile()) throw new Error(`Permissions destination is not a regular file: ${relative}`);
-    const current = exists ? readFileSync(file, "utf8") : undefined;
+    // One read of each destination serves both the merge and the comparison.
+    const read = readRegularFile(file);
+    if (read.status === "irregular") throw new Error(`Permissions destination is not a regular file: ${relative}`);
+    const current = read.status === "file" ? read.contents : undefined;
     let contents: string;
-    if (harness === "claude") contents = `${JSON.stringify(mergedSettings(readSettings(file), manifest.claude, claudePermissions(project)), null, 2)}\n`;
+    if (harness === "claude") contents = `${JSON.stringify(mergedSettings(parseSettings(current), manifest.claude, claudePermissions(project)), null, 2)}\n`;
     else {
       contents = codexRules(project);
       if (current !== undefined && current !== contents && hash(current) !== manifest.codex?.sha256) throw new Error(`Locally edited or unmanaged rules: ${relative}. Preserve them before installing.`);

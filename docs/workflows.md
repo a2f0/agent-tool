@@ -239,7 +239,10 @@ do not act on this one. It then runs, in order:
    with the release running the gate, so once a pin bump is installed they
    refuse the push until both installs rerun with `--apply` and the
    repository's existing `--harness` scopes, usually through its sync
-   script, and record the new one, even when no managed file changed. The
+   script, and record the new one, even when no managed file changed. Each
+   manifest holds one version for every scope it covers, so an install of
+   any one scope records it for all; the per-file checks still catch a scope
+   whose files the new release changes. The
    skills guard checks the shared manifest once, however many harnesses it
    records, none included ([skill installation](reference.md#portable-skills)).
 2. The declared `steps`, through the run-group runner with the label

@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { harnessNamed } from "../harnesses";
+import { readRegularFile } from "../system/files";
 import { AGENT_TOOL_VERSION, manifestVersionCheck, validVersion, type CheckStatus } from "../system/manifestVersion";
 import { BUNDLED_SKILL_REFERENCES, BUNDLED_SKILLS } from "./bundled";
 
@@ -50,11 +51,11 @@ export function bundledSkillFiles(): [name: string, files: [relative: string, so
 interface SkillManifest { raw?: string; agentToolVersion?: string; files: Record<string, string> }
 
 function readManifest(root: string): SkillManifest {
-  const file = safeDestination(root, SKILLS_MANIFEST);
-  if (!existsSync(file)) return { files: {} };
-  // Reading a FIFO or device would block a hook or CI; only a regular file can be a manifest.
-  if (!lstatSync(file).isFile()) throw new Error(`Managed skill manifest is not a regular file: ${SKILLS_MANIFEST}`);
-  const raw = readFileSync(file, "utf8");
+  // One descriptor, refusing links, FIFOs, and devices, so a hook or CI can be neither redirected nor stalled.
+  const read = readRegularFile(safeDestination(root, SKILLS_MANIFEST));
+  if (read.status === "missing") return { files: {} };
+  if (read.status === "irregular") throw new Error(`Managed skill manifest is not a regular file: ${SKILLS_MANIFEST}`);
+  const raw = read.contents;
   const value = JSON.parse(raw);
   if (!value || typeof value !== "object" || Array.isArray(value) || value.schemaVersion !== 1 || !value.files || typeof value.files !== "object" || Array.isArray(value.files) || Object.values(value.files).some(item => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item))) throw new Error("Invalid managed skill manifest.");
   // The version is provenance, not ownership: an unusable one counts as none, which the check reports and the install replaces.
@@ -77,12 +78,10 @@ function plan(root: string, target: string, recorded: SkillManifest): Plan {
       for (const [inside, source] of sources) {
         const relative = `${directory}/${name}/${inside}`;
         const file = safeDestination(root, relative);
-        let current: string | undefined;
-        if (existsSync(file)) {
-          if (!lstatSync(file).isFile()) throw new Error(`Skill destination is not a regular file: ${relative}`);
-          current = readFileSync(file, "utf8");
-          if (current !== source && hash(current) !== recorded.files[relative]) throw new Error(`Locally edited or unmanaged skill: ${relative}. Preserve it before installing.`);
-        }
+        const read = readRegularFile(file);
+        if (read.status === "irregular") throw new Error(`Skill destination is not a regular file: ${relative}`);
+        const current = read.status === "file" ? read.contents : undefined;
+        if (current !== undefined && current !== source && hash(current) !== recorded.files[relative]) throw new Error(`Locally edited or unmanaged skill: ${relative}. Preserve it before installing.`);
         planned.push({ file, relative, source, current, change: { path: relative, status: current === source ? "unchanged" : current === undefined ? "create" : "update" } });
       }
     }
