@@ -9,7 +9,7 @@ import { createLog } from "../commands/logFile";
 import { plainText } from "../commands/output";
 import { assert, git, output } from "../workflows/core";
 import { claimedBy, ledgerDirectory, membersOf, newId, observe, readRecords, removeRecord, saveRecord, type ProcessRecord, type ProcessState } from "./ledger";
-import { sessionReport, shownCommand, type SessionShell } from "./session";
+import { sessionReport, type SessionShell } from "./session";
 import { ancestors, carrying, listeningPorts, processTable, startOf, workingDirectories, type ProcessRow } from "./table";
 
 const STOP_GRACE_MS = 5000;
@@ -214,9 +214,9 @@ export interface TeardownReport {
   /** Records whose processes have ended; --apply removes them. */
   finished: { id: string; label: string | null; state: ProcessState }[];
   stopped: { id: string; stopped: boolean; remaining: number[] }[];
-  /** Processes started some other way whose working directory is in the repository. Listeners fail teardown. A `-c` shell's arguments are hidden. */
+  /** Processes started some other way whose working directory is in the repository. Listeners fail teardown. */
   untracked: { pid: number; command: string; cwd: string; ports: string[] }[];
-  /** The agent harness's other `-c` shells still running, arguments hidden. Listed only: they never fail teardown and are never stopped. */
+  /** The agent harness's other `-c` shells still running, never with their arguments. Listed only: they never fail teardown and are never stopped. */
   sessionShells: SessionShell[];
   worktrees: { path: string; branch: string | null }[];
   unavailable: string[];
@@ -241,7 +241,7 @@ function survey(root: string, directory: string): Omit<TeardownReport, "ok" | "a
     // listens is still reported, since a server backgrounded from the same shell looks alike.
     const self = table.get(process.pid);
     if (self && row.pgid === self.pgid && row.ppid === self.ppid && ports.length === 0) return [];
-    return [{ pid, command: shownCommand(row.command, pid), cwd: directoryOf, ports }];
+    return [{ pid, command: row.command, cwd: directoryOf, ports }];
   }).sort((a, b) => a.pid - b.pid);
   const session = sessionReport(table, owned);
   const worktrees: { path: string; branch: string | null }[] = [];

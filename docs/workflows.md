@@ -702,25 +702,12 @@ SIGTERM to the group and to members outside it, SIGKILL after the grace period
   repository, with their listening ports, excluding agent-tool's own ancestors
   (the harness and shell that ran it) and pipeline siblings that do not listen;
 - `sessionShells`: the agent session's background shells that still run, each
-  `{ pid, ageSeconds, shell, command }`, oldest first (described below);
+  `{ pid, ageSeconds, shell, chars }`, oldest first (described below);
 - `worktrees`: worktrees added to the repository, which may need removing;
 - `unavailable`: inspections that could not run (`lsof` missing or failing);
 - `skipped`: record files that could not be read;
 - `notes`: why a list is empty without having been looked for, such as
   `sessionShells` when no agent harness runs teardown.
-
-A command line that runs a shell given `-c` (`zsh -c`, `bash -O extglob -c`)
-is shown in `untracked` and `sessionShells` as the shell's name followed by
-`<arguments hidden, N chars; ps -ww -o command= -p <pid> shows them>`, where N
-counts what follows the shell: its script may carry secrets, and teardown
-output is pasted into transcripts and PRs. Shells are known by name (`sh`,
-`bash`, `zsh`, `fish`, `pwsh` and others, including versioned and restricted
-forms such as `bash5.2` and `rbash`), and a script option is any short option
-holding `c` or `C` (`-lc`, `-Command`) or `--command`. Since `ps` joins
-arguments with spaces, the shell is found at any word, so a shell whose path
-holds a space and a shell a wrapper runs (`timeout 60 env TOKEN=… bash -c`) are
-hidden too, along with whatever precedes the shell. Every other command line is
-shown in full.
 
 It exits 1 while a leftover runs, an untracked process listens on a port, or an
 inspection is unavailable or a record unreadable, since a running process could
@@ -750,14 +737,26 @@ harness above it, the list is empty and `notes` says so; inside a sandbox with
 its own process namespace, teardown sees neither the harness nor its other
 shells.
 
+Each entry gives the shell's `pid`, its `ageSeconds`, its own name as `shell`
+(`zsh`, `bash`, `rbash`, `bash5.2`), and in `chars` the length of its
+arguments, never the arguments themselves: a script may carry secrets, and
+teardown output is pasted into transcripts and PRs. Run
+`ps -ww -o command= -p <pid>` to see one. A process counts as a shell given
+`-c` only when its own name, the first word `ps` shows, is a known shell and a
+`-c` option (`-c`, `-lc`, `--command`, `-Command`) comes before any script file.
+A shell renamed with `exec -a`, one whose path holds a space, or one a wrapper
+runs (`timeout 60 bash -c`) is therefore not listed. The list can miss a shell,
+but it never prints one's script. `untracked` still shows each process's full
+command line, as `ps` does.
+
 The list is informational. Teardown does not judge whether a shell can finish,
 since a shell's script cannot be read reliably enough to prove that; it never
 fails because of one, and `--apply` never stops, suspends or signals one, since
 some may be another delegate's live work in the same harness. A session shell
 whose working directory is in the repository is also listed in `untracked`,
-where a listening one fails teardown like any other untracked listener. Read
-each entry's age and, where needed, its full command with `ps`, and stop the
-ones your work started yourself.
+where a listening one fails teardown like any other untracked listener. Check
+each entry's age and, where needed, its full command, and stop the ones your
+work started yourself.
 
 To avoid leaving such shells behind:
 
