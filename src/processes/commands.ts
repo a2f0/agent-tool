@@ -9,7 +9,7 @@ import { createLog } from "../commands/logFile";
 import { plainText } from "../commands/output";
 import { assert, git, output } from "../workflows/core";
 import { claimedBy, ledgerDirectory, membersOf, newId, observe, readRecords, removeRecord, saveRecord, type ProcessRecord, type ProcessState } from "./ledger";
-import { sessionShells, shownCommand, type SessionShell } from "./session";
+import { sessionReport, shownCommand, type SessionShell } from "./session";
 import { ancestors, carrying, listeningPorts, processTable, startOf, workingDirectories, type ProcessRow } from "./table";
 
 const STOP_GRACE_MS = 5000;
@@ -243,7 +243,7 @@ function survey(root: string, directory: string): Omit<TeardownReport, "ok" | "a
     if (self && row.pgid === self.pgid && row.ppid === self.ppid && ports.length === 0) return [];
     return [{ pid, command: shownCommand(row.command, pid), cwd: directoryOf, ports }];
   }).sort((a, b) => a.pid - b.pid);
-  const session = sessionShells(table);
+  const session = sessionReport(table);
   const worktrees: { path: string; branch: string | null }[] = [];
   let current: { path: string; branch: string | null } | undefined;
   for (const line of git(["worktree", "list", "--porcelain"]).split("\n")) {
@@ -256,12 +256,12 @@ function survey(root: string, directory: string): Omit<TeardownReport, "ok" | "a
     kept: described.filter(item => alive(item.state) && item.keep),
     finished: described.filter(item => !alive(item.state)).map(item => ({ id: item.id, label: item.label, state: item.state })),
     untracked,
-    sessionShells: session ?? [],
+    sessionShells: session.sessionShells,
     // The first entry is the main worktree; the rest were added and may need removing.
     worktrees: worktrees.slice(1),
     unavailable: [...(listening.available ? [] : ["listening ports (lsof)"]), ...(cwd.available ? [] : ["working directories (lsof)"])],
     skipped,
-    notes: session ? [] : ["No known agent harness (Claude Code, Codex, OpenCode or another) is above teardown, so sessionShells lists nothing."],
+    notes: session.notes,
   };
 }
 

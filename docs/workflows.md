@@ -710,12 +710,14 @@ SIGTERM to the group and to members outside it, SIGKILL after the grace period
   `sessionShells` when no agent harness runs teardown.
 
 A command line that runs a shell given `-c` (`zsh -c`, `bash -O extglob -c`)
-is shown in `untracked` and `sessionShells` up to the shell, followed by
-`<arguments hidden, N chars; ps -ww -o command= -p <pid> shows them>`: its
-script may carry secrets, and teardown output is pasted into transcripts and
-PRs. Since `ps` joins arguments with spaces, the shell is found at any word, so
-a shell whose path holds a space and a wrapper's shell (`timeout 60 bash -c`)
-are hidden too. Every other command line is shown in full.
+is shown in `untracked` and `sessionShells` as the shell's name followed by
+`<arguments hidden, N chars; ps -ww -o command= -p <pid> shows them>`, where N
+counts what follows the shell: its script may carry secrets, and teardown
+output is pasted into transcripts and PRs. Since `ps` joins arguments with
+spaces, the shell is found at any word, so a shell whose path holds a space and
+a shell a wrapper runs (`timeout 60 env TOKEN=… bash -c`) are hidden too,
+along with whatever precedes the shell. Every other command line is shown in
+full.
 
 It exits 1 while a leftover runs, an untracked process listens on a port, or an
 inspection is unavailable or a record unreadable, since a running process could

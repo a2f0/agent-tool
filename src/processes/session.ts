@@ -12,42 +12,51 @@ const HARNESSES = new Set(["claude", "codex", "opencode", "hermes", "omp", "gemi
 // Sandboxes a harness may start a shell through, which stay running as the shell's parent.
 const SANDBOXES = new Set(["bwrap", "sandbox-exec", "codex-linux-sandbox"]);
 const INTERPRETER = /^(?:node|nodejs|bun|deno|python[0-9.]*|ruby|perl)$/;
-// `-c` alone or among other single-letter options (`-lc`, `-ec`), and fish's `--command`.
-const SCRIPT_OPTION = /^(?:-[A-Za-z]*c[A-Za-z]*|--command(?:=.*)?)$/;
+const NO_HARNESS = "No known agent harness (Claude Code, Codex, OpenCode or another) is above teardown, so sessionShells lists nothing.";
+
+/** `-c` alone or among other single-letter options (`-lc`, `-ec`), and fish's `--command`. */
+const scriptOption = (word: string) => (/^-[A-Za-z]+$/.test(word) && word.includes("c")) || word === "--command" || word.startsWith("--command=");
 
 /** The program a `ps` command line runs: its executable, or the script an interpreter runs. */
 export function programOf(command: string): string {
-  const [first = "", second] = command.split(" ");
+  const [first = "", second] = command.split(" ", 2);
   const name = path.basename(first).replace(/^-/, "");
   return INTERPRETER.test(name) && second && !second.startsWith("-") ? path.basename(second).replace(/\.[cm]?[jt]s$|\.py$/, "") : name;
 }
 
 /**
- * Where a `ps` command line runs a shell given `-c`: the shell's name and the text through it.
- * `ps` joins arguments with spaces, so the shell may be any word, not only the first: its path
- * may hold a space (`/opt/My Tools/bash -c`), or a wrapper may run it (`timeout 60 bash -c`).
- * The first word naming a shell that a `-c` option follows counts, whatever comes between
- * (`bash -O extglob -c`), so a script is never shown for want of parsing its shell's options.
+ * Where a `ps` command line runs a shell given `-c`: the shell's name and how many characters
+ * follow it. `ps` joins arguments with spaces, so the shell may be any word, not only the first:
+ * its path may hold a space (`/opt/My Tools/bash -c`), or a wrapper may run it
+ * (`timeout 60 bash -c`). The first word naming a shell that a `-c` option follows counts,
+ * whatever comes between (`bash -O extglob -c`), so a script is never shown for want of parsing
+ * its shell's options. Linear in the command's length.
  */
-export function scriptShell(command: string): { shell: string; through: string } | undefined {
+export function scriptShell(command: string): { shell: string; following: number } | undefined {
   const words = command.split(" ");
-  for (let index = 0; index < words.length; index += 1) {
+  let last = words.length - 1;
+  while (last > 0 && !scriptOption(words[last]!)) last -= 1;
+  for (let index = 0, offset = 0; index < last; index += 1) {
+    const word = words[index]!, name = path.basename(word);
+    offset += word.length + 1;
     // Only the first word can be a login shell's `-zsh`.
-    const name = path.basename(words[index]!), shell = index === 0 ? name.replace(/^-/, "") : name;
-    if (SHELLS.has(shell) && words.slice(index + 1).some(word => SCRIPT_OPTION.test(word))) return { shell, through: words.slice(0, index + 1).join(" ") };
+    const shell = index === 0 ? name.replace(/^-/, "") : name;
+    if (SHELLS.has(shell)) return { shell, following: command.length - offset };
   }
   return undefined;
 }
 
+const hidden = (found: { shell: string; following: number }, pid: number) => `${found.shell} <arguments hidden, ${found.following} chars; ps -ww -o command= -p ${pid} shows them>`;
+
 /**
- * What a report shows of a process's command line. A `-c` shell's script may carry secrets and
- * reports are pasted into transcripts and PRs, so everything after the shell is replaced by its
- * length and how to see it; any other command line is shown as is.
+ * What a report shows of a process's command line. A `-c` shell's script, and anything a wrapper
+ * puts before the shell (`env API_TOKEN=… bash -c`), may carry secrets, and reports are pasted
+ * into transcripts and PRs, so such a command line is shown as the shell's name, the length of
+ * what follows it, and how to see it all; any other command line is shown as is.
  */
 export function shownCommand(command: string, pid: number): string {
   const found = scriptShell(command);
-  if (!found) return command;
-  return `${found.through} <arguments hidden, ${command.length - found.through.length - 1} chars; ps -ww -o command= -p ${pid} shows them>`;
+  return found ? hidden(found, pid) : command;
 }
 
 export interface SessionShell { pid: number; ageSeconds: number; shell: string; command: string }
@@ -63,30 +72,35 @@ export function harnessAbove(table: Map<number, ProcessRow>, self = process.pid)
   return undefined;
 }
 
-/** Whether the harness started `row`: it is the parent, or a sandbox it runs shells through is. */
-function startedBy(table: Map<number, ProcessRow>, row: ProcessRow, harness: ProcessRow): boolean {
-  const seen = new Set([row.pid]);
-  for (let parent = table.get(row.ppid); parent && !seen.has(parent.pid); parent = table.get(parent.ppid)) {
-    if (parent.pid === harness.pid) return true;
-    if (!SANDBOXES.has(programOf(parent.command))) return false;
-    seen.add(parent.pid);
-  }
-  return false;
-}
-
 /**
- * The `-c` shells the harness above `self` still runs, oldest first, with their arguments hidden;
- * undefined when no known harness is above it. The shell that ran `self` is its ancestor and is
- * left out; what `self` started are its own children, never the harness's.
+ * The `-c` shells the harness above `self` still runs, directly or through a sandbox that stays
+ * their parent, oldest first, with their arguments hidden; undefined when no known harness is
+ * above it. The shell that ran `self` is its ancestor and is left out; what `self` started are
+ * its own children, never the harness's.
  */
 export function sessionShells(table: Map<number, ProcessRow>, self = process.pid, now = Date.now()): SessionShell[] | undefined {
   const harness = harnessAbove(table, self);
   if (!harness) return undefined;
   const own = ancestors(table, self);
+  const sandboxes = new Set([...table.values()].filter(row => SANDBOXES.has(programOf(row.command))).map(row => row.pid));
+  const startedByHarness = (row: ProcessRow) => {
+    for (let parent = row.ppid, steps = 0; steps < table.size; parent = table.get(parent)?.ppid ?? -1, steps += 1) {
+      if (parent === harness.pid) return true;
+      if (!sandboxes.has(parent)) return false;
+    }
+    return false;
+  };
   return [...table.values()].flatMap(row => {
-    const found = own.has(row.pid) || SANDBOXES.has(programOf(row.command)) ? undefined : scriptShell(row.command);
-    if (!found || !startedBy(table, row, harness)) return [];
+    if (own.has(row.pid) || sandboxes.has(row.pid) || !startedByHarness(row)) return [];
+    const found = scriptShell(row.command);
+    if (!found) return [];
     const started = Date.parse(`${row.started} UTC`);
-    return [{ pid: row.pid, ageSeconds: Number.isNaN(started) ? 0 : Math.max(0, Math.floor((now - started) / 1000)), shell: found.shell, command: shownCommand(row.command, row.pid) }];
+    return [{ pid: row.pid, ageSeconds: Number.isNaN(started) ? 0 : Math.max(0, Math.floor((now - started) / 1000)), shell: found.shell, command: hidden(found, row.pid) }];
   }).sort((a, b) => b.ageSeconds - a.ageSeconds || a.pid - b.pid);
+}
+
+/** Teardown's `sessionShells`, and a note when no harness is above it to list them for. */
+export function sessionReport(table: Map<number, ProcessRow>, self = process.pid, now = Date.now()): { sessionShells: SessionShell[]; notes: string[] } {
+  const shells = sessionShells(table, self, now);
+  return { sessionShells: shells ?? [], notes: shells ? [] : [NO_HARNESS] };
 }
