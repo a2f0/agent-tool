@@ -709,11 +709,13 @@ SIGTERM to the group and to members outside it, SIGKILL after the grace period
 - `notes`: why a list is empty without having been looked for, such as
   `sessionShells` when no agent harness runs teardown.
 
-A shell given `-c` (`zsh -c`, `bash -O extglob -c`) is shown in `untracked`
-and `sessionShells` as its shell followed by
+A command line that runs a shell given `-c` (`zsh -c`, `bash -O extglob -c`)
+is shown in `untracked` and `sessionShells` up to the shell, followed by
 `<arguments hidden, N chars; ps -ww -o command= -p <pid> shows them>`: its
 script may carry secrets, and teardown output is pasted into transcripts and
-PRs. Every other command line is shown in full.
+PRs. Since `ps` joins arguments with spaces, the shell is found at any word, so
+a shell whose path holds a space and a wrapper's shell (`timeout 60 bash -c`)
+are hidden too. Every other command line is shown in full.
 
 It exits 1 while a leftover runs, an untracked process listens on a port, or an
 inspection is unavailable or a record unreadable, since a running process could
@@ -735,16 +737,21 @@ long as it runs, wherever its working directory is. `sessionShells` lists them:
 teardown walks up from itself to the nearest process whose program is a known
 harness (`claude`, `codex`, `opencode`, and a few others, including an
 interpreter running a script of that name) and reports that process's other
-direct children that are shells given `-c`. The shell that ran teardown, and
-everything teardown starts, are left out. Without a harness above it, the list
-is empty and `notes` says so.
+children that are shells given `-c`, including those it started through a
+sandbox that stays their parent (`bwrap`, `codex-linux-sandbox`,
+`sandbox-exec`). The shell that ran teardown, and everything teardown starts,
+are left out. Without a harness above it, the list is empty and `notes` says
+so; inside a sandbox with its own process namespace, teardown sees neither the
+harness nor its other shells.
 
 The list is informational. Teardown does not judge whether a shell can finish,
 since a shell's script cannot be read reliably enough to prove that; it never
 fails because of one, and `--apply` never stops, suspends or signals one, since
-some may be another delegate's live work in the same harness. Read each entry's
-age and, where needed, its full command with `ps`, and stop the ones your work
-started yourself.
+some may be another delegate's live work in the same harness. A session shell
+whose working directory is in the repository is also listed in `untracked`,
+where a listening one fails teardown like any other untracked listener. Read
+each entry's age and, where needed, its full command with `ps`, and stop the
+ones your work started yourself.
 
 To avoid leaving such shells behind:
 
