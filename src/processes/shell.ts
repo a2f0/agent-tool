@@ -161,8 +161,8 @@ function readWord(text: string, start: number): { word: Word; end: number } | un
       substitution ||= runs(text, at, end);
       value += text.slice(at, end); literal = false; at = end; continue;
     }
-    // Globs, brace expansion and `~` give the word a value the shell decides.
-    if ("*?[]{}~".includes(char)) literal = false;
+    // Globs, brace expansion, `~` and zsh's `=command` give the word a value the shell decides.
+    if ("*?[]{}~".includes(char) || (char === "=" && at === start)) literal = false;
     value += char; at += 1;
   }
   return { word: { text: value, literal, quoted, substitution, ...(name && name[0].length <= at - start ? { assignment: true } : {}) }, end: at };
@@ -454,7 +454,8 @@ function harmless(redirects: Redirect[]): boolean {
 function discarded(redirects: Redirect[]): Set<number> | undefined {
   const discarded = new Set<number>();
   for (const { operator, fd, target } of redirects) {
-    if (!target.literal) return undefined;
+    // Descriptors above 9 can fail to open (and a failed redirection skips the command).
+    if (!target.literal || (fd !== undefined && fd > 9) || ((operator === ">&" || operator === "<&") && /^\d{2,}$/.test(target.text))) return undefined;
     if (operator === "&>" || operator === "&>>") {
       if (target.text !== "/dev/null") return undefined;
       discarded.add(1).add(2);
@@ -555,10 +556,16 @@ function describe(command: Simple): CommandInfo {
   const all = [...command.words, ...command.redirects.map(redirect => redirect.target)];
   // The process it starts: without assignments, and past modifiers and their options (`exec -a name`).
   let words = command.words.slice(command.assignments);
+  let name: Word | undefined;
   while (words[0]?.literal && MODIFIERS.has(words[0].text)) {
     words = words.slice(1);
-    while (words[0]?.literal && /^-[A-Za-z]+$/.test(words[0].text)) words = words.slice(words[0].text === "-a" ? 2 : 1);
+    while (words[0]?.literal && /^-[A-Za-z]+$/.test(words[0].text)) {
+      // `exec -a name program` runs the program under that name, which is what `ps` shows.
+      if (words[0].text === "-a") name = words[1];
+      words = words.slice(words[0].text === "-a" ? 2 : 1);
+    }
   }
+  if (name && words.length) words = [name, ...words.slice(1)];
   return {
     text: commandText(words),
     ...(words[0] && plain(words[0]) ? { program: words[0].text } : {}),

@@ -96,6 +96,10 @@ test("judges only checks whose outcome can be read from the script", () => {
   expect(checks(`! pgrep -f verify 2>&1 >/dev/null`)).toEqual(["other"]);
   expect(analyzeScript("until ! pgrep -f verify &>/dev/null; do sleep 5; done", "bash")!.loops[0]!.condition!.atoms[0]!.check.kind).toBe("pgrep");
   expect(checks(`! pgrep -f verify >/dev/null 2>&-`)).toEqual(["pgrep"]);
+  // A descriptor above 9 can fail to open, and zsh expands `=grep` to a path.
+  expect(checks(`! pgrep -f verify >/dev/null 12>/dev/null`)).toEqual(["other"]);
+  expect(checks(`! pgrep -f =grep >/dev/null`)).toEqual(["other"]);
+  expect(loopOf(`until [ -f "" ]; do sleep 30; sleep 1 2147483647>/dev/null; done`).pure).toBe(false);
   // With its output closed rather than discarded, what pgrep does is not read.
   expect(checks(`! pgrep -f verify 2>/dev/null >&-`)).toEqual(["other"]);
   // A descriptor closed after it was discarded can no longer be copied.
@@ -141,7 +145,7 @@ test("proves which loop a shell is running from its children", () => {
   // Anything else in the script that could start the same process could be what runs now: the
   // same command, a command whose arguments are expanded (n=5), one naming the program as an
   // argument, a command substitution, or a program found by expansion.
-  for (const before of ["sleep 5", "sleep \"$n\"", "nohup sleep 5 &", "x=$(date)", "echo `date`", "\"$@\"", "eval \"$command\"", "sh -c 'exec sleep 5'", "/bin/sh -c 'exec sleep 5'", "python3 -c 'import os'", "env FOO=1 true", "command sleep 5", "exec sleep 5", "FOO=1 sleep 5"]) {
+  for (const before of ["sleep 5", "sleep \"$n\"", "nohup sleep 5 &", "x=$(date)", "echo `date`", "\"$@\"", "eval \"$command\"", "sh -c 'exec sleep 5'", "/bin/sh -c 'exec sleep 5'", "python3 -c 'import os'", "env FOO=1 true", "command sleep 5", "exec sleep 5", "FOO=1 sleep 5", "exec -a sleep /bin/sleep 5 &"]) {
     expect(runningLoop(analyzeScript(`${before}; until ! pgrep -f x; do sleep 5; done`)!, [child("sleep 5")])).toBeUndefined();
     expect(runningLoop(analyzeScript(`until ! pgrep -f x; do sleep 5; done; ${before}`)!, [child("sleep 5")])).toBeUndefined();
   }
@@ -463,6 +467,8 @@ test("--apply leaves a stuck wait loop in the repository running and still repor
   expect(applied!.json.ok).toBe(false);
   expect(byPid(applied!.json.loops).get(pids.stuck)).toMatchObject({ state: "stuck", seen: "repository" });
   expect(applied!.json.untracked.map(item => item.pid)).toEqual(expect.arrayContaining([pids.stuck, pids.waiting]));
+  // Nowhere in the report does the script around a loop appear, `untracked` included.
+  expect(JSON.stringify(applied!.json)).not.toContain(PATHED.trim());
   for (const name of ["stuck", "waiting", "shimmed"] as const) expect(alive(pids[name])).toBe(true);
   expect([...processTable().values()].some(item => item.ppid === pids.stuck && item.command === "sleep 37")).toBe(true);
   expect(existsSync(marker)).toBe(false);

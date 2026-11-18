@@ -732,8 +732,9 @@ loops so a person can stop them; it never stops, suspends or signals one, with
 or without `--apply`. A stuck loop's `reason` ends with the pid to `kill` once
 you have checked it is yours. A report shows only the loop itself (`command`),
 written back out from the shell's exact argv, never the commands around it,
-which may hold secrets; without the exact argv it shows a placeholder. A shell
-that ends while teardown inspects it is left out of the report.
+which may hold secrets; without the exact argv it shows a placeholder. The same
+shell's entry in `untracked` shows the same text. A shell that ends while
+teardown inspects it is left out of the report.
 
 Teardown reads the script of every `-c` shell (`sh -c`, `zsh -c`, `bash -lc`)
 among the untracked processes and among the agent session's other shells. A

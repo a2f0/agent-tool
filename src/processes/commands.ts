@@ -251,6 +251,9 @@ function survey(root: string, directory: string): Omit<TeardownReport, "ok" | "a
     candidates.set(pid, { seen: where, session: session.has(pid) && shellsUpTo(table, pid, session) });
   }
   const loops = findLoops(table, candidates, cwd.cwd, root).map(item => loopReport(item));
+  // A wait loop's shell is listed by its loop alone there too, not the script around it.
+  const shown = new Map(loops.map(loop => [loop.pid, loop.command]));
+  for (const item of untracked) item.command = shown.get(item.pid) ?? item.command;
   const worktrees: { path: string; branch: string | null }[] = [];
   let current: { path: string; branch: string | null } | undefined;
   for (const line of git(["worktree", "list", "--porcelain"]).split("\n")) {

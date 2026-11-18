@@ -495,10 +495,10 @@ export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number
     lineage.set(pid, above);
   }
   const patterns = new Set([...judged.values()].flatMap(loop => loop.condition!.atoms.flatMap(atom => atom.check.kind === "pgrep" ? [atom.check.pattern] : [])));
-  if (judged.size === 0) return found;
+  if (found.length === 0) return found;
   const pgrep = tools.get("pgrep");
   const facts: LoopFacts = {
-    ancestorsVisible: patterns.size && pgrep ? pgrepSeesAncestors(pgrep) : undefined,
+    ancestorsVisible: judged.size && patterns.size && pgrep ? pgrepSeesAncestors(pgrep) : undefined,
     matches: new Map([...patterns].map(pattern => [pattern, pgrep ? pgrepMatches(pgrep, pattern) : undefined])),
     ancestors: lineage,
     failing: confirmed,
