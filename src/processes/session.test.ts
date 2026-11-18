@@ -39,10 +39,9 @@ test("recognises a shell given -c by its own name, and nothing else", () => {
     ["rbash -c echo secret", "rbash"],
     ["/usr/local/bin/bash5.2 -c echo secret", "bash5.2"],
     ["zsh-5.9 -c echo secret", "zsh-5.9"],
-    ["pwsh -NoProfile -Command Write-Host secret", "pwsh"],
   ] as const) expect(scriptShell(command)).toEqual({ shell, chars: command.length - command.split(" ")[0]!.length - 1 });
   for (const command of [
-    "-zsh", "zsh", "zsh -l", "/bin/bash ./deploy.sh", "bash ./deploy.sh -c prod", "bash -- -c x", "node -c script.js", "sleep 300", "ssh -c aes128-ctr host bash",
+    "-zsh", "zsh", "zsh -l", "/bin/bash ./deploy.sh", "bash ./deploy.sh -c prod", "bash -- -c x", "node -c script.js", "sleep 300", "ssh -c aes128-ctr host bash", "pwsh -NonInteractive -File watcher.ps1", "fish -C set x",
     // Left out rather than guessed at: a renamed shell, a path holding a space, a wrapper's shell.
     "worker -c echo secret", "/opt/My Tools/bash -c echo secret", "timeout 60 bash -c echo secret", "rg bash -c",
   ]) expect(scriptShell(command)).toBeUndefined();

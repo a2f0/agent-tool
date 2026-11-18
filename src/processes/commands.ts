@@ -241,6 +241,8 @@ function survey(root: string, directory: string): Omit<TeardownReport, "ok" | "a
     // listens is still reported, since a server backgrounded from the same shell looks alike.
     const self = table.get(process.pid);
     if (self && row.pgid === self.pgid && row.ppid === self.ppid && ports.length === 0) return [];
+    // The full command line, as `ps` shows it, also for a session shell in the repository:
+    // only sessionShells promises never to print arguments.
     return [{ pid, command: row.command, cwd: directoryOf, ports }];
   }).sort((a, b) => a.pid - b.pid);
   const session = sessionReport(table, owned);

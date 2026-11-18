@@ -743,7 +743,7 @@ arguments, never the arguments themselves: a script may carry secrets, and
 teardown output is pasted into transcripts and PRs. Run
 `ps -ww -o command= -p <pid>` to see one. A process counts as a shell given
 `-c` only when its own name, the first word `ps` shows, is a known shell and a
-`-c` option (`-c`, `-lc`, `--command`, `-Command`) comes before any script file.
+`-c` option (`-c`, `-lc`, `--command`) comes before any script file.
 A shell renamed with `exec -a`, one whose path holds a space, or one a wrapper
 runs (`timeout 60 bash -c`) is therefore not listed. The list can miss a shell,
 but it never prints one's script. `untracked` still shows each process's full

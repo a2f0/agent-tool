@@ -7,7 +7,7 @@
 import path from "node:path";
 import { ancestors, type ProcessRow } from "./table";
 
-const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ash", "ksh", "mksh", "pdksh", "oksh", "lksh", "yash", "posh", "osh", "ysh", "csh", "tcsh", "fish", "nu", "elvish", "xonsh", "pwsh"]);
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ash", "ksh", "mksh", "pdksh", "oksh", "lksh", "yash", "posh", "osh", "ysh", "csh", "tcsh", "fish", "nu", "elvish", "xonsh"]);
 // Agent harnesses by program name.
 const HARNESSES = new Set(["claude", "codex", "opencode", "hermes", "omp", "gemini", "cursor-agent", "amp", "goose", "aider", "crush", "qwen"]);
 // Sandboxes a harness may start a shell through, which stay running as the shell's parent.
@@ -57,8 +57,8 @@ function givenScript(words: string[]): boolean {
     if (/^--[A-Za-z][\w-]*(?:=.*)?$/.test(word)) continue;
     // `--`, `-`, or a script file: no `-c` came before it.
     if (!/^[-+][A-Za-z]+$/.test(word)) return false;
-    // `-c` alone or among other options (`-lc`, `-ec`), and PowerShell's `-Command`.
-    if (word.startsWith("-") && (word.includes("c") || word.toLowerCase() === "-command")) return true;
+    // `-c` alone or among other single-letter options (`-lc`, `-ec`).
+    if (word.startsWith("-") && word.includes("c")) return true;
   }
   return false;
 }
