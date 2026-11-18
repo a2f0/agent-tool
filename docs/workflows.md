@@ -713,11 +713,14 @@ A command line that runs a shell given `-c` (`zsh -c`, `bash -O extglob -c`)
 is shown in `untracked` and `sessionShells` as the shell's name followed by
 `<arguments hidden, N chars; ps -ww -o command= -p <pid> shows them>`, where N
 counts what follows the shell: its script may carry secrets, and teardown
-output is pasted into transcripts and PRs. Since `ps` joins arguments with
-spaces, the shell is found at any word, so a shell whose path holds a space and
-a shell a wrapper runs (`timeout 60 env TOKEN=… bash -c`) are hidden too,
-along with whatever precedes the shell. Every other command line is shown in
-full.
+output is pasted into transcripts and PRs. Shells are known by name (`sh`,
+`bash`, `zsh`, `fish`, `pwsh` and others, including versioned and restricted
+forms such as `bash5.2` and `rbash`), and a script option is any short option
+holding `c` or `C` (`-lc`, `-Command`) or `--command`. Since `ps` joins
+arguments with spaces, the shell is found at any word, so a shell whose path
+holds a space and a shell a wrapper runs (`timeout 60 env TOKEN=… bash -c`) are
+hidden too, along with whatever precedes the shell. Every other command line is
+shown in full.
 
 It exits 1 while a leftover runs, an untracked process listens on a port, or an
 inspection is unavailable or a record unreadable, since a running process could
@@ -741,10 +744,11 @@ harness (`claude`, `codex`, `opencode`, and a few others, including an
 interpreter running a script of that name) and reports that process's other
 children that are shells given `-c`, including those it started through a
 sandbox that stays their parent (`bwrap`, `codex-linux-sandbox`,
-`sandbox-exec`). The shell that ran teardown, and everything teardown starts,
-are left out. Without a harness above it, the list is empty and `notes` says
-so; inside a sandbox with its own process namespace, teardown sees neither the
-harness nor its other shells.
+`sandbox-exec`). The shell that ran teardown, everything teardown starts, and
+recorded processes, which are reported as records, are left out. Without a
+harness above it, the list is empty and `notes` says so; inside a sandbox with
+its own process namespace, teardown sees neither the harness nor its other
+shells.
 
 The list is informational. Teardown does not judge whether a shell can finish,
 since a shell's script cannot be read reliably enough to prove that; it never

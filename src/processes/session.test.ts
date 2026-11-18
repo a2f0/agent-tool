@@ -42,11 +42,17 @@ test("hides the script of any shell given -c, and whatever precedes the shell, a
     ["/opt/My Tools/bash -c echo secret", "bash", "-c echo secret"],
     ["timeout 60 env API_TOKEN=secret bash -c echo hi", "bash", "-c echo hi"],
     ["bwrap --ro-bind / / -- /bin/bash -lc echo secret", "bash", "-lc echo secret"],
+    // Restricted and versioned shells, and other shells' script options.
+    ["rbash -c echo secret", "rbash", "-c echo secret"],
+    ["/usr/local/bin/bash5.2 -c echo secret", "bash5.2", "-c echo secret"],
+    ["zsh-5.9 -c echo secret", "zsh-5.9", "-c echo secret"],
+    ["pwsh -NoProfile -Command Write-Host secret", "pwsh", "-NoProfile -Command Write-Host secret"],
+    ["fish -C set token secret", "fish", "-C set token secret"],
   ] as const) {
     expect(shownCommand(command, 42)).toBe(hidden(shell, following, 42));
     expect(shownCommand(command, 42)).not.toContain("secret");
   }
-  for (const command of ["-zsh", "zsh", "/bin/bash ./deploy.sh", "node -c script.js", "sleep 300", "bun run dev --port 3000", "ssh -c aes128-ctr host bash"]) expect(shownCommand(command, 42)).toBe(command);
+  for (const command of ["-zsh", "zsh", "/bin/bash ./deploy.sh", "node -c script.js", "sleep 300", "bun run dev --port 3000", "ssh -c aes128-ctr host bash", "bun run publish -c release.json"]) expect(shownCommand(command, 42)).toBe(command);
 });
 
 test("reads a command line in linear time", () => {
@@ -105,12 +111,13 @@ test("finds the nearest harness above teardown, and none outside one", () => {
   expect(harnessAbove(ci, 12)).toBeUndefined();
   expect(sessionShells(ci, 12)).toBeUndefined();
   // Outside a harness the list is empty and a note says why.
-  expect(sessionReport(ci, 12)).toEqual({ sessionShells: [], notes: [expect.stringContaining("No known agent harness")] });
-  expect(sessionReport(nested, 202)).toEqual({ sessionShells: [], notes: [] });
+  expect(sessionReport(ci, new Set(), 12)).toEqual({ sessionShells: [], notes: [expect.stringContaining("No known agent harness")] });
+  expect(sessionReport(nested, new Set(), 202)).toEqual({ sessionShells: [], notes: [] });
   // In a container the harness may be PID 1.
-  const container = table(row(1, 0, "codex"), row(5, 1, "/bin/bash -lc agent-tool teardown"), row(6, 5, "agent-tool teardown"), row(7, 1, "/bin/bash -lc sleep 60; true"));
+  const container = table(row(1, 0, "codex"), row(5, 1, "/bin/bash -lc agent-tool teardown"), row(6, 5, "agent-tool teardown"), row(7, 1, "/bin/bash -lc sleep 60; true"), row(8, 1, "sh -c bun run dev"));
   expect(harnessAbove(container, 6)?.pid).toBe(1);
-  expect(sessionShells(container, 6)?.map(item => item.pid)).toEqual([7]);
+  // A recorded process the harness adopted is reported as a record, not as a session shell.
+  expect(sessionReport(container, new Set([8]), 6).sessionShells.map(item => item.pid)).toEqual([7]);
 });
 
 // A stand-in harness: an interpreter running a script named `claude`, whose children are a `-c`

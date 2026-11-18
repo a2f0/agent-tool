@@ -243,7 +243,7 @@ function survey(root: string, directory: string): Omit<TeardownReport, "ok" | "a
     if (self && row.pgid === self.pgid && row.ppid === self.ppid && ports.length === 0) return [];
     return [{ pid, command: shownCommand(row.command, pid), cwd: directoryOf, ports }];
   }).sort((a, b) => a.pid - b.pid);
-  const session = sessionReport(table);
+  const session = sessionReport(table, owned);
   const worktrees: { path: string; branch: string | null }[] = [];
   let current: { path: string; branch: string | null } | undefined;
   for (const line of git(["worktree", "list", "--porcelain"]).split("\n")) {

@@ -6,7 +6,7 @@
 import path from "node:path";
 import { ancestors, type ProcessRow } from "./table";
 
-const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "yash", "fish", "csh", "tcsh"]);
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ash", "ksh", "mksh", "pdksh", "oksh", "lksh", "yash", "posh", "osh", "ysh", "csh", "tcsh", "fish", "nu", "elvish", "xonsh", "pwsh"]);
 // Agent harnesses by program name.
 const HARNESSES = new Set(["claude", "codex", "opencode", "hermes", "omp", "gemini", "cursor-agent", "amp", "goose", "aider", "crush", "qwen"]);
 // Sandboxes a harness may start a shell through, which stay running as the shell's parent.
@@ -14,8 +14,22 @@ const SANDBOXES = new Set(["bwrap", "sandbox-exec", "codex-linux-sandbox"]);
 const INTERPRETER = /^(?:node|nodejs|bun|deno|python[0-9.]*|ruby|perl)$/;
 const NO_HARNESS = "No known agent harness (Claude Code, Codex, OpenCode or another) is above teardown, so sessionShells lists nothing.";
 
-/** `-c` alone or among other single-letter options (`-lc`, `-ec`), and fish's `--command`. */
-const scriptOption = (word: string) => (/^-[A-Za-z]+$/.test(word) && word.includes("c")) || word === "--command" || word.startsWith("--command=");
+/**
+ * `-c` alone or among other options (`-lc`, `-ec`), in either case so fish's `-C` and
+ * PowerShell's `-Command` count, and the long `--command`.
+ */
+const scriptOption = (word: string) => (/^-[A-Za-z]+$/.test(word) && /c/i.test(word)) || word === "--command" || word.startsWith("--command=");
+
+/**
+ * Whether a program name is a shell: a known one, perhaps with a version (`bash5.2`, `zsh-5.9`,
+ * `ksh93`) or as its restricted form (`rbash`).
+ */
+function isShell(name: string): boolean {
+  // Shell names are short; the bound keeps the version pattern cheap on any argument.
+  if (name.length > 32) return false;
+  const base = name.replace(/[-.]?\d[\d.]*$/, "");
+  return SHELLS.has(base) || (base.startsWith("r") && SHELLS.has(base.slice(1)));
+}
 
 /** The program a `ps` command line runs: its executable, or the script an interpreter runs. */
 export function programOf(command: string): string {
@@ -41,7 +55,7 @@ export function scriptShell(command: string): { shell: string; following: number
     offset += word.length + 1;
     // Only the first word can be a login shell's `-zsh`.
     const shell = index === 0 ? name.replace(/^-/, "") : name;
-    if (SHELLS.has(shell)) return { shell, following: command.length - offset };
+    if (isShell(shell)) return { shell, following: command.length - offset };
   }
   return undefined;
 }
@@ -76,9 +90,10 @@ export function harnessAbove(table: Map<number, ProcessRow>, self = process.pid)
  * The `-c` shells the harness above `self` still runs, directly or through a sandbox that stays
  * their parent, oldest first, with their arguments hidden; undefined when no known harness is
  * above it. The shell that ran `self` is its ancestor and is left out; what `self` started are
- * its own children, never the harness's.
+ * its own children, never the harness's. Recorded processes are left out too: they are reported,
+ * and stopped, as records, even where the harness has adopted them as PID 1.
  */
-export function sessionShells(table: Map<number, ProcessRow>, self = process.pid, now = Date.now()): SessionShell[] | undefined {
+export function sessionShells(table: Map<number, ProcessRow>, self = process.pid, now = Date.now(), recorded: ReadonlySet<number> = new Set()): SessionShell[] | undefined {
   const harness = harnessAbove(table, self);
   if (!harness) return undefined;
   const own = ancestors(table, self);
@@ -91,7 +106,7 @@ export function sessionShells(table: Map<number, ProcessRow>, self = process.pid
     return false;
   };
   return [...table.values()].flatMap(row => {
-    if (own.has(row.pid) || sandboxes.has(row.pid) || !startedByHarness(row)) return [];
+    if (own.has(row.pid) || recorded.has(row.pid) || sandboxes.has(row.pid) || !startedByHarness(row)) return [];
     const found = scriptShell(row.command);
     if (!found) return [];
     const started = Date.parse(`${row.started} UTC`);
@@ -100,7 +115,7 @@ export function sessionShells(table: Map<number, ProcessRow>, self = process.pid
 }
 
 /** Teardown's `sessionShells`, and a note when no harness is above it to list them for. */
-export function sessionReport(table: Map<number, ProcessRow>, self = process.pid, now = Date.now()): { sessionShells: SessionShell[]; notes: string[] } {
-  const shells = sessionShells(table, self, now);
+export function sessionReport(table: Map<number, ProcessRow>, recorded: ReadonlySet<number>, self = process.pid, now = Date.now()): { sessionShells: SessionShell[]; notes: string[] } {
+  const shells = sessionShells(table, self, now, recorded);
   return { sessionShells: shells ?? [], notes: shells ? [] : [NO_HARNESS] };
 }
