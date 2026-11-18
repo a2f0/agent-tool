@@ -701,9 +701,19 @@ SIGTERM to the group and to members outside it, SIGKILL after the grace period
 - `untracked`: other processes whose working directory is inside the
   repository, with their listening ports, excluding agent-tool's own ancestors
   (the harness and shell that ran it) and pipeline siblings that do not listen;
+- `sessionShells`: the agent session's background shells that still run, each
+  `{ pid, ageSeconds, shell, command }`, oldest first (described below);
 - `worktrees`: worktrees added to the repository, which may need removing;
 - `unavailable`: inspections that could not run (`lsof` missing or failing);
-- `skipped`: record files that could not be read.
+- `skipped`: record files that could not be read;
+- `notes`: why a list is empty without having been looked for, such as
+  `sessionShells` when no agent harness runs teardown.
+
+A shell given `-c` (`zsh -c`, `bash -O extglob -c`) is shown in `untracked`
+and `sessionShells` as its shell followed by
+`<arguments hidden, N chars; ps -ww -o command= -p <pid> shows them>`: its
+script may carry secrets, and teardown output is pasted into transcripts and
+PRs. Every other command line is shown in full.
 
 It exits 1 while a leftover runs, an untracked process listens on a port, or an
 inspection is unavailable or a record unreadable, since a running process could
@@ -715,6 +725,35 @@ descendant that outlives its parent, leaves the group, and clears or hides its
 ownership tag cannot be recovered by ownership inspection. If it also changes
 out of the repository, cwd inspection cannot report it either. From a matrix-style
 workspace, run it per checkout with `--repo <checkout>`.
+
+### Session shells
+
+An agent harness (Claude Code, Codex, OpenCode and others) runs each command it
+is given, in the background or not, as a `-c` shell of its own process, and a
+wait loop or watcher started in the background stays one of those shells for as
+long as it runs, wherever its working directory is. `sessionShells` lists them:
+teardown walks up from itself to the nearest process whose program is a known
+harness (`claude`, `codex`, `opencode`, and a few others, including an
+interpreter running a script of that name) and reports that process's other
+direct children that are shells given `-c`. The shell that ran teardown, and
+everything teardown starts, are left out. Without a harness above it, the list
+is empty and `notes` says so.
+
+The list is informational. Teardown does not judge whether a shell can finish,
+since a shell's script cannot be read reliably enough to prove that; it never
+fails because of one, and `--apply` never stops, suspends or signals one, since
+some may be another delegate's live work in the same harness. Read each entry's
+age and, where needed, its full command with `ps`, and stop the ones your work
+started yourself.
+
+To avoid leaving such shells behind:
+
+- Wait on a process ID (`while kill -0 "$pid" 2>/dev/null; do sleep 5; done`)
+  rather than on a search of command lines.
+- When you must search, use a pattern that cannot match the waiting shell's
+  own command line, such as `pgrep -f '[r]elease verify'`: a plain
+  `until ! pgrep -f "release verify"` finds itself and never ends.
+- Give every wait a bound, and check `sessionShells` before reporting work done.
 
 ## CI aggregate gates
 
