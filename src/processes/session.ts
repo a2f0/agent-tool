@@ -59,6 +59,8 @@ function givenScript(words: string[]): boolean {
     if (!/^[-+][A-Za-z]+$/.test(word)) return false;
     // `-c` alone or among other single-letter options (`-lc`, `-ec`).
     if (word.startsWith("-") && word.includes("c")) return true;
+    // A cluster ending in an option that takes a value (`-eo pipefail`, `-xO extglob`).
+    if (/[oO]$/.test(word)) index += 1;
   }
   return false;
 }
@@ -86,7 +88,8 @@ export const hiddenCommand = (name: string, pid: number) => `${name} <arguments 
  * `self` is its ancestor and is left out; what `self` started are its own children, never the
  * harness's. Recorded processes are left out too: they are reported, and stopped, as records,
  * even where the harness has adopted them as PID 1. `covered` names each listed shell and each
- * sandbox between one and the harness, by pid, so no other field prints their arguments.
+ * sandbox the harness owns, by pid, so no other field prints their arguments: a sandbox keeps
+ * the script it was given even after the shell inside it has replaced itself with a program.
  */
 export function sessionShells(table: Map<number, ProcessRow>, self = process.pid, now = Date.now(), recorded: ReadonlySet<number> = new Set()): { shells: SessionShell[]; covered: Map<number, string> } | undefined {
   const harness = harnessAbove(table, self);
@@ -101,12 +104,15 @@ export function sessionShells(table: Map<number, ProcessRow>, self = process.pid
     return false;
   };
   const covered = new Map<number, string>();
+  for (const pid of sandboxes) {
+    const row = table.get(pid)!;
+    if (startedByHarness(row)) covered.set(pid, programOf(row.command));
+  }
   const shells = [...table.values()].flatMap(row => {
     if (own.has(row.pid) || recorded.has(row.pid) || sandboxes.has(row.pid) || !startedByHarness(row)) return [];
     const found = scriptShell(row.command);
     if (!found) return [];
     covered.set(row.pid, found.shell);
-    for (let parent = table.get(row.ppid); parent && sandboxes.has(parent.pid) && !covered.has(parent.pid); parent = table.get(parent.ppid)) covered.set(parent.pid, programOf(parent.command));
     const started = Date.parse(`${row.started} UTC`);
     return [{ pid: row.pid, ageSeconds: Number.isNaN(started) ? 0 : Math.max(0, Math.floor((now - started) / 1000)), shell: found.shell, chars: found.chars }];
   }).sort((a, b) => b.ageSeconds - a.ageSeconds || a.pid - b.pid);

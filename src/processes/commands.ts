@@ -214,7 +214,7 @@ export interface TeardownReport {
   /** Records whose processes have ended; --apply removes them. */
   finished: { id: string; label: string | null; state: ProcessState }[];
   stopped: { id: string; stopped: boolean; remaining: number[] }[];
-  /** Processes started some other way whose working directory is in the repository. Listeners fail teardown. A session shell, or a sandbox above one, has its arguments hidden. */
+  /** Processes started some other way whose working directory is in the repository. Listeners fail teardown. A session shell, or a sandbox the harness owns, has its arguments hidden. */
   untracked: { pid: number; command: string; cwd: string; ports: string[] }[];
   /** The agent harness's other `-c` shells still running, never with their arguments. Listed only: they never fail teardown and are never stopped. */
   sessionShells: SessionShell[];

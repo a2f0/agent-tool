@@ -743,17 +743,19 @@ arguments, never the arguments themselves: a script may carry secrets, and
 teardown output is pasted into transcripts and PRs. Run
 `ps -ww -o command= -p <pid>` to see one. A process counts as a shell given
 `-c` only when its own name, the first word `ps` shows, is a known shell and a
-`-c` option (`-c`, `-lc`, `--command`) comes before any script file (fish's
-`-C` and `--init-command` take a value first). A shell renamed with `exec -a`,
-one whose path holds a space, or one a wrapper runs (`timeout 60 bash -c`) is
-therefore not listed. The list can miss a shell, but it never prints one's
-script.
+`-c` option (`-c`, `-lc`, `--command`) comes before any script file, past
+options that take a value (`-o pipefail`, `-eo pipefail`, fish's `-C`). A shell
+renamed with `exec -a`, one whose path holds a space, or one a wrapper runs
+(`timeout 60 bash -c`) is therefore not listed. The list can miss a shell, but
+it never prints one's script.
 
 `untracked` hides by identity, not by reading command lines: a listed session
-shell, or a sandbox between one and the harness, whose working directory is in
-the repository shows as
+shell, or a sandbox the harness owns, whose working directory is in the
+repository shows as
 `<name> <arguments hidden; ps -ww -o command= -p <pid> shows them>` and keeps
-its pid, cwd and ports. Every other entry, including a shell this detection
+its pid, cwd and ports. A sandbox is hidden whether or not a shell still runs
+inside it, since it keeps the script it was given after that shell replaces
+itself with a program. Every other entry, including a shell this detection
 misses, shows its full command line as `ps` does.
 
 The list is informational. Teardown does not judge whether a shell can finish,
