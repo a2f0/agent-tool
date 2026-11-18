@@ -36,12 +36,14 @@ test("recognises a shell given -c by its own name, and nothing else", () => {
     ["-zsh -o pipefail -lc whoami", "zsh"],
     ["bash --norc --rcfile /x -c echo", "bash"],
     ["fish --command=echo secret", "fish"],
+    ["fish -C true -c echo secret", "fish"],
+    ["fish --init-command true -c echo secret", "fish"],
     ["rbash -c echo secret", "rbash"],
     ["/usr/local/bin/bash5.2 -c echo secret", "bash5.2"],
     ["zsh-5.9 -c echo secret", "zsh-5.9"],
   ] as const) expect(scriptShell(command)).toEqual({ shell, chars: command.length - command.split(" ")[0]!.length - 1 });
   for (const command of [
-    "-zsh", "zsh", "zsh -l", "/bin/bash ./deploy.sh", "bash ./deploy.sh -c prod", "bash -- -c x", "node -c script.js", "sleep 300", "ssh -c aes128-ctr host bash", "pwsh -NonInteractive -File watcher.ps1", "fish -C set x",
+    "-zsh", "zsh", "zsh -l", "/bin/bash ./deploy.sh", "bash ./deploy.sh -c prod", "bash -- -c x", "node -c script.js", "sleep 300", "ssh -c aes128-ctr host bash", "pwsh -NonInteractive -File watcher.ps1", "fish -C set x", "fish -C true",
     // Left out rather than guessed at: a renamed shell, a path holding a space, a wrapper's shell.
     "worker -c echo secret", "/opt/My Tools/bash -c echo secret", "timeout 60 bash -c echo secret", "rg bash -c",
   ]) expect(scriptShell(command)).toBeUndefined();
@@ -70,11 +72,14 @@ test("lists the harness's other -c shells, oldest first, and nothing else", () =
     row(112, 111, "bash -lc sleep 60; true", "Tue Nov 17 19:00:00 2026"),
     row(113, 104, "sh -c mcp-server"),
   );
-  expect(sessionShells(processes, 103, Date.parse("2026-11-17T20:00:10Z"))).toEqual([
+  const found = sessionShells(processes, 103, Date.parse("2026-11-17T20:00:10Z"));
+  expect(found?.shells).toEqual([
     { pid: 101, ageSeconds: 7210, shell: "zsh", chars: loop.length - "/bin/zsh ".length },
     { pid: 112, ageSeconds: 3610, shell: "bash", chars: "-lc sleep 60; true".length },
     { pid: 107, ageSeconds: 10, shell: "bash", chars: extglob.length - "bash ".length },
   ]);
+  // Each listed shell and each sandbox between one and the harness, which untracked hides too.
+  expect(found?.covered).toEqual(new Map([[101, "zsh"], [112, "bash"], [111, "bwrap"], [110, "bwrap"], [107, "bash"]]));
 });
 
 test("finds the nearest harness above teardown, and none outside one", () => {
@@ -87,13 +92,13 @@ test("finds the nearest harness above teardown, and none outside one", () => {
   );
   expect(harnessAbove(nested, 202)?.pid).toBe(200);
   // Teardown's own ancestry is not listed, even where it passes through another harness.
-  expect(sessionShells(nested, 202)).toEqual([]);
+  expect(sessionShells(nested, 202)).toEqual({ shells: [], covered: new Map() });
   const ci = table(row(1, 0, "/sbin/init"), row(10, 1, "Runner.Worker spawnclient 1 2"), row(11, 10, "bash -e /home/runner/work/_temp/x.sh"), row(12, 11, "bun test"), row(13, 10, "/bin/sh -c sleep 60; true"));
   expect(harnessAbove(ci, 12)).toBeUndefined();
   expect(sessionShells(ci, 12)).toBeUndefined();
   // Outside a harness the list is empty and a note says why.
-  expect(sessionReport(ci, new Set(), 12)).toEqual({ sessionShells: [], notes: [expect.stringContaining("No known agent harness")] });
-  expect(sessionReport(nested, new Set(), 202)).toEqual({ sessionShells: [], notes: [] });
+  expect(sessionReport(ci, new Set(), 12)).toEqual({ sessionShells: [], notes: [expect.stringContaining("No known agent harness")], covered: new Map() });
+  expect(sessionReport(nested, new Set(), 202)).toEqual({ sessionShells: [], notes: [], covered: new Map() });
   // In a container the harness may be PID 1.
   const container = table(row(1, 0, "codex"), row(5, 1, "/bin/bash -lc agent-tool teardown"), row(6, 5, "agent-tool teardown"), row(7, 1, "/bin/bash -lc sleep 60; true"), row(8, 1, "sh -c bun run dev"));
   expect(harnessAbove(container, 6)?.pid).toBe(1);
@@ -101,15 +106,15 @@ test("finds the nearest harness above teardown, and none outside one", () => {
   expect(sessionReport(container, new Set([8]), 6).sessionShells.map(item => item.pid)).toEqual([7]);
 });
 
-// A stand-in harness: an interpreter running a script named `claude`, whose children are two
-// `-c` shells outside the repository, a non-shell in it, and the `-c` shell that runs teardown,
-// which `; exit $?` keeps from replacing itself.
+// A stand-in harness: an interpreter running a script named `claude`, whose children are a `-c`
+// shell outside the repository, a `-c` shell and a non-shell in it, and the `-c` shell that runs
+// teardown, which `; exit $?` keeps from replacing itself.
 const HARNESS = `
 import { execFileSync, spawn } from "node:child_process";
 const [cli, root, elsewhere] = process.argv.slice(2);
 const ps = (pid) => { try { return execFileSync("ps", ["-ww", "-o", "stat=,command=", "-p", String(pid)], { encoding: "utf8" }).trim(); } catch { return ""; } };
 const loop = spawn("/bin/sh", ["-c", "read line # secret-token"], { cwd: elsewhere, stdio: ["pipe", "ignore", "ignore"] });
-const extglob = spawn("bash", ["-O", "extglob", "-c", "read line # other-secret"], { cwd: elsewhere, stdio: ["pipe", "ignore", "ignore"] });
+const extglob = spawn("bash", ["-O", "extglob", "-c", "read line # repo-secret"], { cwd: root, stdio: ["pipe", "ignore", "ignore"] });
 const plain = spawn("sleep", ["300"], { cwd: root, stdio: "ignore" });
 const siblings = [loop, extglob, plain];
 const teardown = (...args) => new Promise(resolve => {
@@ -149,12 +154,14 @@ test("teardown lists the session's -c shells without their arguments, never fail
     // Only the -c shells are listed; the sleep and the shell that ran teardown are not.
     expect(json.sessionShells.map((item: { pid: number }) => item.pid).sort()).toEqual([loop, extglob].sort());
     expect(json.sessionShells).toContainEqual({ pid: loop, ageSeconds: expect.any(Number), shell: "sh", chars: "-c read line # secret-token".length });
-    expect(json.sessionShells).toContainEqual({ pid: extglob, ageSeconds: expect.any(Number), shell: "bash", chars: "-O extglob -c read line # other-secret".length });
+    expect(json.sessionShells).toContainEqual({ pid: extglob, ageSeconds: expect.any(Number), shell: "bash", chars: "-O extglob -c read line # repo-secret".length });
     expect(json.notes).toEqual([]);
     // Informational only: with every inspection available, nothing else fails it.
     expect(json.ok).toBe(json.unavailable.length === 0);
     expect(run.status).toBe(json.ok ? 0 : 1);
     if (json.unavailable.length === 0) {
+      // The session shell in the repository is hidden there too; anything else is shown in full.
+      expect(json.untracked).toContainEqual({ pid: extglob, command: `bash <arguments hidden; ps -ww -o command= -p ${extglob} shows them>`, cwd: root, ports: [] });
       expect(json.untracked).toContainEqual({ pid: plain, command: "sleep 300", cwd: root, ports: [] });
       expect(json.untracked.map((item: { pid: number }) => item.pid)).not.toContain(run.shell);
     }

@@ -9,7 +9,7 @@ import { createLog } from "../commands/logFile";
 import { plainText } from "../commands/output";
 import { assert, git, output } from "../workflows/core";
 import { claimedBy, ledgerDirectory, membersOf, newId, observe, readRecords, removeRecord, saveRecord, type ProcessRecord, type ProcessState } from "./ledger";
-import { sessionReport, type SessionShell } from "./session";
+import { hiddenCommand, sessionReport, type SessionShell } from "./session";
 import { ancestors, carrying, listeningPorts, processTable, startOf, workingDirectories, type ProcessRow } from "./table";
 
 const STOP_GRACE_MS = 5000;
@@ -214,7 +214,7 @@ export interface TeardownReport {
   /** Records whose processes have ended; --apply removes them. */
   finished: { id: string; label: string | null; state: ProcessState }[];
   stopped: { id: string; stopped: boolean; remaining: number[] }[];
-  /** Processes started some other way whose working directory is in the repository. Listeners fail teardown. */
+  /** Processes started some other way whose working directory is in the repository. Listeners fail teardown. A session shell, or a sandbox above one, has its arguments hidden. */
   untracked: { pid: number; command: string; cwd: string; ports: string[] }[];
   /** The agent harness's other `-c` shells still running, never with their arguments. Listed only: they never fail teardown and are never stopped. */
   sessionShells: SessionShell[];
@@ -230,7 +230,7 @@ function survey(root: string, directory: string): Omit<TeardownReport, "ok" | "a
   const listening = listeningPorts(), cwd = workingDirectories(table.keys());
   const described = records.map(record => describe(record, table, listening.ports, records));
   const owned = new Set(described.flatMap(item => alive(item.state) ? item.members.map(member => member.pid) : []));
-  const excluded = ancestors(table);
+  const excluded = ancestors(table), session = sessionReport(table, owned);
   const untracked = [...cwd.cwd].flatMap(([pid, directoryOf]) => {
     const row = table.get(pid);
     if (!row || excluded.has(pid) || owned.has(pid) || !within(root, directoryOf)) return [];
@@ -241,11 +241,11 @@ function survey(root: string, directory: string): Omit<TeardownReport, "ok" | "a
     // listens is still reported, since a server backgrounded from the same shell looks alike.
     const self = table.get(process.pid);
     if (self && row.pgid === self.pgid && row.ppid === self.ppid && ports.length === 0) return [];
-    // The full command line, as `ps` shows it, also for a session shell in the repository:
-    // only sessionShells promises never to print arguments.
-    return [{ pid, command: row.command, cwd: directoryOf, ports }];
+    // The full command line, as `ps` shows it, except for what sessionShells covers, whose
+    // arguments the report never prints.
+    const covered = session.covered.get(pid);
+    return [{ pid, command: covered === undefined ? row.command : hiddenCommand(covered, pid), cwd: directoryOf, ports }];
   }).sort((a, b) => a.pid - b.pid);
-  const session = sessionReport(table, owned);
   const worktrees: { path: string; branch: string | null }[] = [];
   let current: { path: string; branch: string | null } | undefined;
   for (const line of git(["worktree", "list", "--porcelain"]).split("\n")) {

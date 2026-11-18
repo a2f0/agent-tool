@@ -14,7 +14,7 @@ const HARNESSES = new Set(["claude", "codex", "opencode", "hermes", "omp", "gemi
 const SANDBOXES = new Set(["bwrap", "sandbox-exec", "codex-linux-sandbox"]);
 const INTERPRETER = /^(?:node|nodejs|bun|deno|python[0-9.]*|ruby|perl)$/;
 // Shell options that take the next word as their value.
-const WITH_VALUE = new Set(["-o", "+o", "-O", "+O", "--rcfile", "--init-file", "--emulate"]);
+const WITH_VALUE = new Set(["-o", "+o", "-O", "+O", "--rcfile", "--init-file", "--emulate", "--init-command"]);
 const NO_HARNESS = "No known agent harness (Claude Code, Codex, OpenCode or another) is above teardown, so sessionShells lists nothing.";
 
 /**
@@ -52,7 +52,7 @@ function givenScript(words: string[]): boolean {
   for (let index = 1; index < words.length; index += 1) {
     const word = words[index]!;
     if (word === "--command" || word.startsWith("--command=")) return true;
-    if (WITH_VALUE.has(word)) { index += 1; continue; }
+    if (WITH_VALUE.has(word) || (word === "-C" && words[0]!.endsWith("fish"))) { index += 1; continue; }
     // Any other long option.
     if (/^--[A-Za-z][\w-]*(?:=.*)?$/.test(word)) continue;
     // `--`, `-`, or a script file: no `-c` came before it.
@@ -77,14 +77,18 @@ export function harnessAbove(table: Map<number, ProcessRow>, self = process.pid)
   return undefined;
 }
 
+/** How a report shows a process it never prints the arguments of. */
+export const hiddenCommand = (name: string, pid: number) => `${name} <arguments hidden; ps -ww -o command= -p ${pid} shows them>`;
+
 /**
  * The `-c` shells the harness above `self` still runs, directly or through a sandbox that stays
  * their parent, oldest first; undefined when no known harness is above it. The shell that ran
  * `self` is its ancestor and is left out; what `self` started are its own children, never the
  * harness's. Recorded processes are left out too: they are reported, and stopped, as records,
- * even where the harness has adopted them as PID 1.
+ * even where the harness has adopted them as PID 1. `covered` names each listed shell and each
+ * sandbox between one and the harness, by pid, so no other field prints their arguments.
  */
-export function sessionShells(table: Map<number, ProcessRow>, self = process.pid, now = Date.now(), recorded: ReadonlySet<number> = new Set()): SessionShell[] | undefined {
+export function sessionShells(table: Map<number, ProcessRow>, self = process.pid, now = Date.now(), recorded: ReadonlySet<number> = new Set()): { shells: SessionShell[]; covered: Map<number, string> } | undefined {
   const harness = harnessAbove(table, self);
   if (!harness) return undefined;
   const own = ancestors(table, self);
@@ -96,17 +100,21 @@ export function sessionShells(table: Map<number, ProcessRow>, self = process.pid
     }
     return false;
   };
-  return [...table.values()].flatMap(row => {
+  const covered = new Map<number, string>();
+  const shells = [...table.values()].flatMap(row => {
     if (own.has(row.pid) || recorded.has(row.pid) || sandboxes.has(row.pid) || !startedByHarness(row)) return [];
     const found = scriptShell(row.command);
     if (!found) return [];
+    covered.set(row.pid, found.shell);
+    for (let parent = table.get(row.ppid); parent && sandboxes.has(parent.pid) && !covered.has(parent.pid); parent = table.get(parent.ppid)) covered.set(parent.pid, programOf(parent.command));
     const started = Date.parse(`${row.started} UTC`);
     return [{ pid: row.pid, ageSeconds: Number.isNaN(started) ? 0 : Math.max(0, Math.floor((now - started) / 1000)), shell: found.shell, chars: found.chars }];
   }).sort((a, b) => b.ageSeconds - a.ageSeconds || a.pid - b.pid);
+  return { shells, covered };
 }
 
-/** Teardown's `sessionShells`, and a note when no harness is above it to list them for. */
-export function sessionReport(table: Map<number, ProcessRow>, recorded: ReadonlySet<number>, self = process.pid, now = Date.now()): { sessionShells: SessionShell[]; notes: string[] } {
-  const shells = sessionShells(table, self, now, recorded);
-  return { sessionShells: shells ?? [], notes: shells ? [] : [NO_HARNESS] };
+/** Teardown's `sessionShells`, a note when no harness is above it, and the processes they cover. */
+export function sessionReport(table: Map<number, ProcessRow>, recorded: ReadonlySet<number>, self = process.pid, now = Date.now()): { sessionShells: SessionShell[]; notes: string[]; covered: Map<number, string> } {
+  const found = sessionShells(table, self, now, recorded);
+  return { sessionShells: found?.shells ?? [], notes: found ? [] : [NO_HARNESS], covered: found?.covered ?? new Map() };
 }
