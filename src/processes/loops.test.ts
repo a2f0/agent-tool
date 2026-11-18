@@ -283,10 +283,12 @@ test("traps that run between commands or on failures are noticed", () => {
 
 test("trap handlers in files around a script are noticed", () => {
   for (const text of ["trap 'sleep 30; rm -f lock' TERM", 'trap "exit" INT', "trap -- 'x' EXIT", "TRAPTERM() { sleep 30; }", "function TRAPINT {\n}"]) expect(TRAP_HANDLER.test(text)).toBe(true);
-  // A process line holding a wait loop never reaches a report whole.
-  expect(shownCommand("/bin/zsh -c TOKEN=s3cret curl x; until [ -f done ]; do s''leep 5; done")).toBe("(a zsh script with a wait loop)");
-  expect(shownCommand("/bin/zsh -c bun run dev")).toBe("/bin/zsh -c bun run dev");
-  expect(shownCommand("node server.js")).toBe("node server.js");
+  // A `-c` shell's script never reaches a report, however its loop is spelled; other commands do.
+  const script = "TOKEN=s3cret curl x; until [ -f done ]; do sl$''eep 5; done";
+  expect(shownCommand(`/bin/zsh -c ${script}`, 42)).toBe(`/bin/zsh -c <script hidden, ${script.length} chars; ps -o command= -p 42 shows it>`);
+  expect(shownCommand("bash -lc bun run dev", 7)).toBe("bash -lc <script hidden, 11 chars; ps -o command= -p 7 shows it>");
+  expect(shownCommand("node server.js", 9)).toBe("node server.js");
+  expect(shownCommand("bash script.sh", 9)).toBe("bash script.sh");
   // Text is read as words, so prose that mentions a trap counts too; that only leaves a loop unjudged.
   for (const text of ["trap '' TERM", "trap - TERM", "trap -l", "untrap x"]) expect(TRAP_HANDLER.test(text)).toBe(false);
 });
@@ -478,8 +480,9 @@ test("--apply leaves a stuck wait loop in the repository running and still repor
   expect(applied!.json.ok).toBe(false);
   expect(byPid(applied!.json.loops).get(pids.stuck)).toMatchObject({ state: "stuck", seen: "repository" });
   expect(applied!.json.untracked.map(item => item.pid)).toEqual(expect.arrayContaining([pids.stuck, pids.waiting]));
-  // Nowhere in the report does the script around a loop appear, `untracked` included.
+  // Nowhere in the report does the script around a loop appear: `untracked` shows each shell, not its script.
   expect(JSON.stringify(applied!.json)).not.toContain(PATHED.trim());
+  expect(applied!.json.untracked.find(item => item.pid === pids.stuck)).toMatchObject({ command: expect.stringMatching(new RegExp(`^sh -c <script hidden, \\d+ chars; ps -o command= -p ${pids.stuck} shows it>$`)) });
   for (const name of ["stuck", "waiting", "shimmed"] as const) expect(alive(pids[name])).toBe(true);
   expect([...processTable().values()].some(item => item.ppid === pids.stuck && item.command === "sleep 37")).toBe(true);
   expect(existsSync(marker)).toBe(false);

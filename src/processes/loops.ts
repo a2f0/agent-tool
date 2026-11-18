@@ -220,12 +220,15 @@ const UNPARSED_LOOP = ["until|while", "do", "sleep", "done"];
 const mayLoop = (script: string) => wordsInOrder(script.replace(/['"\\]/g, ""), UNPARSED_LOOP);
 
 /**
- * What a report may show of a process's command line: a `-c` shell whose script may hold a wait loop
- * is shown as a placeholder, since the script around a loop may hold secrets; anything else as is.
+ * What a report shows of a process's command line. A `-c` shell's script may carry secrets and
+ * report output is pasted into transcripts and PRs, so it is replaced by a note of its length and
+ * how to see it, keeping the shell and its options; any other command line is shown as is.
  */
-export function shownCommand(command: string): string {
+export function shownCommand(command: string, pid: number): string {
   const script = shellScript(command);
-  return script && mayLoop(script.script) ? `(a ${script.shell} script with a wait loop)` : command;
+  if (!script) return command;
+  const prefix = command.slice(0, command.length - script.script.length).trimEnd();
+  return `${prefix} <script hidden, ${script.script.length} chars; ps -o command= -p ${pid} shows it>`;
 }
 const TIMEOUTS = new Set(["timeout", "gtimeout"]);
 const BUILTINS = new Set(["[", "test"]);

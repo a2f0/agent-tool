@@ -700,7 +700,11 @@ SIGTERM to the group and to members outside it, SIGKILL after the grace period
 - `finished`: records whose processes have ended;
 - `untracked`: other processes whose working directory is inside the
   repository, with their listening ports, excluding agent-tool's own ancestors
-  (the harness and shell that ran it) and pipeline siblings that do not listen;
+  (the harness and shell that ran it) and pipeline siblings that do not listen.
+  A `-c` shell's `command` keeps the shell and its options but hides the script,
+  which can carry secrets and report output gets pasted into transcripts and
+  PRs (`zsh -c <script hidden, 412 chars; ps -o command= -p 4321 shows it>`);
+  other processes show their command line as is;
 - `loops`: shell wait loops (an `until` or `while` loop whose body sleeps), as
   described below, each with its `pid`, `ageSeconds`, the script holding it
   (`command`, unwrapped from a harness's `eval`, at most 200 characters), `cwd`,
@@ -732,10 +736,9 @@ loops so a person can stop them; it never stops, suspends or signals one, with
 or without `--apply`. A stuck loop's `reason` ends with the pid to `kill` once
 you have checked it is yours. A report shows only the loop itself (`command`),
 written back out from the shell's exact argv, never the commands around it,
-which may hold secrets; without the exact argv it shows a placeholder. The same
-shell's entry in `untracked` shows the same text, and any other `-c` shell whose
-script may hold a wait loop is shown there as a placeholder. A shell that ends
-while teardown inspects it is left out of `loops`.
+which may hold secrets; without the exact argv it shows a placeholder. Its entry
+in `untracked`, like every `-c` shell's there, hides the script. A shell that
+ends while teardown inspects it is left out of `loops`.
 
 Teardown reads the script of every `-c` shell (`sh -c`, `zsh -c`, `bash -lc`)
 among the untracked processes and among the agent session's other shells. A
