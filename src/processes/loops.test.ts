@@ -124,6 +124,7 @@ test("judges only checks whose outcome can be read from the script", () => {
   expect(loopOf("while pgrep -f x; do sleep 1; done").pure).toBe(true);
   expect(loopOf("while pgrep -f x; do date; sleep 1; done").pure).toBe(false);
   expect(loopOf("while pgrep -f x; do sleep $n; done").pure).toBe(false);
+  expect(loopOf("while pgrep -f x; do sleep 30 & done").pure).toBe(false);
   // Loops without a sleep are not wait loops; for loops end on their own.
   expect(analyzeScript("while read line; do echo $line; done")!.loops).toEqual([]);
   expect(analyzeScript("for i in $(seq 1 20); do sleep 1; done")!.loops).toEqual([]);
@@ -342,6 +343,9 @@ test("the session is an agent harness's other children, found past package runne
   // Only a chain of shells up to the harness makes a process the session's own work.
   const session = sessionProcesses(table, 33);
   expect([40, 41, 70, 72, 74].map(pid => shellsUpTo(table, pid, session))).toEqual([true, false, true, false, false]);
+  // Teardown exec'd in place of the harness's shell still finds its siblings.
+  const execd = new Map([...table].filter(([pid]) => pid !== 30).map(([pid, item]) => [pid, pid === 31 ? { ...item, ppid: 20, command: "bun src/index.ts teardown" } : item]));
+  expect([...sessionProcesses(execd, 31)].sort((a, b) => a - b)).toEqual([40, 41, 50, 70, 71, 72, 73, 74]);
   // From an interactive shell there is no harness.
   expect(sessionProcesses(new Map([row(1, 0, "launchd"), row(10, 1, "-zsh"), row(11, 10, "agent-tool teardown"), row(12, 10, "sleep 9")].map(item => [item.pid, item])), 11).size).toBe(0);
 });

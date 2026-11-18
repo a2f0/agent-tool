@@ -75,7 +75,8 @@ export function sessionProcesses(table: Map<number, ProcessRow>, self = process.
   for (let current = table.get(self); current && current.pid > 1 && !visited.has(current.pid); current = table.get(current.ppid)) {
     visited.add(current.pid);
     const parent = table.get(current.ppid), pid = current.pid;
-    if (!parent || parent.pid <= 1 || isShell(parent.command) || !HARNESSES.has(programOf(parent.command)) || !shellScript(current.command)) continue;
+    // The harness's `-c` shell, or teardown itself when that shell `exec`ed it.
+    if (!parent || parent.pid <= 1 || isShell(parent.command) || !HARNESSES.has(programOf(parent.command)) || (!shellScript(current.command) && pid !== self)) continue;
     const queue = (children.get(parent.pid) ?? []).filter(row => row.pid !== pid);
     while (queue.length) {
       const row = queue.pop()!;
@@ -373,19 +374,27 @@ interface Context {
 function contextOf(analysis: Analysis, shell: string, login: boolean, own: Map<string, string> | undefined): Context | undefined {
   const environment = (name: string) => own ? own.get(name) : process.env[name];
   const startup: string[] = [], sourced = new Map<string, string | null>(), all: string[] = [];
-  for (const file of startupFiles(shell, login, environment)) {
+  // One budget for every file read around the script, startup files and sources alike.
+  const budget = { files: 64, bytes: 16 * 1024 * 1024, seen: new Set<string>() };
+  const read = (file: string) => {
+    if ((budget.files -= 1) < 0) return undefined;
     const text = readText(file);
+    if (typeof text === "string" && (budget.bytes -= text.length) < 0) return undefined;
+    return text;
+  };
+  for (const file of startupFiles(shell, login, environment)) {
+    const text = read(file);
     if (text === undefined) return undefined;
     if (text !== null) startup.push(text);
   }
   // A relative path names a file in whatever directory the shell was in when it sourced it.
   for (const target of analysis.sourced) {
-    const text = path.isAbsolute(target) ? readText(target) : undefined;
+    const text = path.isAbsolute(target) ? read(target) : undefined;
     if (text === undefined) return undefined;
     sourced.set(target, text);
   }
   for (const text of [...startup, ...[...sourced.values()].filter(item => item !== null)]) {
-    const texts = withSources(text);
+    const texts = withSources(text, readText, 0, budget);
     if (!texts) return undefined;
     all.push(...texts);
   }
