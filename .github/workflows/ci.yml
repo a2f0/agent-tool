@@ -25,7 +25,10 @@ jobs:
       - run: bun scripts/testing/smoke-package.ts
       - run: bun run build
       - run: git diff --exit-code -- src/skills/bundled.ts
-      - run: bun scripts/testing/smoke.ts dist/agent-tool
+      - name: Smoke-test the compiled binary from outside its checkout
+        run: |
+          cd "$RUNNER_TEMP"
+          bun "$GITHUB_WORKSPACE/scripts/testing/smoke.ts"
       - if: runner.os == 'Linux'
         run: scripts/release/package-deb.sh dist/agent-tool amd64
       - if: runner.os == 'Linux'

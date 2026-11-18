@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { strict as assert } from "node:assert";
 
-const binary = path.resolve(process.argv[2] ?? "dist/agent-tool");
+const binary = path.resolve(process.argv[2] ?? path.join(import.meta.dir, "../../dist/agent-tool"));
 const temporary = mkdtempSync(path.join(tmpdir(), "agent-tool-smoke-"));
 const repository = path.join(temporary, "repo");
 const tools = path.join(temporary, "tools");
