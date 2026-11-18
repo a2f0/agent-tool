@@ -5,12 +5,11 @@
 // Nothing here signals a process: a person decides what to stop.
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { accessSync, constants, realpathSync, statSync } from "node:fs";
+import { accessSync, closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { plainText } from "../commands/output";
 import { outsideExecutable } from "../system/executable";
-import { readRegularFile } from "../system/files";
 import { analyzeScript, definedNames, exclusive, isShell, shellArgvScript, shellScript, STEP_TRAP, wordsInOrder, type Analysis, type WaitLoop } from "./shell";
 import { ancestors, argsOf, processTable, type ProcessRow } from "./table";
 
@@ -216,6 +215,17 @@ export const TRAP_HANDLER = /\btrap[ \t]+(?!(?:''|""|-[lp]?)(?:[ \t]|$))\S|(?:^|
 
 // What a wait loop looks like in a script the reader cannot parse: reported as waiting, never judged.
 const UNPARSED_LOOP = ["until|while", "do", "sleep", "done"];
+// Whether a script may hold a wait loop, its quotes removed first (`s''leep` is `sleep`).
+const mayLoop = (script: string) => wordsInOrder(script.replace(/['"\\]/g, ""), UNPARSED_LOOP);
+
+/**
+ * What a report may show of a process's command line: a `-c` shell whose script may hold a wait loop
+ * is shown as a placeholder, since the script around a loop may hold secrets; anything else as is.
+ */
+export function shownCommand(command: string): string {
+  const script = shellScript(command);
+  return script && mayLoop(script.script) ? `(a ${script.shell} script with a wait loop)` : command;
+}
 const TIMEOUTS = new Set(["timeout", "gtimeout"]);
 const BUILTINS = new Set(["[", "test"]);
 const program = (row: ProcessRow | undefined) => path.basename(row?.command.split(" ")[0] ?? "");
@@ -226,12 +236,20 @@ const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  * null when it does not exist, undefined when it cannot be read as a regular file.
  */
 function readText(file: string): string | null | undefined {
+  const limit = 4 * 1024 * 1024;
+  let descriptor: number | undefined;
   try {
     const real = realpathSync(file);
-    if (statSync(real).size > 4 * 1024 * 1024) return undefined;
-    const found = readRegularFile(real);
-    return found.status === "file" ? found.contents : undefined;
+    if (!lstatSync(real).isFile()) return undefined;
+    descriptor = openSync(real, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    if (!fstatSync(descriptor).isFile()) return undefined;
+    // The limit holds for the bytes read, whatever size the file claimed or grows to.
+    const buffer = Buffer.alloc(limit + 1);
+    let size = 0;
+    for (let read = 1; read > 0 && size <= limit; size += read) read = readSync(descriptor, buffer, size, buffer.length - size, null);
+    return size > limit ? undefined : buffer.subarray(0, size).toString("utf8");
   } catch (error) { return ["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "") ? null : undefined; }
+  finally { if (descriptor !== undefined) closeSync(descriptor); }
 }
 
 const SOURCE = /(?:^|[;&|{(]|\bthen|\bdo|\belse)\s*(?:source|\.)\s+([^\s;&|)]+)/gm;
@@ -455,7 +473,7 @@ export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number
   const tools = new Map<string, string>(), confirmed = new Set<string>();
   for (const [pid, candidate] of [...candidates].sort(([a], [b]) => a - b)) {
     const row = table.get(pid), shownScript = row && shellScript(row.command);
-    if (!row || !shownScript || !wordsInOrder(shownScript.script, UNPARSED_LOOP)) continue;
+    if (!row || !shownScript || !mayLoop(shownScript.script)) continue;
     const base = { row, seen: candidate.seen, cwd: cwd.get(pid) ?? null, state: { status: "waiting" } as LoopState };
     // `ps` joins positional arguments onto the script, so the script is read from the exact argv
     // where the system shows it, and only then judged. argv[0] is whatever the process chose: the
@@ -472,7 +490,8 @@ export function findLoops(table: Map<number, ProcessRow>, candidates: Map<number
     // Judge a loop only when the body only sleeps, the condition is simple checks, no `timeout`
     // above will end it, and its commands run as what their names say; and not one another
     // agent-tool record owns, or one outside the session whose environment is hidden.
-    const owned = !verified || args!.environment?.has("AGENT_TOOL_PROCESS") || (!candidate.session && !args!.environment);
+    // An interactive shell (`-i`) reads rc files teardown does not, so it is not judged either.
+    const owned = !verified || exact!.interactive || args!.environment?.has("AGENT_TOOL_PROCESS") || (!candidate.session && !args!.environment);
     const context = owned ? undefined : contextOf(analysis, exact!.shell, exact!.login, args!.environment);
     // A call of a function defined around the script runs code teardown has not judged.
     const functions = new Set([...analysis.defines, ...(context?.all ?? []).flatMap(text => [...definedNames(text)])]);

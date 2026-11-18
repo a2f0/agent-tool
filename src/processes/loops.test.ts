@@ -3,7 +3,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { definesAny, loopTransition, pathAfter, programOf, resolveIn, runningLoop, runsShell, sessionProcesses, shellsUpTo, stuckLoops, TRAP_HANDLER, withSources, type LoopFacts, type LoopState } from "./loops";
+import { definesAny, loopTransition, shownCommand, pathAfter, programOf, resolveIn, runningLoop, runsShell, sessionProcesses, shellsUpTo, stuckLoops, TRAP_HANDLER, withSources, type LoopFacts, type LoopState } from "./loops";
 import { analyzeScript, definedNames, parseScript, shellArgvScript, shellScript, wordsInOrder, type WaitLoop } from "./shell";
 import { processTable, type ProcessRow } from "./table";
 
@@ -49,8 +49,9 @@ test("reads the script of a -c shell from its ps command line", () => {
   expect(shellScript("bash --noprofile -o pipefail -c true")).toEqual({ shell: "bash", script: "true" });
   for (const command of ["-zsh", "/bin/bash script.sh", "bash -l", "node -c x", "sleep 15"]) expect(shellScript(command)).toBeUndefined();
   // ps joins positional arguments onto the script; exact argv leaves them out.
-  expect(shellArgvScript(["sh", "-c", "echo \"$1\"", "name", "; until [ -f '' ]; do sleep 30; done"])).toEqual({ shell: "sh", script: "echo \"$1\"", login: false });
-  expect(shellArgvScript(["bash", "-lc", "true"])).toEqual({ shell: "bash", script: "true", login: true });
+  expect(shellArgvScript(["sh", "-c", "echo \"$1\"", "name", "; until [ -f '' ]; do sleep 30; done"])).toEqual({ shell: "sh", script: "echo \"$1\"", login: false, interactive: false });
+  expect(shellArgvScript(["bash", "-lc", "true"])).toEqual({ shell: "bash", script: "true", login: true, interactive: false });
+  expect(shellArgvScript(["zsh", "-ic", "true"])).toEqual({ shell: "zsh", script: "true", login: false, interactive: true });
 });
 
 test("finds a wait loop inside a harness's eval wrapper and reads its condition", () => {
@@ -99,6 +100,8 @@ test("judges only checks whose outcome can be read from the script", () => {
   // A descriptor above 9 can fail to open, and zsh expands `=grep` to a path.
   expect(checks(`! pgrep -f verify >/dev/null 12>/dev/null`)).toEqual(["other"]);
   expect(checks(`! pgrep -f =grep >/dev/null`)).toEqual(["other"]);
+  // A copy needs a literal descriptor: `2>&''` is an error, not a copy of descriptor 0.
+  expect(checks(`! pgrep -f verify </dev/null >/dev/null 2>&''`)).toEqual(["other"]);
   expect(loopOf(`until [ -f "" ]; do sleep 30; sleep 1 2147483647>/dev/null; done`).pure).toBe(false);
   // With its output closed rather than discarded, what pgrep does is not read.
   expect(checks(`! pgrep -f verify 2>/dev/null >&-`)).toEqual(["other"]);
@@ -279,6 +282,10 @@ test("traps that run between commands or on failures are noticed", () => {
 
 test("trap handlers in files around a script are noticed", () => {
   for (const text of ["trap 'sleep 30; rm -f lock' TERM", 'trap "exit" INT', "trap -- 'x' EXIT", "TRAPTERM() { sleep 30; }", "function TRAPINT {\n}"]) expect(TRAP_HANDLER.test(text)).toBe(true);
+  // A process line holding a wait loop never reaches a report whole.
+  expect(shownCommand("/bin/zsh -c TOKEN=s3cret curl x; until [ -f done ]; do s''leep 5; done")).toBe("(a zsh script with a wait loop)");
+  expect(shownCommand("/bin/zsh -c bun run dev")).toBe("/bin/zsh -c bun run dev");
+  expect(shownCommand("node server.js")).toBe("node server.js");
   // Text is read as words, so prose that mentions a trap counts too; that only leaves a loop unjudged.
   for (const text of ["trap '' TERM", "trap - TERM", "trap -l", "untrap x"]) expect(TRAP_HANDLER.test(text)).toBe(false);
 });

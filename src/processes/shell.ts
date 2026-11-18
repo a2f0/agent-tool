@@ -35,21 +35,22 @@ export function isShell(command: string): boolean {
 }
 
 /** Where the script operand of a `<shell> [options] -c <script> [name [args...]]` argv is. */
-function scriptOperand(argv: string[]): { shell: string; index: number; login: boolean } | undefined {
+function scriptOperand(argv: string[]): { shell: string; index: number; login: boolean; interactive: boolean } | undefined {
   const shell = path.basename(argv[0] ?? "");
   if (!SHELLS.has(shell)) return undefined;
   // Options may follow `-c` (`zsh -c -l script`); the script is the first operand after them.
-  let script = false, login = false, index = 1;
+  let script = false, login = false, interactive = false, index = 1;
   for (; index < argv.length; index += 1) {
     const part = argv[index]!;
     if (part === "--") { index += 1; break; }
     if (part === "-o" || part === "+o") { login ||= argv[index + 1] === "login"; index += 1; continue; }
-    if (/^--[a-z][a-z-]*$/.test(part)) { login ||= part === "--login"; continue; }
+    if (/^--[a-z][a-z-]*$/.test(part)) { login ||= part === "--login"; interactive ||= part === "--interactive"; continue; }
     if (!/^[-+][A-Za-z]+$/.test(part)) break;
     if (part.startsWith("-") && part.includes("c")) script = true;
     if (part.startsWith("-") && part.includes("l")) login = true;
+    if (part.startsWith("-") && part.includes("i")) interactive = true;
   }
-  return script && index < argv.length ? { shell, index, login } : undefined;
+  return script && index < argv.length ? { shell, index, login, interactive } : undefined;
 }
 
 /**
@@ -66,9 +67,9 @@ export function shellScript(command: string): { shell: string; script: string } 
  * The script of a `-c` shell from its exact argv, without the positional arguments after it, and
  * whether it is a login shell (`bash -lc`), which reads profiles first.
  */
-export function shellArgvScript(argv: string[]): { shell: string; script: string; login: boolean } | undefined {
+export function shellArgvScript(argv: string[]): { shell: string; script: string; login: boolean; interactive: boolean } | undefined {
   const found = scriptOperand(argv);
-  return found && { shell: found.shell, script: argv[found.index]!, login: found.login };
+  return found && { shell: found.shell, script: argv[found.index]!, login: found.login, interactive: found.interactive };
 }
 
 // Whether the expansion from `at` to `end` runs a command, including one nested in `${x:-$(...)}`.
@@ -460,7 +461,7 @@ function discarded(redirects: Redirect[]): Set<number> | undefined {
       if (target.text !== "/dev/null") return undefined;
       discarded.add(1).add(2);
     } else if ([">", ">>", ">|", "<"].includes(operator) && target.text === "/dev/null") discarded.add(fd ?? (operator === "<" ? 0 : 1));
-    else if ((operator === ">&" || operator === "<&") && (target.text === "-" || discarded.has(Number(target.text)))) {
+    else if ((operator === ">&" || operator === "<&") && (target.text === "-" || (/^\d$/.test(target.text) && discarded.has(Number(target.text))))) {
       const into = fd ?? (operator === "<&" ? 0 : 1);
       // A closed descriptor can no longer be copied.
       if (target.text === "-") discarded.delete(into);

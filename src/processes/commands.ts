@@ -9,7 +9,7 @@ import { createLog } from "../commands/logFile";
 import { plainText } from "../commands/output";
 import { assert, git, output } from "../workflows/core";
 import { claimedBy, ledgerDirectory, membersOf, newId, observe, readRecords, removeRecord, saveRecord, type ProcessRecord, type ProcessState } from "./ledger";
-import { findLoops, loopReport, sessionProcesses, shellsUpTo, type Candidate, type LoopReport, type Seen } from "./loops";
+import { findLoops, loopReport, sessionProcesses, shellsUpTo, shownCommand, type Candidate, type LoopReport, type Seen } from "./loops";
 import { ancestors, carrying, listeningPorts, processTable, startOf, workingDirectories, type ProcessRow } from "./table";
 
 const STOP_GRACE_MS = 5000;
@@ -251,9 +251,10 @@ function survey(root: string, directory: string): Omit<TeardownReport, "ok" | "a
     candidates.set(pid, { seen: where, session: session.has(pid) && shellsUpTo(table, pid, session) });
   }
   const loops = findLoops(table, candidates, cwd.cwd, root).map(item => loopReport(item));
-  // A wait loop's shell is listed by its loop alone there too, not the script around it.
+  // A wait loop's shell is listed by its loop alone there too, never the script around it, even
+  // when it ended while teardown looked.
   const shown = new Map(loops.map(loop => [loop.pid, loop.command]));
-  for (const item of untracked) item.command = shown.get(item.pid) ?? item.command;
+  for (const item of untracked) item.command = shown.get(item.pid) ?? shownCommand(item.command);
   const worktrees: { path: string; branch: string | null }[] = [];
   let current: { path: string; branch: string | null } | undefined;
   for (const line of git(["worktree", "list", "--porcelain"]).split("\n")) {

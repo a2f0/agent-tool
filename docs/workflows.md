@@ -733,8 +733,9 @@ or without `--apply`. A stuck loop's `reason` ends with the pid to `kill` once
 you have checked it is yours. A report shows only the loop itself (`command`),
 written back out from the shell's exact argv, never the commands around it,
 which may hold secrets; without the exact argv it shows a placeholder. The same
-shell's entry in `untracked` shows the same text. A shell that ends while
-teardown inspects it is left out of the report.
+shell's entry in `untracked` shows the same text, and any other `-c` shell whose
+script may hold a wait loop is shown there as a placeholder. A shell that ends
+while teardown inspects it is left out of `loops`.
 
 Teardown reads the script of every `-c` shell (`sh -c`, `zsh -c`, `bash -lc`)
 among the untracked processes and among the agent session's other shells. A
@@ -755,8 +756,9 @@ judged only when all of these hold:
 - Teardown read the shell's exact argv (from `/proc` on Linux, from the kernel
   on macOS, since `ps` joins positional arguments onto the script), and the
   executable it runs is that shell as installed (for `sh`, any shell that
-  serves as it: macOS runs `/bin/bash`, Debian `dash`). Teardown never runs
-  anything the shell names.
+  serves as it: macOS runs `/bin/bash`, Debian `dash`). An interactive shell
+  (`-i`), which reads rc files, is not judged. Teardown never runs anything the
+  shell names.
 - The shell belongs to no other agent-tool record: it carries no
   `AGENT_TOOL_PROCESS`. It is the session's own only when every process between
   it and the harness is a shell; any other shell is judged only when its
