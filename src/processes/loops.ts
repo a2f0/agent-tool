@@ -225,10 +225,11 @@ const mayLoop = (script: string) => wordsInOrder(script.replace(/['"\\]/g, ""), 
  * how to see it, keeping the shell and its options; any other command line is shown as is.
  */
 export function shownCommand(command: string, pid: number): string {
-  const script = shellScript(command);
-  if (!script) return command;
-  const prefix = command.slice(0, command.length - script.script.length).trimEnd();
-  return `${prefix} <script hidden, ${script.script.length} chars; ps -o command= -p ${pid} shows it>`;
+  // Any shell given `-c` anywhere, whatever options come first: keep only the shell itself.
+  const [shell = "", ...rest] = command.split(" ");
+  if (!isShell(command) || !rest.some(part => /^-[A-Za-z]*c[A-Za-z]*$/.test(part))) return command;
+  const hidden = command.length - shell.length - 1;
+  return `${shell} <arguments hidden, ${hidden} chars; ps -o command= -p ${pid} shows them>`;
 }
 const TIMEOUTS = new Set(["timeout", "gtimeout"]);
 const BUILTINS = new Set(["[", "test"]);
@@ -267,7 +268,7 @@ export function definesAny(text: string, names: Iterable<string>, read: (file: s
   const edge = "(?<![\\w.\\-\\[\\]])", end = "(?![\\w.\\-\\[\\]])";
   for (const name of names) {
     const word = escape(name);
-    const forms = [`\\balias\\b[^\\n]*${edge}${word}=`, `\\bfunction\\s+${word}${end}`, `${edge}${word}\\s*\\(\\s*\\)`, `\\b(?:autoload|functions)\\b[^\\n]*${edge}${word}${end}`, `\\bfunctions\\[${word}\\]`];
+    const forms = [`\\balias\\b[^\\n]*${edge}${word}=`, `\\bfunction\\s+${word}${end}`, `${edge}${word}\\s*\\(\\s*\\)`, `\\b(?:autoload|functions|enable|disable)\\b[^\\n]*${edge}${word}${end}`, `\\bfunctions\\[${word}\\]`];
     if (forms.some(form => new RegExp(form).test(text))) return true;
   }
   // Files it sources in turn: `withSources` reads each once, within a budget.
@@ -321,7 +322,9 @@ export function resolveIn(searchPath: string, name: string): string | undefined 
  * shell, `zprofile` and `zlogin`), bash's `$BASH_ENV` (and, for a login shell, `/etc/profile` and
  * the user's profiles), and `/etc/profile` and `~/.profile` for a login `sh`.
  */
-function startupFiles(shell: string, login: boolean, environment: (name: string) => string | undefined): string[] {
+function startupFiles(shell: string, login: boolean, environment: (name: string) => string | undefined): string[] | undefined {
+  // A relative path names a file in the shell's own directory when it started, which teardown cannot know.
+  if (["HOME", "ZDOTDIR", "BASH_ENV"].some(name => { const value = environment(name); return value !== undefined && !path.isAbsolute(value); })) return undefined;
   const home = environment("HOME") ?? homedir();
   if (shell === "zsh") {
     const dot = environment("ZDOTDIR") ?? home;
@@ -385,7 +388,9 @@ function contextOf(analysis: Analysis, shell: string, login: boolean, own: Map<s
     if (typeof text === "string" && (budget.bytes -= text.length) < 0) return undefined;
     return text;
   };
-  for (const file of startupFiles(shell, login, environment)) {
+  const files = startupFiles(shell, login, environment);
+  if (!files) return undefined;
+  for (const file of files) {
     const text = read(file);
     if (text === undefined) return undefined;
     if (text !== null) startup.push(text);

@@ -222,6 +222,9 @@ test("a loop's commands must run as what their names say", () => {
   expect(analyzeScript(`test() { /usr/bin/test -f ready; }; until test -f ""; do sleep 30; done`)!.defines).toEqual(new Set(["test"]));
   expect(analyzeScript(`alias pgrep='pgrep -l'; until ! pgrep -f x; do sleep 5; done`)!.defines).toEqual(new Set(["pgrep"]));
   expect(analyzeScript(`source /tmp/snapshot.sh && eval 'until ! pgrep -f x; do sleep 5; done'`)!.sourced).toEqual(["/tmp/snapshot.sh"]);
+  // A builtin turned off makes PATH find a program by that name instead.
+  for (const script of ["enable -n test", "disable test"]) expect(analyzeScript(`${script}; until test -f ""; do sleep 30; done`, "zsh")!.defines.has("test")).toBe(true);
+  expect(definesAny("enable -n test\n", ["test"], () => null)).toBe(true);
   // Defined in a sourced file, as a harness's shell snapshot does for grep.
   const none = () => null;
   expect(definesAny("function grep {\n  command grep \"$@\"\n}\n", ["grep", "sleep"], none)).toBe(true);
@@ -285,8 +288,11 @@ test("trap handlers in files around a script are noticed", () => {
   for (const text of ["trap 'sleep 30; rm -f lock' TERM", 'trap "exit" INT', "trap -- 'x' EXIT", "TRAPTERM() { sleep 30; }", "function TRAPINT {\n}"]) expect(TRAP_HANDLER.test(text)).toBe(true);
   // A `-c` shell's script never reaches a report, however its loop is spelled; other commands do.
   const script = "TOKEN=s3cret curl x; until [ -f done ]; do sl$''eep 5; done";
-  expect(shownCommand(`/bin/zsh -c ${script}`, 42)).toBe(`/bin/zsh -c <script hidden, ${script.length} chars; ps -o command= -p 42 shows it>`);
-  expect(shownCommand("bash -lc bun run dev", 7)).toBe("bash -lc <script hidden, 11 chars; ps -o command= -p 7 shows it>");
+  expect(shownCommand(`/bin/zsh -c ${script}`, 42)).toBe(`/bin/zsh <arguments hidden, ${script.length + 3} chars; ps -o command= -p 42 shows them>`);
+  expect(shownCommand("bash -lc bun run dev", 7)).toBe("bash <arguments hidden, 15 chars; ps -o command= -p 7 shows them>");
+  // Options that take an operand come first, and still the script is hidden.
+  expect(shownCommand("bash -O extglob -c TOKEN=s3cret x", 8)).toBe(`bash <arguments hidden, ${"-O extglob -c TOKEN=s3cret x".length} chars; ps -o command= -p 8 shows them>`);
+  expect(shellScript("bash -O extglob --rcfile /x -c true")).toEqual({ shell: "bash", script: "true" });
   expect(shownCommand("node server.js", 9)).toBe("node server.js");
   expect(shownCommand("bash script.sh", 9)).toBe("bash script.sh");
   // Text is read as words, so prose that mentions a trap counts too; that only leaves a loop unjudged.
@@ -482,7 +488,7 @@ test("--apply leaves a stuck wait loop in the repository running and still repor
   expect(applied!.json.untracked.map(item => item.pid)).toEqual(expect.arrayContaining([pids.stuck, pids.waiting]));
   // Nowhere in the report does the script around a loop appear: `untracked` shows each shell, not its script.
   expect(JSON.stringify(applied!.json)).not.toContain(PATHED.trim());
-  expect(applied!.json.untracked.find(item => item.pid === pids.stuck)).toMatchObject({ command: expect.stringMatching(new RegExp(`^sh -c <script hidden, \\d+ chars; ps -o command= -p ${pids.stuck} shows it>$`)) });
+  expect(applied!.json.untracked.find(item => item.pid === pids.stuck)).toMatchObject({ command: expect.stringMatching(new RegExp(`^sh <arguments hidden, \\d+ chars; ps -o command= -p ${pids.stuck} shows them>$`)) });
   for (const name of ["stuck", "waiting", "shimmed"] as const) expect(alive(pids[name])).toBe(true);
   expect([...processTable().values()].some(item => item.ppid === pids.stuck && item.command === "sleep 37")).toBe(true);
   expect(existsSync(marker)).toBe(false);

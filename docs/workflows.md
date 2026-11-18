@@ -701,10 +701,10 @@ SIGTERM to the group and to members outside it, SIGKILL after the grace period
 - `untracked`: other processes whose working directory is inside the
   repository, with their listening ports, excluding agent-tool's own ancestors
   (the harness and shell that ran it) and pipeline siblings that do not listen.
-  A `-c` shell's `command` keeps the shell and its options but hides the script,
-  which can carry secrets and report output gets pasted into transcripts and
-  PRs (`zsh -c <script hidden, 412 chars; ps -o command= -p 4321 shows it>`);
-  other processes show their command line as is;
+  A shell run with `-c` shows only the shell, its arguments hidden, since a
+  script can carry secrets and report output gets pasted into transcripts and
+  PRs (`/bin/zsh <arguments hidden, 412 chars; ps -o command= -p 4321 shows
+  them>`); other processes show their command line as is;
 - `loops`: shell wait loops (an `until` or `while` loop whose body sleeps), as
   described below, each with its `pid`, `ageSeconds`, the script holding it
   (`command`, unwrapped from a harness's `eval`, at most 200 characters), `cwd`,

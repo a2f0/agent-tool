@@ -44,6 +44,8 @@ function scriptOperand(argv: string[]): { shell: string; index: number; login: b
     const part = argv[index]!;
     if (part === "--") { index += 1; break; }
     if (part === "-o" || part === "+o") { login ||= argv[index + 1] === "login"; index += 1; continue; }
+    // Options that take an operand: bash's `-O extglob` and `--rcfile file`.
+    if (part === "-O" || part === "+O" || part === "--rcfile" || part === "--init-file") { index += 1; continue; }
     if (/^--[a-z][a-z-]*$/.test(part)) { login ||= part === "--login"; interactive ||= part === "--interactive"; continue; }
     if (!/^[-+][A-Za-z]+$/.test(part)) break;
     if (part.startsWith("-") && part.includes("c")) script = true;
@@ -596,7 +598,8 @@ function definitions(command: Simple, info: CommandInfo, at: number, analysis: A
   const operands = info.args.filter(arg => !arg.startsWith("-") && !arg.startsWith("+"));
   if (info.program === "alias") for (const arg of operands) { const name = /^([^=]+)=/.exec(arg)?.[1]; if (name) analysis.defines.add(name); }
   if (info.program === "trap" && (info.expands || (info.args[0] !== undefined && info.args[0] !== "" && info.args[0] !== "-" && !/^-[lp]$/.test(info.args[0])))) analysis.traps = true;
-  if (info.program === "autoload" || info.program === "functions") for (const arg of operands) analysis.defines.add(arg.replace(/=.*$/, ""));
+  // `enable -n test` (bash) and `disable test` (zsh) turn a builtin off, so PATH finds a program instead.
+  if (info.program === "autoload" || info.program === "functions" || info.program === "enable" || info.program === "disable") for (const arg of operands) analysis.defines.add(arg.replace(/=.*$/, ""));
   if ((info.program === "source" || info.program === ".") && operands[0] && !info.expands) {
     analysis.sourced.push(operands[0]);
     path({ kind: "source", file: operands[0] });
