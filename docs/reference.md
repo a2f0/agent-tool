@@ -110,7 +110,7 @@ For repository workflow commands added alongside these interfaces, see
 | `logs <file> [--max-bytes N] [--tail-lines N]` | Inspect a bounded, terminal-safe tail of a local file |
 | `proc start [--label text] [--keep] -- <command> [args...]` | Start a long-running process in its own group, logged privately and recorded for the repository |
 | `proc list` / `proc stop <id...>\|--all [--grace-ms N]` | Show recorded processes with their members and ports; stop them, SIGKILL after the grace period |
-| `teardown [--apply]` | Report what the checkout still runs or holds; `--apply` stops recorded processes not started with `--keep` |
+| `teardown [--apply]` | Report what the checkout still runs or holds, and list the agent session's background `-c` shells by pid, age and name, never their arguments (`sessionShells`, never failing or stopped); `--apply` stops recorded processes not started with `--keep` |
 | `review claude\|codex\|opencode [effort] [--base ref]` | Review committed HEAD using a pinned raw-file snapshot |
 | `review carry <reviewed-head> <new-head> [--base ref]` | Read-only: whether a clean review of the reviewed head still covers a new head that only merged the base and prepared versions; JSON, exit 1 when it does not |
 | `pr open [title] [--body-file file]` | Open a same-repository PR; body from the file or stdin; branch already pushed |

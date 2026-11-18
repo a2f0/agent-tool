@@ -701,9 +701,13 @@ SIGTERM to the group and to members outside it, SIGKILL after the grace period
 - `untracked`: other processes whose working directory is inside the
   repository, with their listening ports, excluding agent-tool's own ancestors
   (the harness and shell that ran it) and pipeline siblings that do not listen;
+- `sessionShells`: the agent session's background shells that still run, each
+  `{ pid, ageSeconds, shell, chars }`, oldest first (described below);
 - `worktrees`: worktrees added to the repository, which may need removing;
 - `unavailable`: inspections that could not run (`lsof` missing or failing);
-- `skipped`: record files that could not be read.
+- `skipped`: record files that could not be read;
+- `notes`: why a list is empty without having been looked for, such as
+  `sessionShells` when no agent harness runs teardown.
 
 It exits 1 while a leftover runs, an untracked process listens on a port, or an
 inspection is unavailable or a record unreadable, since a running process could
@@ -715,6 +719,62 @@ descendant that outlives its parent, leaves the group, and clears or hides its
 ownership tag cannot be recovered by ownership inspection. If it also changes
 out of the repository, cwd inspection cannot report it either. From a matrix-style
 workspace, run it per checkout with `--repo <checkout>`.
+
+### Session shells
+
+An agent harness (Claude Code, Codex, OpenCode and others) runs each command it
+is given, in the background or not, as a `-c` shell of its own process, and a
+wait loop or watcher started in the background stays one of those shells for as
+long as it runs, wherever its working directory is. `sessionShells` lists them:
+teardown walks up from itself to the nearest process whose program is a known
+harness (`claude`, `codex`, `opencode`, and a few others, including an
+interpreter running a script of that name) and reports that process's other
+children that are shells given `-c`, including those it started through a
+sandbox that stays their parent (`bwrap`, `codex-linux-sandbox`,
+`sandbox-exec`). The shell that ran teardown, everything teardown starts, and
+recorded processes, which are reported as records, are left out. Without a
+harness above it, the list is empty and `notes` says so; inside a sandbox with
+its own process namespace, teardown sees neither the harness nor its other
+shells.
+
+Each entry gives the shell's `pid`, its `ageSeconds`, its own name as `shell`
+(`zsh`, `bash`, `rbash`, `bash5.2`), and in `chars` the length of its
+arguments, never the arguments themselves: a script may carry secrets, and
+teardown output is pasted into transcripts and PRs. Run
+`ps -ww -o command= -p <pid>` to see one. A process counts as a shell given
+`-c` only when its own name, the first word `ps` shows, is a known shell and a
+`-c` option (`-c`, `-lc`, `--command`) comes before any script file, past
+options that take a value (`-o pipefail`, `-eo pipefail`, fish's `-C`). A shell
+renamed with `exec -a`, one whose path holds a space, or one a wrapper runs
+(`timeout 60 bash -c`) is therefore not listed. The list can miss a shell, but
+it never prints one's script.
+
+`untracked` hides by identity, not by reading command lines: a listed session
+shell, or a sandbox the harness owns, whose working directory is in the
+repository shows as
+`<name> <arguments hidden; ps -ww -o command= -p <pid> shows them>` and keeps
+its pid, cwd and ports. A sandbox is hidden whether or not a shell still runs
+inside it, since it keeps the script it was given after that shell replaces
+itself with a program. Every other entry, including a shell this detection
+misses, shows its full command line as `ps` does.
+
+The list is informational. Teardown does not judge whether a shell can finish,
+since a shell's script cannot be read reliably enough to prove that; it never
+fails because of one, and `--apply` never stops, suspends or signals one, since
+some may be another delegate's live work in the same harness. A session shell
+whose working directory is in the repository is also listed in `untracked`,
+where a listening one fails teardown like any other untracked listener. Check
+each entry's age and, where needed, its full command, and stop the ones your
+work started yourself.
+
+To avoid leaving such shells behind:
+
+- Wait on a process ID (`while kill -0 "$pid" 2>/dev/null; do sleep 5; done`)
+  rather than on a search of command lines.
+- When you must search, use a pattern that cannot match the waiting shell's
+  own command line, such as `pgrep -f '[r]elease verify'`: a plain
+  `until ! pgrep -f "release verify"` finds itself and never ends.
+- Give every wait a bound, and check `sessionShells` before reporting work done.
 
 ## CI aggregate gates
 
