@@ -254,11 +254,11 @@ export function applySkillLinks(changes: SkillLink[]): SkillLink[] {
 
 /**
  * Whether the checkout lives in a linked worktree. `git rev-parse --git-common-dir` would miss a
- * submodule inside a linked worktree, so this reads the layout: its `.git` is a file naming a Git directory
- * that, or one of whose ancestors up to the enclosing `.git` directory, holds `commondir`, which
- * Git writes only into a linked worktree's Git directory. The ancestors cover a submodule checked
- * out inside a linked worktree, whose Git directory sits under that worktree's; stopping at the
- * enclosing `.git` keeps a stray file above the repository from counting.
+ * submodule inside a linked worktree, so this reads the layout: the checkout's `.git` is a file
+ * naming a Git directory that, or one of whose ancestors up to the enclosing `.git` directory,
+ * holds `commondir`, which Git writes only into a linked worktree's Git directory. The ancestors
+ * cover a submodule checked out inside a linked worktree, whose Git directory sits under that
+ * worktree's; stopping at the enclosing `.git` keeps a stray file above the repository from counting.
  */
 function linkedWorktree(root: string): boolean {
   const read = readRegularFile(path.join(root, ".git"));
