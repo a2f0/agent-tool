@@ -794,6 +794,15 @@ describe("space cleanup", () => {
     expect(Object.fromEntries([...busy].map(([root, list]) => [root, list.map(proc => proc.pid)]))).toEqual({ "/w/checkouts/a": [11] });
   });
 
+  test("refuses to run from inside a nested checkout Git cannot read, and names a repository by a file in it", () => {
+    const workspace = realpathSync(fixture());
+    write(workspace, { "matrix.json": "{}", ".gitignore": "checkouts/\n" });
+    mkdirSync(path.join(workspace, "checkouts", "broken", ".git"), { recursive: true });
+    mkdirSync(path.join(workspace, "checkouts", "broken", "src"));
+    expect(() => resolveTargets(path.join(workspace, "checkouts", "broken", "src"), [])).toThrow("has its own .git, but Git resolved the enclosing repository");
+    expect(resolveTargets(tempDir("space-cleanup-elsewhere"), [path.join(workspace, "src", "index.ts")]).targets.map(target => target.root)).toEqual([workspace]);
+  }, 30_000);
+
   test("refuses a named checkout whose .git Git cannot read", () => {
     const workspace = realpathSync(fixture());
     write(workspace, { "matrix.json": "{}", ".gitignore": "checkouts/\n" });
@@ -849,6 +858,17 @@ describe("agent-tool space", () => {
     } finally {
       process.kill(-shell.pid!, "SIGKILL");
     }
+    // A process that is still exiting is listed by ps but no longer by lsof, which space refuses to guess
+    // about; wait until the killed group is gone, as a person would rerun after it ends.
+    const gone = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    for (let attempt = 0; attempt < 100 && !gone(-shell.pid!); attempt++) await Bun.sleep(50);
     const idle = run(["space", "--json"], root);
     expect(idle.exitCode).toBe(0);
     expect(JSON.parse(idle.stdout.toString()).repos[0].skipped).toBeUndefined();

@@ -5,8 +5,9 @@
  * inherited `-c` setting never points it at another repository.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
+import { assertOwnCheckout } from "../workflows/core";
 
 // From `git rev-parse --local-env-vars`: variables that bind Git to one repository,
 // such as those a hook sets, and that would override `-C`.
@@ -52,11 +53,23 @@ export function isolatedGit(cwd: string, args: string[]): { status: number | nul
   return { status: result.status, stdout: result.stdout ?? "", ...(result.error ? { error: result.error } : {}) };
 }
 
-/** The top level of the repository holding `cwd`, undefined outside one. */
+/**
+ * The top level of the repository holding `cwd`, a directory or a file in one;
+ * undefined outside one. Throws when a nested checkout between them has a
+ * `.git` Git cannot read, since Git then answers for the enclosing repository.
+ */
 export function toplevel(cwd: string): string | undefined {
-  const result = isolatedGit(cwd, ["rev-parse", "--show-toplevel"]);
+  let directory = cwd;
+  try {
+    if (!statSync(cwd).isDirectory()) directory = path.dirname(cwd);
+  } catch {
+    return undefined;
+  }
+  const result = isolatedGit(directory, ["rev-parse", "--show-toplevel"]);
   const top = result.stdout.trim();
-  return result.status === 0 && top ? top : undefined;
+  if (result.status !== 0 || !top) return undefined;
+  assertOwnCheckout(top, directory);
+  return top;
 }
 
 /** A matrix workspace: `matrix.json` beside a `checkouts/` directory. */
@@ -87,8 +100,12 @@ export function workspaceCheckouts(workspace: string): Checkout[] {
     .filter(entry => entry.isDirectory() && existsSync(path.join(workspace, "checkouts", entry.name, ".git")))
     .map(entry => ({ name: entry.name, root: realpathSync(path.join(workspace, "checkouts", entry.name)) }))
     .filter(checkout => {
-      const top = toplevel(checkout.root);
-      return top !== undefined && realpathSync(top) === checkout.root;
+      try {
+        const top = toplevel(checkout.root);
+        return top !== undefined && realpathSync(top) === checkout.root;
+      } catch {
+        return false;
+      }
     })
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
@@ -102,7 +119,12 @@ export function namedRoot(cwd: string, workspace: string | undefined, name: stri
   const short = name.includes("/") && !existsSync(path.resolve(cwd, name)) ? name.split("/").pop()! : name;
   if (workspace && existsSync(path.join(workspace, "checkouts", short, ".git"))) {
     const root = realpathSync(path.join(workspace, "checkouts", short));
-    const top = toplevel(root);
+    let top: string | undefined;
+    try {
+      top = toplevel(root);
+    } catch {
+      top = undefined;
+    }
     // Git would answer for the enclosing workspace instead.
     if (top === undefined || realpathSync(top) !== root) throw new Error(`checkouts/${short} is not a Git repository Git can read`);
     return root;

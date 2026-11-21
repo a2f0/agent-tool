@@ -208,6 +208,10 @@ describe("agent-tool perf", () => {
     expect(() => moduleGraph(root, ["escape.js"])).toThrow(`The graph leaves ${root} at ../outside.js, imported by escape.js.`);
     expect(() => moduleGraph(root, ["../main.js"])).toThrow("at entry ../main.js.");
     expect(() => moduleGraph(root, ["broken.js"])).toThrow("Cannot read missing.js, imported by broken.js: ENOENT.");
+    const outside = tree({ "secret.js": "export {};" });
+    symlinkSync(path.join(outside, "secret.js"), path.join(root, "linked.js"));
+    write(root, { "via-link.js": 'import "./linked.js";' });
+    expect(() => moduleGraph(root, ["via-link.js"])).toThrow("at linked.js, imported by via-link.js, through a symbolic link.");
   });
 
   test("measures from the navigation's commit, not its load event", async () => {
@@ -407,7 +411,7 @@ describe("agent-tool perf", () => {
     { timeout: 120_000 },
   );
 
-  test("runs diff, graph, and usage from the CLI with their exit statuses", () => {
+  test("runs diff, graph, and usage from the CLI with their exit statuses", async () => {
     const cli = path.join(import.meta.dir, "../index.ts");
     const run = (...args: string[]) => runIn(process.cwd(), ...args);
     const runIn = (cwd: string, ...args: string[]) => {
@@ -432,7 +436,24 @@ describe("agent-tool perf", () => {
     expect(run("--help").code).toBe(0);
     expect(run("measure", "--help")).toMatchObject({ code: 0, stdout: expect.stringMatching(/^Usage: agent-tool perf <command>/) });
     expect(run("bogus")).toMatchObject({ code: 1, stderr: expect.stringContaining("Unknown perf command 'bogus'.") });
-    // serve exits 1 when its port is taken, rather than 0 before the socket fails.
+    // serve keeps running once it listens, and exits 1 when its port is taken, rather than 0 before the socket fails.
+    const served = Bun.spawn([process.execPath, cli, "perf", "serve", root, "--http1", "--port", "0"], { stdout: "pipe", stderr: "pipe" });
+    try {
+      const reader = served.stdout.getReader();
+      let banner = "";
+      while (!banner.includes("\n")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        banner += new TextDecoder().decode(value);
+      }
+      const origin = /at (http:\/\/127\.0\.0\.1:\d+)\//.exec(banner)?.[1];
+      expect(origin, banner).toBeString();
+      expect(await (await fetch(`${origin}/a.js`)).text()).toBe("export {};");
+      expect(served.exitCode).toBeNull();
+    } finally {
+      served.kill();
+      await served.exited;
+    }
     const busy = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("") });
     try {
       expect(run("serve", root, "--http1", "--port", String(busy.port))).toMatchObject({ code: 1, stderr: expect.stringContaining("perf serve: ") });

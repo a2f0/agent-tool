@@ -19,7 +19,7 @@ export type Decision = "allow" | "ask";
 export interface CatalogEntry { command: string; class: PermissionClass; applyClass?: PermissionClass }
 
 export const CATALOG: CatalogEntry[] = [
-  ...["--help", "--version", "logs", "runs list", "doctor", "config show", "branch check", "branch status", "commits check", "checks binaries", "repo context", "policy check", "toolchain check", "ci gate", "release plan", "release verify", "pr context", "pr checks", "pr logs", "pr preflight", "pr threads list", "versions plan", "versions check", "dependencies check-terraform-plan", "dependencies diff", "skills list", "skills check", "hooks check", "push-gate hook", "push-gate check", "repo base-health", "review carry", "images list", "graph check", "state-machines", "permissions show", "permissions check", "proc list", "perf diff"]
+  ...["--help", "--version", "logs", "runs list", "doctor", "config show", "branch check", "branch status", "commits check", "checks binaries", "repo context", "policy check", "toolchain check", "ci gate", "release plan", "release verify", "pr context", "pr checks", "pr logs", "pr preflight", "pr threads list", "versions plan", "versions check", "dependencies check-terraform-plan", "dependencies diff", "skills list", "skills check", "hooks check", "push-gate hook", "push-gate check", "repo base-health", "review carry", "images list", "graph check", "state-machines", "permissions show", "permissions check", "proc list", "perf diff", "screenshots status"]
     .map(command => ({ command, class: "read" as const })),
   ...["bun install", "bun update", "bun remove", "bun test", "branch create", "versions bump", "versions prepare", "versions resolve-conflicts", "images build", "screenshots build", "review", "init", "proc stop"]
     .map(command => ({ command, class: "local" as const })),
@@ -43,6 +43,8 @@ export const CATALOG: CatalogEntry[] = [
 // So do `perf measure` and `perf shot`, which open any URL in Chrome and evaluate the JavaScript their arguments give,
 // `perf serve`, which serves a directory to every local user, `perf graph`, whose --out overwrites any file, and `space`, whose --apply removes output in other
 // checkouts and developer caches across the machine, with --include-busy even where other sessions work.
+// `screenshots link` and `screenshots capture` keep it as well: --apply links every clone on the machine with
+// --all and writes the shared store outside the checkout, and capture runs the repository's `screenshots` script.
 // `bun x` runs only executables that `permissions.executables` classifies; project.ts adds those.
 // Package scripts are not classified, so `bun run` keeps the harness default.
 

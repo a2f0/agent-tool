@@ -9,8 +9,9 @@ shell, prepend `~/.local/share/mise/installs/bun/<version>/bin` to PATH; do not 
 Shared implementation lives under `src/` by domain: `workflows/` for repository
 mechanics, `pr/` and `git/` for existing GitHub guards, `release/` for registry
 logic, `commands/` for execution receipts, `seo/` for the `seo probe` command,
-and `review/`, `version/`, `skills/`, `images/`, `screenshots/`, `space/` (disk
-cleanup), and `perf/` (page-load measurement) for their respective APIs. Tests live beside
+and `review/`, `version/`, `skills/`, `images/`, `screenshots/` (with the shared
+capture store in `screenshots/store/`), `space/` (disk cleanup), and `perf/`
+(page-load measurement) for their respective APIs. Tests live beside
 implementation. `screenshots/gallery.ts`, `gallery.css`, and `manifest.ts` are
 browser entry points that the package exports; they import nothing from Node
 or Bun, and `tsconfig.browser.json`, part of `typecheck`, checks them with the

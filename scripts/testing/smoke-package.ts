@@ -39,7 +39,7 @@ try {
     assert.match(run("logs", compact.log), /installed harness output/);
   } finally { rmSync(path.dirname(compact.log), { recursive: true, force: true }); }
   const skills = JSON.parse(run("skills", "list"));
-  for (const name of ["ship-pr", "update-dependencies", "open-issue", "seo-optimization", "space-cleanup", "performance-pass"]) assert.ok(skills.includes(name), `the package bundles ${name}`);
+  for (const name of ["ship-pr", "update-dependencies", "open-issue", "seo-optimization", "space-cleanup", "performance-pass", "take-screenshots"]) assert.ok(skills.includes(name), `the package bundles ${name}`);
   assert.match(run("seo", "probe", "--help"), /seo probe --sitemap <host>/);
   assert.equal(JSON.parse(run("config", "show")).schemaVersion, 1);
   assert.equal(JSON.parse(run("skills", "install")).applied, false);
@@ -158,11 +158,18 @@ try {
   const cleaned = path.join(temporary, "space");
   mkdirSync(path.join(cleaned, ".turbo"), { recursive: true });
   execFileSync("git", ["init", "--quiet", cleaned], { env, stdio: "pipe" });
-  writeFileSync(path.join(cleaned, ".gitignore"), ".turbo\n");
+  writeFileSync(path.join(cleaned, ".gitignore"), ".turbo\n.screenshots\n");
   writeFileSync(path.join(cleaned, ".turbo/cache"), "x");
   const space = JSON.parse(run("--repo", cleaned, "space", "--json", "--include-busy"));
   assert.deepEqual([space.applied, space.repos[0].candidates.map((candidate: { path: string }) => candidate.path)], [false, [".turbo"]], "the installed CLI previews disk cleanup");
   assert.ok(existsSync(path.join(cleaned, ".turbo/cache")));
+  // The shared screenshot store: a clone that captures is planned a link into the store MATRIX_ARTIFACTS_DIR names.
+  writeFileSync(path.join(cleaned, "package.json"), JSON.stringify({ scripts: { screenshots: "true" } }));
+  execFileSync("git", ["-C", cleaned, "remote", "add", "origin", "git@github.com:example/space.git"], { env, stdio: "pipe" });
+  const storeEnv = { ...env, MATRIX_ARTIFACTS_DIR: path.join(temporary, "artifacts"), MATRIX_ARTIFACTS_NO_GH: "1" };
+  const linkPlan = JSON.parse(execFileSync(executable, ["--repo", cleaned, "screenshots", "link", "--json"], { cwd: consumer, env: storeEnv, encoding: "utf8" }));
+  assert.deepEqual([linkPlan.apply, linkPlan.results[0].project, linkPlan.results[0].action], [false, "space", "link"], "the installed CLI plans store links");
+  assert.equal(existsSync(path.join(temporary, "artifacts")), false, "planning a link writes nothing");
   // Pixel diffs need no browser; measuring needs the consumer's own playwright and never fetches one.
   const shot = (name: string, shade: number) => {
     const file = path.join(consumer, `${name}.png`);
@@ -178,7 +185,7 @@ try {
   }, "perf measure uses only an installed playwright");
   assert.match(execFileSync(process.execPath, ["run", "agent-tool", "--help"], { cwd: consumer, env, encoding: "utf8" }), /agent-tool/);
   if (manager === "npm") assert.equal(execFileSync("npm", ["exec", "--no", "--", "agent-tool", "--version"], { cwd: consumer, env, encoding: "utf8" }).trim(), metadata.version);
-  console.log(`Installed ${manager} source package passed executable, script, policy, real dependency modes, image rendering, screenshot staging, disk cleanup and pixel-diff, browser entry point, and four-harness embedded-skills checks without install scripts or a build.`);
+  console.log(`Installed ${manager} source package passed executable, script, policy, real dependency modes, image rendering, screenshot staging and store links, disk cleanup and pixel-diff, browser entry point, and four-harness embedded-skills checks without install scripts or a build.`);
 } finally {
   rmSync(temporary, { recursive: true, force: true });
 }

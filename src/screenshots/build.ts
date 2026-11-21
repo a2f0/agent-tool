@@ -5,9 +5,10 @@ import { pngSize } from "../images/png";
 import { assertNoLinks, replaceFile } from "../system/files";
 import type { ScreenshotsConfig, ScreenshotTarget } from "./config";
 import type { ScreenshotCapture, ScreenshotEntry, ScreenshotManifest } from "./manifest";
+import { RECORD } from "./store/record";
 
-/** The record the take-screenshots skill keeps beside a shared capture. */
-export const CAPTURE_RECORD = "capture.json";
+/** The record `screenshots capture` keeps beside a shared capture. */
+export const CAPTURE_RECORD = RECORD;
 const MANIFEST = "manifest.json";
 const IMAGES = "img";
 
@@ -41,7 +42,7 @@ export function checkCapture(root: string, source: string, raw: string | undefin
   try { record = JSON.parse(raw) as CaptureRecord; } catch { throw new Error(`The shared screenshot capture record ${CAPTURE_RECORD} is not JSON; recapture.`); }
   if (!record || typeof record !== "object") throw new Error(`The shared screenshot capture record ${CAPTURE_RECORD} is not an object; recapture.`);
   if (record.status !== "complete") throw new Error(`The shared screenshot capture is ${String(record.status)}; wait for it or recapture.`);
-  if (typeof record.commit !== "string" || !/^[0-9a-f]{40}$/.test(record.commit)) throw new Error("The shared screenshot capture record names no commit; recapture.");
+  if (typeof record.commit !== "string" || !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(record.commit)) throw new Error("The shared screenshot capture record names no commit; recapture.");
   if (record.dirty !== false) throw new Error("The shared screenshots were captured from uncommitted changes; recapture from a commit.");
   const partial = Array.isArray(record.args) ? record.args.map(String) : [];
   return { commit: record.commit, finishedAt: typeof record.finishedAt === "string" ? record.finishedAt : null, partial };

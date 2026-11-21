@@ -1,5 +1,5 @@
 /** `perf graph`: the relative import closure of ES modules, for preload lists generated from built files. */
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 /**
@@ -82,6 +82,12 @@ export function importsOf(source: string): string[] {
 /** Every module reachable from the entries through relative imports, as paths within `root`, entries first. */
 export function moduleGraph(root: string, entries: string[]): string[] {
   const seen = new Set<string>();
+  let base: string;
+  try {
+    base = realpathSync(root);
+  } catch (error) {
+    throw new Error(`Cannot read ${root}: ${(error as NodeJS.ErrnoException).code ?? (error as Error).message}.`);
+  }
   const walk = (rel: string, from: string | undefined) => {
     const where = from === undefined ? `entry ${rel}` : `${rel}, imported by ${from}`;
     if (rel === ".." || rel.startsWith("../") || path.posix.isAbsolute(rel)) throw new Error(`The graph leaves ${root} at ${where}.`);
@@ -89,9 +95,13 @@ export function moduleGraph(root: string, entries: string[]): string[] {
     seen.add(rel);
     let source: string;
     try {
-      source = readFileSync(path.join(root, rel), "utf8");
+      // A symbolic link inside the directory can lead out of it, as `..` can.
+      const real = realpathSync(path.join(root, rel));
+      if (!real.startsWith(`${base}${path.sep}`)) throw new Error(`The graph leaves ${root} at ${where}, through a symbolic link.`);
+      source = readFileSync(real, "utf8");
     } catch (error) {
-      throw new Error(`Cannot read ${where}: ${(error as NodeJS.ErrnoException).code ?? (error as Error).message}.`);
+      if (!(error as NodeJS.ErrnoException).code) throw error;
+      throw new Error(`Cannot read ${where}: ${(error as NodeJS.ErrnoException).code}.`);
     }
     for (const spec of importsOf(source)) walk(path.posix.normalize(path.posix.join(path.posix.dirname(rel), spec)), rel);
   };
