@@ -12,6 +12,7 @@ import { carryReviewCommand } from "./review/carry";
 import { runAgentToolAction } from "./runAgentToolAction";
 import { BUNDLED_SKILLS } from "./skills/bundled";
 import { checkSkills, installSkills } from "./skills/install";
+import { checkSkillLinks, linkSkills } from "./skills/link";
 import { bunCommand } from "./bun/dependencies";
 import { checkPermissions, installPermissions, showPermissions } from "./permissions/install";
 import { bumpVersions, checkVersions, planVersions } from "./version/bumpVersions";
@@ -74,6 +75,8 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   skills list
   skills install [--harness <all|claude|codex|opencode|hermes>] [--apply]
   skills check [--harness <all|claude|codex|opencode|hermes>]
+  skills link [--apply]                  Link agent-tool.json skills.user into each user skill directory
+  skills check-links                     Read-only: exit 1 while a declared user skill link is missing, broken, or conflicts
   bun install [--cwd <dir>]             Frozen-lockfile install with the pinned Bun
   bun add <name@version>... [--dev|--optional|--peer] [--exact] [--cwd <dir>]
   bun update <name[@version]>... [--cwd <dir>]  Change versions of declared dependencies only
@@ -191,7 +194,22 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
   if (command === "skills") {
     const action = args.shift();
     if (action === "list") { usage(args.length === 0, "Usage: agent-tool skills list"); output(Object.keys(BUNDLED_SKILLS)); return 0; }
-    usage(action === "install" || action === "check", "Usage: agent-tool skills <list|install|check>");
+    if (action === "link" || action === "check-links") {
+      let apply = false;
+      while (args.length) {
+        const flag = args.shift();
+        if (flag === "--apply") { usage(action === "link", "skills check-links is read-only; --apply is not allowed."); usage(!apply, "Duplicate --apply."); apply = true; }
+        else throw new Error(`Unknown skills ${action} argument '${flag}'.`);
+      }
+      const names = loadConfig().skills.user;
+      if (action === "check-links") {
+        const result = checkSkillLinks(process.cwd(), names);
+        output(result); return result.ok ? 0 : 1;
+      }
+      const result = linkSkills(process.cwd(), names, apply);
+      output(result); return result.changes.some(change => change.status === "conflict") ? 1 : 0;
+    }
+    usage(action === "install" || action === "check", "Usage: agent-tool skills <list|install|check|link|check-links>");
     let target = "all", apply = false;
     while (args.length) {
       const flag = args.shift();
