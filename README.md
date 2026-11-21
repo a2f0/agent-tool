@@ -5,7 +5,8 @@ where Claude Code, Codex, OpenCode, or Hermes make the changes. It provides shar
 GitHub, review, validation, and release workflows: independent agent reviews of
 a committed branch, guarded pushes and squash merges of the exact reviewed
 commit, package versioning, brand image rendering, screenshot staging with a
-framework-free gallery, and compact output for noisy commands. Repository policy stays in `agent-tool.json`; the portable skills
+framework-free gallery, a live SEO probe for websites, and compact output for
+noisy commands. Repository policy stays in `agent-tool.json`; the portable skills
 coordinate independently reviewed changes.
 
 ## Quick start
@@ -82,8 +83,8 @@ validation suite, and release procedures.
   aggregate gates, release verification, durable validation receipts, and
   toolchain/protection diagnostics.
 - [CLI reference](docs/reference.md): existing review, version, skill installation,
-  user-wide skill links, command capture, import-graph checks, configuration, and
-  distribution contracts.
+  user-wide skill links, command capture, the SEO probe, import-graph checks,
+  configuration, and distribution contracts.
 - [Development](docs/development.md): setup, source layout, validation, and release
   procedures for this package.
 - [Images](docs/images.md): declarative brand sources and generated outputs.

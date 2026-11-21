@@ -6,6 +6,7 @@ import { checkTerraformPlan } from "./dependencies/terraformPlan";
 import { dependencyDiff } from "./dependencies/diff";
 import { checkGraph } from "./graph/check";
 import { stateMachinesCommand } from "./stateMachines/command";
+import { seoCommand } from "./seo/probe";
 import { buildScreenshots, describeScreenshots } from "./screenshots/build";
 import { review } from "./harnesses";
 import { carryReviewCommand } from "./review/carry";
@@ -93,6 +94,7 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   screenshots build [target...] [--out <dir>] [--json]  Stage guarded captures and a gallery manifest
   graph check                           Import cycles and layer violations per agent-tool.json
   state-machines [path...] [--limit N] [--min-score N] [--json]  Rank files that look like implicit state machines
+  seo probe [--page|--headers|--links|--sitemap] <host> [path...]  Live search and preview metadata of a site
   init                                  Create agent-tool.json without overwriting
   config show
   doctor                                JSON versions and supported review flags
@@ -191,6 +193,7 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
     output(report); return report.ok ? 0 : 1;
   }
   if (command === "state-machines") return stateMachinesCommand(args, process.cwd(), undefined, invoked);
+  if (command === "seo") return seoCommand(args);
   if (command === "skills") {
     const action = args.shift();
     if (action === "list") { usage(args.length === 0, "Usage: agent-tool skills list"); output(Object.keys(BUNDLED_SKILLS)); return 0; }

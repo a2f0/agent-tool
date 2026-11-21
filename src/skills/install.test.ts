@@ -196,9 +196,10 @@ test("check detects stale manifest hashes and missing files for the selected har
 
 const REFERENCE = ".agents/skills/explicit-state-machines/references/patterns.md";
 
-test("skills ship their Markdown references beside SKILL.md, each with its own ownership record", () => {
+test("skills ship their Markdown references and Codex metadata beside SKILL.md, each with its own ownership record", () => {
   expect(Object.keys(BUNDLED_SKILL_REFERENCES["explicit-state-machines"] ?? {})).toEqual(["references/lessons.md", "references/patterns.md"]);
-  for (const files of Object.values(BUNDLED_SKILL_REFERENCES)) for (const file of Object.keys(files)) expect(file).toMatch(/^references\/[a-z0-9-]+\.md$/);
+  expect(Object.keys(BUNDLED_SKILL_REFERENCES["seo-optimization"] ?? {})).toEqual(["references/cloudflare-workers.md", "references/frameworks.md", "references/standard.md", "agents/openai.yaml"]);
+  for (const files of Object.values(BUNDLED_SKILL_REFERENCES)) for (const file of Object.keys(files)) expect(file).toMatch(/^(?:references\/[a-z0-9-]+\.md|agents\/openai\.yaml)$/);
   const root = fixture();
   const changes = installSkills(root, "all", true);
   const fileCount = bundledSkillFiles().reduce((total, [, files]) => total + files.length, 0);
@@ -210,8 +211,14 @@ test("skills ship their Markdown references beside SKILL.md, each with its own o
   expect(manifest.schemaVersion).toBe(1);
   expect(manifest.files[REFERENCE]).toBe(createHash("sha256").update(BUNDLED_SKILL_REFERENCES["explicit-state-machines"]!["references/patterns.md"]!).digest("hex"));
   expect(checkSkills(root, "all").every(change => change.status === "unchanged")).toBe(true);
-  // The agents/openai.yaml and other non-Markdown files never ship.
-  expect(existsSync(path.join(root, ".agents/skills/explicit-state-machines/agents"))).toBe(false);
+  // Codex's agents/openai.yaml ships, under ownership, only for a skill that has one; other files never ship.
+  for (const directory of [".agents/skills", ".claude/skills"]) {
+    const metadata = `${directory}/seo-optimization/agents/openai.yaml`;
+    expect(readFileSync(path.join(root, metadata), "utf8")).toStartWith("interface:\n  display_name: ");
+    expect(manifest.files[metadata]).toBe(createHash("sha256").update(BUNDLED_SKILL_REFERENCES["seo-optimization"]!["agents/openai.yaml"]!).digest("hex"));
+    expect(existsSync(path.join(root, directory, "explicit-state-machines/agents"))).toBe(false);
+    expect(readdirSync(path.join(root, directory, "seo-optimization")).sort()).toEqual(["SKILL.md", "agents", "references"]);
+  }
 });
 
 test("a consumer installed before references existed sees only the new files as missing", () => {

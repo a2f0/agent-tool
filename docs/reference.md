@@ -19,6 +19,8 @@ version management, and portable skills for Claude Code, Codex, OpenCode, and He
   with framework-free gallery and carousel elements.
 - **Compact output**: run noisy commands with full private logs and bounded
   diagnostics, keeping routine output out of an agent's context.
+- **Probe websites**: report what a deployed site serves to search engines and
+  link previews, for the bundled SEO skill.
 
 ## Install
 
@@ -81,6 +83,9 @@ platform archives, a Homebrew formula, and Debian packages.
 - Bun 1.3.11 or newer to run the npm package.
 - Bun 1.4 or newer on `PATH` for `versions prepare`, with either install,
   because it refreshes workspace versions in `bun.lock`.
+- Bun 1.4 or newer to run `seo probe` from the npm package, because older Bun
+  keeps only the last of repeated response headers, which can hide an
+  `X-Robots-Tag: noindex`. The standalone executable embeds a newer Bun.
 
 Run `agent-tool doctor` to report installed versions and the flags the tool needs
 from each CLI, such as `gh pr checks --json` for merging, without calling a model.
@@ -148,6 +153,7 @@ For repository workflow commands added alongside these interfaces, see
 | `images build [target...] [--out dir]` | Render image targets from `assets/brand/*.svg`; `--out` redirects one target |
 | `screenshots build [target...] [--out dir] [--json]` | Stage guarded captures and a gallery manifest per the `screenshots` section; `--out` redirects one target |
 | `graph check` | Fail on import cycles and layer violations among the TypeScript sources the `graph` section names; print a JSON report |
+| `seo probe [--page\|--headers\|--links\|--sitemap] <host> [path...]` | Report a website's live search and preview metadata as served before JavaScript runs, for the `seo-optimization` skill; changes nothing, but requests whatever URLs its arguments and the fetched pages name ([SEO probe](#seo-probe)) |
 | `state-machines [path...] [--limit N] [--min-score N] [--json]` | Rank tracked source files by signals of implicit state machines in the repository holding the working directory, or each named path's repository; read-only, exit 1 when a repository cannot be listed |
 | `init` / `config show` | Create or inspect data-only project policy |
 | `doctor` | Inspect local versions and required CLI flags without running a model |
@@ -251,6 +257,73 @@ Review commands retain full reviewer stderr in separate private
 `agent-tool-review-log-*` directories and show bounded stderr on failure, while
 always displaying the final findings and verdict. Empty reviewer logs are removed.
 The bundled shipping, review, and dependency skills use this distinction.
+
+### SEO probe
+
+```sh
+agent-tool seo probe example.com              # the home page, then the site files
+agent-tool seo probe --page example.com /about/
+agent-tool seo probe --headers example.com /assets/app.js /old-path /missing
+agent-tool seo probe --links example.com /
+agent-tool seo probe --sitemap example.com
+```
+
+`seo probe` is the `seo-optimization` skill's view of a deployed site. The
+mode flag comes first; the host is a hostname with an optional port, never a
+URL, and each path starts with `/` (the default is `/`). It prints plain text,
+one finding per line, as it learns each one:
+
+- **Default and `--page`**: a heading `### <host><path>  [<result>]`, then the
+  final response's `X-Robots-Tag`, and from the HTML: the title and
+  description with their lengths, canonical, robots and googlebot meta, `lang`,
+  `theme-color`, the Open Graph properties present, `og:url`, `twitter:card`,
+  the number of JSON-LD blocks and the `@type` values they name, the `<h1>`
+  count, and the `og:image` with its result, PNG size, and `X-Robots-Tag`.
+  Without `--page` it continues with `robots.txt` (its first 15 directives and
+  every `Sitemap` line, and notes for an HTML answer, Cloudflare's managed or
+  content-signals file, `Content-Signal` lines, or comments only),
+  `sitemap.xml` and its URL count, a missing path and a nested missing path
+  with their body sizes, `/404` with its robots meta and header, and whether
+  `http://` redirects to HTTPS.
+- **`--headers <host> <path>...`**: one line per path, without following
+  redirects: `<host><path>  <status>  x-robots-tag: <value>  type: <type>`,
+  then `  -> <location>` for a redirect.
+- **`--links`**: each link on the page to its own host that does not answer
+  200 directly, with its status and redirect, then
+  `### <host><path>  internal links in the static HTML: N, not a direct 200: M`.
+  Absolute links are requested as written, protocol-relative ones with the
+  page's scheme, and relative ones resolved against the final URL after
+  redirects (which may be another host), not a `<base>`.
+- **`--sitemap`**: each sitemap URL, through one level of sitemap index, whose
+  status is not 200, whose canonical differs from the URL, or that carries
+  `noindex` or `none`; the five most repeated duplicate titles and
+  descriptions; then `### <host>  sitemap URLs: N, with problems: M`.
+
+A `<result>` is `<status> <content-type>` of the final response, prefixed with
+`<first-status> -> <location> => ` when the first answer redirected; `000`
+means no response. A missing value prints `(absent)` for a header and nothing
+for markup, and `--headers` prints `-` for a missing type. The exit status is 0 for a report, 1 when `--links` or
+`--sitemap` finds a problem or the host does not answer `/`
+(`### <host>  does not respond: <reason>`), and 2 for a usage error, which
+prints the usage on stderr; `seo probe --help` prints it on stdout.
+
+Each request is one GET with a cache-busting `seo-probe=<time>` query, no
+compression, a `seo-probe` user agent (`SEO_PROBE_USER_AGENT` sends another,
+such as a browser's, since a CDN may inject scripts only for browsers), and
+the proxy variables Bun's `fetch` honors. Redirects are followed by hand, at
+most 50 within a 20-second limit per URL (15 seconds for the reachability
+check and the `http://` root), and only `http:` and `https:` URLs are ever
+requested, including redirect targets, since `og:image`, sitemap entries,
+links, and `Location` come from remote markup. Bodies are read up to 64 MiB.
+Repeated header lines, such as two `X-Robots-Tag` headers, print joined with
+`, `, as HTTP combines them. Requests run one at a time.
+
+Markup is matched with regular expressions over the HTML with newlines and
+tabs collapsed: double-quoted attributes only, case-insensitive names, the
+first matching tag, and no JavaScript, so confirm a surprising result in the
+raw response. `SEO_PROBE_SCHEME=http` (default `https`) exists for tests.
+The command ports the shell probe that `seo-optimization` carried in balebase,
+keeping its modes, lines, and exit statuses.
 
 ## Configuration
 
@@ -536,11 +609,16 @@ or Hermes permission installer. Existing read-only review and exact-commit
 guards apply regardless of which harness coordinates the work.
 
 The bundle provides `cross-agent-review`, `open-issue`, `open-pr`,
-`squash-merge`, `ship-pr`, `reset`, `update-dependencies`, and
-`explicit-state-machines`, which pairs with the `state-machines` scanner. A
-skill may ship Markdown files under `references/` beside its `SKILL.md`; they
+`squash-merge`, `ship-pr`, `reset`, `update-dependencies`,
+`explicit-state-machines`, which pairs with the `state-machines` scanner,
+`seo-optimization`, which pairs with [`seo probe`](#seo-probe),
+`app-store-readiness`, and `audit-trails`. A skill may ship Markdown files
+under `references/` beside its `SKILL.md`, and the `agents/openai.yaml` that
+Codex reads for its display name, description, and default prompt; they
 install, update, and check like the skill itself, each with its own ownership
-record. `open-issue`
+record, in every harness directory. Other files in a skill's source directory,
+such as scripts, never ship, so a skill links only to files that do (a test
+checks every relative link). `open-issue`
 assigns each issue it opens to the authenticated GitHub user (`--assignee @me`).
 They make no package-manager or project-layout assumptions:
 
