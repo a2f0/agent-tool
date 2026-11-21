@@ -297,7 +297,9 @@ Docker as `review` items it never removes.
 With no names it covers the repository holding the working directory, or,
 from a matrix workspace (`matrix.json` beside `checkouts/`), the workspace
 and every checkout in `checkouts/`. A name is a workspace checkout's name (or
-`owner/name`), else a path naming the repository that holds it.
+`owner/name`), else a path, a directory or a file, naming the repository that
+holds it. It refuses to run where a nested checkout's `.git` is unreadable
+(mid-clone), since Git would answer for the enclosing repository.
 
 A path is removed only when Git reports it ignored and nothing under it is
 tracked (both rechecked just before removal), its name is on the tier's list,
@@ -372,8 +374,8 @@ agent-tool perf graph dist main.js --out dist/preload.json
   the sizes do not match (`differing` is then -1).
 - `graph <dir> <entry...> [--out <file>]` prints, and writes to `--out`, the
   relative static and dynamic import closure of ES modules as a JSON array,
-  entries first, refusing an entry or import that leaves `<dir>` or a module
-  it cannot read, naming the importer. Comments and import-like text in
+  entries first, refusing an entry or import that leaves `<dir>`, through
+  `..` or a symbolic link, or a module it cannot read, naming the importer. Comments and import-like text in
   strings are ignored; regular expression literals, and template literals
   whose `${...}` holds quotes, are not recognised.
 
