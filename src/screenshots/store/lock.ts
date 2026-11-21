@@ -12,12 +12,24 @@ export interface LockInfo {
   readonly startedAt: string;
 }
 
+/** The lock's holder, or undefined when the file is missing, unreadable, or lacks a field a decision reads. */
 export function readLock(file: string): LockInfo | undefined {
+  let value: unknown;
   try {
-    return JSON.parse(readFileSync(file, "utf8")) as LockInfo;
+    value = JSON.parse(readFileSync(file, "utf8"));
   } catch {
     return undefined;
   }
+  const lock = value as Record<string, unknown> | null;
+  const valid =
+    typeof lock === "object" &&
+    lock !== null &&
+    Number.isInteger(lock.pid) &&
+    (lock.pgid === undefined || Number.isInteger(lock.pgid)) &&
+    typeof lock.host === "string" &&
+    typeof lock.checkout === "string" &&
+    typeof lock.startedAt === "string";
+  return valid ? (lock as unknown as LockInfo) : undefined;
 }
 
 /** Whether a process, or with a negative id every process of a group, still runs. */
@@ -57,7 +69,7 @@ export function acquireLock(file: string, info: LockInfo): () => void {
  * Why an existing lock refuses this capture. Only explains: every case leaves
  * the lock in place for a person, whether its holder runs or died.
  */
-function heldLockError(file: string, info: LockInfo): Error {
+export function heldLockError(file: string, info: LockInfo): Error {
   const held = readLock(file);
   if (!held) return new Error(`the capture lock ${file} is unreadable; remove it once no capture is running`);
   if (held.host === info.host && !alive(held.pid)) {

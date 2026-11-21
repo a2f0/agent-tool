@@ -113,6 +113,11 @@ export function validRecord(value: unknown): value is StoredRecord {
     record.args.every(arg => typeof arg === "string") &&
     (record.repo === undefined || typeof record.repo === "string") &&
     typeof record.project === "string" &&
+    (record.branch === null || typeof record.branch === "string") &&
+    typeof record.checkout === "string" &&
+    typeof record.host === "string" &&
+    typeof record.startedAt === "string" &&
+    (record.finishedAt === undefined || typeof record.finishedAt === "string") &&
     (over === undefined ||
       (typeof over === "object" &&
         over !== null &&

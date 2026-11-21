@@ -433,13 +433,28 @@ try {
   }, 30_000);
 
   test("malformed records read as no record, so partial captures over them stay incomplete", async () => {
-    const good = { schemaVersion: 1, project: "app", status: "complete", commit: "a".repeat(40), branch: "main", dirty: false, merged: true, args: [] };
+    const good = {
+      schemaVersion: 1,
+      project: "app",
+      status: "complete",
+      commit: "a".repeat(40),
+      branch: "main",
+      dirty: false,
+      merged: true,
+      args: [],
+      checkout: "/clone",
+      host: "host",
+      startedAt: "2026-01-01T00:00:00.000Z",
+    };
     expect(validRecord(good)).toBe(true);
     expect(validRecord({ status: "complete" })).toBe(false);
     expect(validRecord({ ...good, commit: "abc" })).toBe(false);
     expect(validRecord({ ...good, dirty: "no" })).toBe(false);
     expect(validRecord({ ...good, status: "done" })).toBe(false);
     expect(validRecord({ ...good, over: { commit: "x", status: "complete" } })).toBe(false);
+    // Fields that reports print are checked too.
+    for (const field of ["checkout", "host", "startedAt"]) expect(validRecord({ ...good, [field]: 1 }), field).toBe(false);
+    expect(validRecord({ ...good, branch: null })).toBe(true);
     const { home, app } = workspace();
     expect(await main(["link", "--apply"], app, undefined, print)).toBe(0);
     const store = path.join(home, "matrix-artifacts/app/screenshots");
@@ -511,6 +526,9 @@ esac
       expect(targetFor(app)).toMatchObject({ repo: "a2f0/App", project: "App", id: "R_app" });
       gitIn(app, "remote", "set-url", "origin", "git@github.com:a2f0/down.git");
       expect(targetFor(app)).toMatchObject({ repo: "a2f0/down", project: "down" });
+      // An origin that is no github.com URL is never resolved by bare `gh repo view`, which names a fork's parent.
+      gitIn(app, "remote", "set-url", "origin", "git@github-work:a2f0/app.git");
+      expect(() => targetFor(app)).toThrow("has no GitHub origin; pass --project");
     } finally {
       process.env.PATH = saved.path;
       process.env.MATRIX_ARTIFACTS_NO_GH = saved.noGh;
@@ -944,6 +962,27 @@ console.log(error ? "lost" : "won");
     expect(Object.keys(JSON.parse((await run(["capture", "--json"])).lines.join("\n")))).not.toContain("links");
   }, 30_000);
 
+  test("refuses a held lock before linking any clone, and forwards --help after --", async () => {
+    const { home, app } = workspace();
+    expect(await main(["link", "--apply"], app, undefined, print)).toBe(0);
+    const fresh = repo(path.join(home, "app-fresh"), ".screenshots\n");
+    writeFileSync(path.join(home, "matrix-artifacts/app", LOCK), JSON.stringify({ pid: process.pid, host: os.hostname(), checkout: "/elsewhere", startedAt: "now" }));
+    await expect(main(["capture", "--apply"], fresh, { capture: async () => ({ code: 0 }) }, print)).rejects.toThrow("another capture of this project is running");
+    expect(lstatSync(path.join(fresh, LINK), { throwIfNoEntry: false })).toBeUndefined();
+    rmSync(path.join(home, "matrix-artifacts/app", LOCK));
+    const lines: string[] = [];
+    expect(await main(["capture", "--", "--help"], app, undefined, text => lines.push(text))).toBe(0);
+    expect(lines.join("\n")).toContain("Would run `bun run screenshots --help`");
+  }, 30_000);
+
+  test("resolves MATRIX_ARTIFACTS_DIR through symlinks as far as it exists", () => {
+    const home = realpathSync(tempDir("take-screenshots-real"));
+    mkdirSync(path.join(home, "store"));
+    symlinkSync(path.join(home, "store"), path.join(home, "linked"));
+    expect(artifactsRoot("/x", { MATRIX_ARTIFACTS_DIR: path.join(home, "linked") })).toBe(path.join(home, "store"));
+    expect(artifactsRoot("/x", { MATRIX_ARTIFACTS_DIR: path.join(home, "linked", "new") })).toBe(path.join(home, "store", "new"));
+  });
+
   test("parses commands and rejects options that do not apply", async () => {
     expect(parseOptions(["capture", "app", "--apply", "--", "--project", "x"])).toMatchObject({ names: ["app"], apply: true, captureArgs: ["--project", "x"] });
     expect(() => parseOptions(["status", "--apply"])).toThrow("changes nothing");
@@ -1106,6 +1145,32 @@ describe("agent-tool screenshots status|link|capture", () => {
     const result = Bun.spawnSync([process.execPath, cli, "screenshots", ...args], { cwd, env: { ...process.env, MATRIX_ARTIFACTS_NO_GH: "1" }, stdout: "pipe", stderr: "pipe" });
     return { code: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() };
   };
+
+  const cliEnv = () => ({ ...process.env, MATRIX_ARTIFACTS_NO_GH: "1", PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH}` });
+
+  test("runs the repository's script with its output on stderr, so --json stays parseable", async () => {
+    const { home, app } = workspace();
+    const child = Bun.spawn([process.execPath, cli, "screenshots", "capture", "--apply", "--json"], { cwd: app, env: cliEnv(), stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    expect(code, stderr).toBe(0);
+    expect(stderr).toContain("capture");
+    expect(JSON.parse(stdout)).toMatchObject({ applied: true, record: { status: "complete", exitCode: 0 } });
+    expect(readRecord(path.join(home, "matrix-artifacts/app/screenshots"))?.status).toBe("complete");
+  }, 30_000);
+
+  test("forwards SIGTERM to the capture's group and records it failed, releasing the lock", async () => {
+    const { home, app } = workspace();
+    write(app, { "package.json": JSON.stringify({ scripts: { screenshots: "sleep 30" } }) });
+    gitIn(app, "commit", "-qam", "slow capture");
+    const lock = path.join(home, "matrix-artifacts/app", LOCK);
+    const child = Bun.spawn([process.execPath, cli, "screenshots", "capture", "--apply"], { cwd: app, env: cliEnv(), stdout: "pipe", stderr: "pipe" });
+    for (let attempt = 0; attempt < 100 && !(existsSync(lock) && JSON.parse(readFileSync(lock, "utf8")).pgid); attempt++) await Bun.sleep(100);
+    expect(JSON.parse(readFileSync(lock, "utf8")).pgid).toBeNumber();
+    child.kill("SIGTERM");
+    expect(await child.exited).toBe(1);
+    expect(readRecord(path.join(home, "matrix-artifacts/app/screenshots"))?.status).toBe("failed");
+    expect(existsSync(lock)).toBe(false);
+  }, 30_000);
 
   test("keeps each command's JSON and exit status, and exits 2 when it cannot run", () => {
     const { home, root, app } = workspace();

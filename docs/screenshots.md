@@ -138,7 +138,9 @@ outside one. Each repository has a namespace named after its GitHub repository:
 A repository's namespace is GitHub's current name for origin (asked with
 `gh repo view <origin's name>`, so a fork's `upstream` is never used), else
 the name in origin's URL; `MATRIX_ARTIFACTS_NO_GH=1` skips the network. A
-repository without a GitHub origin names it with `--project <name>`. A
+repository whose origin is not a `github.com` URL (another host, or an SSH
+host alias) names it with `--project <name>`. The store's path is resolved
+through symbolic links as far as it exists, so clones compare by real paths. A
 namespace that differs only in case keeps its existing spelling.
 
 ### Commands
@@ -149,7 +151,8 @@ workspace, every checkout that captures: one with a `screenshots` package
 script or a `.screenshots`. `--all` (status and link) instead selects every
 clone on this machine that captures into a namespace the store already holds:
 clones beside the store and the checkouts of matrix workspaces beside it,
-linked worktrees included. Every command takes `--json`.
+linked worktrees included. Every command takes `--json`; with nothing
+selected it prints `[]`.
 
 - `status [repo...] [--all]` reports each clone's link (`linked`, `missing`,
   `directory`, `elsewhere`, or `other`), its newest capture relative to HEAD
@@ -165,9 +168,10 @@ linked worktrees included. Every command takes `--json`.
   1, when both the clone and the store hold captures, `.screenshots` links
   elsewhere or is a file, the root `.gitignore` does not list `.screenshots`
   without a trailing slash, the store is inside the repository, or the
-  namespace is another repository's. `--json` prints `{ artifacts, apply,
-  results: [{ name, project, store, before, action, superseded, applied,
-  blocked }] }`.
+  namespace is another repository's; a clone whose link fails as it is made
+  is reported blocked with the error, and the others still link. `--json`
+  prints `{ artifacts, apply, results: [{ name, project, store, before,
+  action, superseded, applied, blocked }] }`.
 - `capture [repo] [--apply] [--allow-dirty] [-- args...]` checks that the
   repository has a `screenshots` package script, a clean tree (assume-unchanged
   and skip-worktree entries and ignored submodule changes count), and a link,
@@ -175,7 +179,10 @@ linked worktrees included. Every command takes `--json`.
   would link. With `--apply` it first links every one that needs no
   decision, itself first, then runs
   `bun run screenshots [args...]` in its own process group under the lock,
-  with `SCREENSHOT_OUTPUT_DIR` naming `.screenshots`. A refusal links nothing.
+  with `SCREENSHOT_OUTPUT_DIR` naming `.screenshots` and the script's output on
+  stderr, so `--json` on stdout stays parseable. SIGINT, SIGTERM, and SIGHUP
+  are forwarded to the script's group, and the capture is recorded `failed`. A
+  refusal, a held lock included, links nothing.
   It exits 1 when the applied capture is not `complete`. `--json` prints the
   plan `{ name, project, store, command, commit, branch, dirty, merged,
   previous }`, adding `applied` and `record` once applied and `links` for the

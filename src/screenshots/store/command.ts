@@ -15,14 +15,15 @@
  * never drift apart. `link` and `capture` are dry runs until `--apply`.
  */
 import { writeSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { type CapturePlan, capture, planCapture, RUNNER, type Runner, type Timing } from "./capture";
 import { clonesSharing, linkAutomatically, sharedStore } from "./clones";
 import { type LinkResult, type LinkState, link, linkState } from "./link";
-import { type LockInfo, readLock } from "./lock";
+import { heldLockError, type LockInfo, readLock } from "./lock";
 import { claimNamespace, existingCase, knownNamespace } from "./namespace";
 import { RECORD, readRecord, relation, type StoredRecord } from "./record";
-import { LOCK, storeDir, type Target } from "./store";
+import { LOCK, lexists, storeDir, type Target } from "./store";
 import { artifactsRoot, resolveTargets } from "./targets";
 
 export const STORE_USAGE = `Usage: agent-tool screenshots <status|link|capture> [repo...] [options]
@@ -186,7 +187,8 @@ export async function screenshotsStore(
   print: (text: string) => void = PRINT,
   timing: Timing = {},
 ): Promise<number> {
-  if (argv.includes("--help") || argv.includes("-h") || argv.length === 0) {
+  const own = argv.includes("--") ? argv.slice(0, argv.indexOf("--")) : argv;
+  if (own.includes("--help") || own.includes("-h") || argv.length === 0) {
     print(STORE_USAGE);
     return argv.length === 0 ? 2 : 0;
   }
@@ -240,7 +242,14 @@ function statusLine(entry: StatusEntry): string {
 }
 
 function linkCommand(targets: Target[], artifacts: string, options: Options, print: (text: string) => void): number {
-  const results = targets.map(target => link(target, artifacts, options.apply, options.supersede));
+  // One clone that fails to link never stops the others, and is reported blocked with the reason.
+  const results = targets.map(target => {
+    try {
+      return link(target, artifacts, options.apply, options.supersede);
+    } catch (error) {
+      return { name: target.name, project: target.project, store: storeDir(target, artifacts), before: linkState(target, artifacts).state, blocked: (error as Error).message };
+    }
+  });
   if (options.json) print(JSON.stringify({ artifacts, apply: options.apply, results }, null, 2));
   else for (const result of results) print(`${result.name} [${result.project}] ${linkOutcome(result)}`);
   if (!options.json && !options.apply && results.some(result => result.action && !result.blocked)) print("Dry run; rerun with --apply.");
@@ -276,6 +285,9 @@ async function captureCommand(
   // Every refusal comes before any link is made, so a capture that will not run changes nothing.
   const willLink = linkAutomatically([target], artifacts, false).some(result => !result.blocked);
   const planned = planCapture(target, artifacts, captureOptions, willLink);
+  // A held lock refuses the capture too; acquiring it again under the lock below still settles a race.
+  const lockFile = path.join(artifacts, target.project, LOCK);
+  if (options.apply && lexists(lockFile)) throw heldLockError(lockFile, { pid: process.pid, host: os.hostname(), checkout: target.root, startedAt: "" });
   const links = linkBeforeCapture(target, artifacts, options, print);
   const plan = options.apply ? await capture(target, artifacts, { ...captureOptions, apply: true }, runner, timing) : planned;
   if (options.json) print(JSON.stringify(links.length > 0 ? { ...plan, links } : plan, null, 2));

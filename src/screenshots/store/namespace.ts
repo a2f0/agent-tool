@@ -23,8 +23,9 @@ export function githubRepo(url: string): string | undefined {
  */
 function canonicalRepo(root: string, parsed?: string): Resolved | undefined {
   if (process.env.MATRIX_ARTIFACTS_NO_GH) return undefined;
-  if (!parsed && gitValue(root, "remote", "get-url", "origin") === undefined) return undefined;
-  const result = spawnSync("gh", ["repo", "view", ...(parsed ? [parsed] : []), "--json", "nameWithOwner,id", "--jq", '.nameWithOwner + " " + .id'], {
+  // Without a github.com origin there is no name to ask about, and bare `gh repo view` could answer for a fork's parent.
+  if (!parsed) return undefined;
+  const result = spawnSync("gh", ["repo", "view", parsed, "--json", "nameWithOwner,id", "--jq", '.nameWithOwner + " " + .id'], {
     cwd: root,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],

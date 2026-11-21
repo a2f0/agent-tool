@@ -12,9 +12,22 @@ function workspaceOf(root: string): string | undefined {
   return path.basename(parent) === "checkouts" && isMatrixWorkspace(path.dirname(parent)) ? path.dirname(parent) : undefined;
 }
 
-/** MATRIX_ARTIFACTS_DIR, or matrix-artifacts beside the workspace (beside the repository outside one), like matrix-secrets. */
+/**
+ * MATRIX_ARTIFACTS_DIR, or matrix-artifacts beside the workspace (beside the repository outside one), like
+ * matrix-secrets; through symlinks (macOS's /tmp) as far as it exists, so it compares with clones' real roots.
+ */
 export function artifactsRoot(root: string, env: NodeJS.ProcessEnv = process.env): string {
-  return path.resolve(env.MATRIX_ARTIFACTS_DIR || path.join(workspaceOf(root) ?? root, "..", "matrix-artifacts"));
+  return realAsFarAsExists(path.resolve(env.MATRIX_ARTIFACTS_DIR || path.join(workspaceOf(root) ?? root, "..", "matrix-artifacts")));
+}
+
+/** A path with its longest existing prefix resolved through symlinks. */
+function realAsFarAsExists(location: string): string {
+  try {
+    return realpathSync(location);
+  } catch {
+    const parent = path.dirname(location);
+    return parent === location ? location : path.join(realAsFarAsExists(parent), path.basename(location));
+  }
 }
 
 export function packageScripts(root: string): Record<string, unknown> {

@@ -32,7 +32,8 @@ export const RUNNER: Runner = {
   capture(root, args, env, started) {
     return new Promise((resolve, reject) => {
       // detached gives the capture its own process group, so its descendants can be found, signalled, and waited for.
-      const child = spawn("bun", ["run", "screenshots", ...args], { cwd: root, env, stdio: "inherit", detached: true });
+      // The script's output goes to stderr, so a --json report on stdout stays parseable.
+      const child = spawn("bun", ["run", "screenshots", ...args], { cwd: root, env, stdio: ["inherit", 2, "inherit"], detached: true });
       child.once("error", error => reject(new Error(`Could not run bun: ${error.message}`)));
       child.once("spawn", () => {
         if (child.pid) started(child.pid);
@@ -164,6 +165,9 @@ export function planCapture(target: Target, artifacts: string, options: Omit<Cap
   };
 }
 
+/** Signals that would end this process while its capture keeps writing: a closed terminal sends SIGHUP. */
+const FORWARDED: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+
 /** Runs a planned capture under the project's lock and records how it finished. */
 async function runCapture(target: Target, artifacts: string, plan: PlannedCapture, args: string[], runner: Runner, timing: Timing): Promise<AppliedCapture> {
   const { store } = plan;
@@ -171,7 +175,7 @@ async function runCapture(target: Target, artifacts: string, plan: PlannedCaptur
   const lockFile = path.join(artifacts, target.project, LOCK);
   const holder: LockInfo = { pid: process.pid, host: os.hostname(), checkout: target.root, startedAt };
   const release = acquireLock(lockFile, holder);
-  // Forward SIGINT and SIGTERM to the capture's group and finish here, so the record and lock are settled.
+  // Forward SIGINT, SIGTERM, and SIGHUP to the capture's group and finish here, so the record and lock are settled.
   let signal: NodeJS.Signals | undefined;
   let group: number | undefined;
   const hold = (received: NodeJS.Signals) => {
@@ -183,8 +187,7 @@ async function runCapture(target: Target, artifacts: string, plan: PlannedCaptur
         /* already gone */
       }
   };
-  process.on("SIGINT", hold);
-  process.on("SIGTERM", hold);
+  for (const name of FORWARDED) process.on(name, hold);
   try {
     // Re-read under the lock: the previous capture is now settled.
     const previous = readRecord(store);
@@ -219,8 +222,7 @@ async function runCapture(target: Target, artifacts: string, plan: PlannedCaptur
     if (group === undefined || !alive(-group)) release();
     throw error;
   } finally {
-    process.off("SIGINT", hold);
-    process.off("SIGTERM", hold);
+    for (const name of FORWARDED) process.off(name, hold);
   }
 }
 
