@@ -6,8 +6,9 @@ GitHub, review, validation, and release workflows: independent agent reviews of
 a committed branch, guarded pushes and squash merges of the exact reviewed
 commit, package versioning, brand image rendering, screenshot staging with a
 framework-free gallery, safe disk cleanup, page-load measurement, a live SEO
-probe for websites, and compact output for noisy commands. Repository policy stays in `agent-tool.json`; the portable skills
-coordinate independently reviewed changes.
+probe for websites, and compact output for noisy commands. Repository policy
+stays in `agent-tool.json`; the portable skills coordinate independently
+reviewed changes.
 
 ## Quick start
 

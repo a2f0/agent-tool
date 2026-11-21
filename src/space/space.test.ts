@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isolatedGitEnvironment as gitEnvironment } from "../system/checkouts";
@@ -815,6 +816,30 @@ describe("agent-tool space", () => {
     expect(report).toMatchObject({ applied: false, workspace: null, tiers: ["caches"] });
     expect(report.repos.map((repo: { root: string }) => repo.root)).toEqual([root]);
     expect(existsSync(path.join(root, ".turbo"))).toBe(true);
+  }, 30_000);
+
+  test("lists this machine's processes and finds one working in a repository, and dry-runs without --include-busy", async () => {
+    const root = realpathSync(fixture());
+    // A grandchild: this process's own children are excluded as the command's helpers.
+    const shell = spawn("sh", ["-c", "sleep 30; true"], { cwd: path.join(root, "src"), detached: true, stdio: "ignore" });
+    try {
+      // lsof can take a moment to see a process that has just started.
+      let found: Proc[] = [];
+      for (let attempt = 0; attempt < 50 && !found.some(proc => proc.name === "sleep"); attempt++) {
+        found = busyRoots(processes(), [root]).get(root) ?? [];
+        if (!found.some(proc => proc.name === "sleep")) await Bun.sleep(100);
+      }
+      const sleeper = found.find(proc => proc.name === "sleep");
+      expect(sleeper).toMatchObject({ ppid: shell.pid, cwd: path.join(root, "src") });
+      const busy = run(["space", "--json"], root);
+      expect(busy.exitCode).toBe(0);
+      expect(JSON.parse(busy.stdout.toString()).repos[0]).toMatchObject({ root, skipped: "busy", busy: expect.arrayContaining([expect.objectContaining({ pid: sleeper!.pid, name: "sleep" })]) });
+    } finally {
+      process.kill(-shell.pid!, "SIGKILL");
+    }
+    const idle = run(["space", "--json"], root);
+    expect(idle.exitCode).toBe(0);
+    expect(JSON.parse(idle.stdout.toString()).repos[0].skipped).toBeUndefined();
   }, 30_000);
 
   test("exits 2 with the message when it cannot run", () => {

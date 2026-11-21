@@ -352,18 +352,19 @@ agent-tool perf graph dist main.js --out dist/preload.json
   `--latency` ms (40), `--mbps` (20; 0 for unthrottled), `--cpu` slowdown (1),
   and a `--width` by `--height` viewport (1600x900). It prints the median and
   spread of every run, and the first run's requests, bytes, when its finished
-  requests ended, and how many were still pending at ready; `--waterfall` adds each request and `--profile` the first
-  run's CPU self and inclusive times. `--json` prints `{ url, conditions,
+  requests ended, and how many were still pending at ready; `--waterfall` adds
+  each request, and `--profile` the CPU self and inclusive times of an extra,
+  unsampled run, since profiling slows the load. `--json` prints `{ url, conditions,
   readyMs: { median, min, max, runs }, samples, requests, transferredBytes,
   networkDoneMs, pendingRequests, waterfall, cpu }`.
 - `shot <url> --out <png>` screenshots the ready state, unthrottled, with a
-  seeded `Math.random` (`measure` seeds it too); certificate errors are ignored
-  only for `127.0.0.1` and `localhost`, which `serve` signs itself (`--no-seed` leaves it alone); `--eval <js>` runs an
-  interaction first and `--hide <css>` hides random decoration, reaching into
-  open shadow roots.
+  seeded `Math.random`, as `measure` also seeds it (`--no-seed` leaves it
+  alone); `--eval <js>` runs an interaction first and `--hide <css>` hides
+  random decoration, reaching into open shadow roots.
 - `diff <a.png> <b.png>` decodes 8-bit RGB or RGBA, non-interlaced PNGs without
-  a browser, refusing truncated image data and unknown row filters, and prints `{ sizeMismatch, differing, total, maxChannelDelta,
-  cells }`, the 20 busiest 50-pixel cells; it exits 1 when any pixel differs or
+  a browser, refusing truncated image data and unknown row filters, and prints
+  `{ sizeMismatch, differing, total, maxChannelDelta, cells }`, the 20 busiest
+  50-pixel cells; it exits 1 when any pixel differs or
   the sizes do not match (`differing` is then -1).
 - `graph <dir> <entry...> [--out <file>]` prints, and writes to `--out`, the
   relative static and dynamic import closure of ES modules as a JSON array,
@@ -373,6 +374,10 @@ agent-tool perf graph dist main.js --out dist/preload.json
   whose `${...}` holds quotes, are not recognised.
 
 `measure` and `shot` launch the installed Google Chrome (`channel: "chrome"`)
+as Playwright does by default, without Chrome's sandbox, so measure only pages
+you trust. For a page on `127.0.0.1`, `localhost`, or `[::1]`, whose
+certificate `serve` signs itself, certificate errors are ignored for every
+request the page makes; other pages are checked as usual. Chrome is driven
 through the `playwright` that the working directory, or `--from <directory>`,
 installs: the nearest `node_modules/playwright` at or above it, searching no
 higher than the Git checkout holding the working directory. `--from` must be

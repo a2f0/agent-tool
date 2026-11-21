@@ -76,8 +76,11 @@ async function chromium(from = process.cwd()): Promise<Browser> {
       `agent-tool perf drives Chrome through the measured repository's \`playwright\`, which ${path.resolve(from)} does not install; run it there or pass --from <repository>.`,
     );
   }
-  const playwright: { chromium?: BrowserType; default: { chromium: BrowserType } } = await import(resolved);
-  return (playwright.chromium ?? playwright.default.chromium).launch({ channel: "chrome", args: ["--ignore-gpu-blocklist", "--enable-gpu"] });
+  const playwright = (await import(resolved)) as { chromium?: BrowserType; default?: { chromium?: BrowserType } };
+  const browserType = playwright.chromium ?? playwright.default?.chromium;
+  if (!browserType) throw new Error(`${resolved} does not export Playwright's chromium; reinstall the measured repository's playwright.`);
+  // Playwright's default launch, which runs Chrome without its sandbox: measure only pages you trust.
+  return browserType.launch({ channel: "chrome", args: ["--ignore-gpu-blocklist", "--enable-gpu"] });
 }
 
 interface Request {
@@ -114,7 +117,8 @@ async function load(
   capture: { profile?: boolean; seed?: boolean } = {},
 ): Promise<{ page: Page; context: BrowserContext; ready: number; requests: Request[]; profile?: CpuProfile }> {
   // The local server's certificate is self-signed.
-  // `perf serve`'s certificate is self-signed; any other host's certificate is checked as usual.
+  // `perf serve`'s certificate is self-signed. Playwright's setting covers the whole context, so a loopback page's
+  // other requests skip the check too; a page on any other host is checked as usual.
   const context = await browser.newContext({ viewport: { width: options.width, height: options.height }, ignoreHTTPSErrors: loopback(url) });
   try {
     if (capture.seed) await context.addInitScript(SEED_SCRIPT);
@@ -170,7 +174,7 @@ export function profileTable(profile: CpuProfile, limit = 25) {
   const self = new Map<string, number>(),
     total = new Map<string, number>();
   (profile.samples ?? []).forEach((id, index) => {
-    const time = profile.timeDeltas![index]! / 1000;
+    const time = (profile.timeDeltas?.[index] ?? 0) / 1000;
     self.set(name(nodes.get(id)!), (self.get(name(nodes.get(id)!)) ?? 0) + time);
     const counted = new Set<string>();
     for (let current: number | undefined = id; current !== undefined; current = parent.get(current)) {
@@ -196,10 +200,17 @@ export async function measureLoad(options: Options) {
   try {
     const samples: number[] = [];
     let first: { requests: Request[]; profile: CpuProfile | undefined } | undefined;
+    // The profiler slows the load it records, so --profile adds an unsampled run of its own.
+    let profile: CpuProfile | undefined;
+    if (options.profile) {
+      const profiled = await load(browser, url, options, { profile: true, seed: options.seed });
+      profile = profiled.profile;
+      await profiled.context.close();
+    }
     for (let run = 0; run < options.runs; run += 1) {
-      const result = await load(browser, url, options, { profile: run === 0 && options.profile, seed: options.seed });
+      const result = await load(browser, url, options, { seed: options.seed });
       samples.push(result.ready);
-      first ??= { requests: result.requests, profile: result.profile };
+      first ??= { requests: result.requests, profile };
       await result.context.close();
     }
     const requests = first!.requests;
