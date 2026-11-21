@@ -10,6 +10,8 @@ export interface Proc {
   readonly name: string;
   readonly args: string;
   cwd?: string;
+  /** lsof named the working directory but could not read it, as Linux does for non-dumpable processes. */
+  readonly unreadable?: true;
 }
 
 const PIPELINE_FILTERS = new Set(["head", "tail", "less", "more", "cat", "tee", "grep", "rg", "sed", "awk", "jq", "sort", "uniq", "wc", "cut", "tr", "column"]);
@@ -46,16 +48,19 @@ export function processes(): Proc[] {
 const UNLISTED = "without every process's working directory busy repositories cannot be detected, so pass --include-busy only if none is in use";
 
 /**
- * Joins `ps` and `lsof` output. Throws when a live process of this user has no
- * known working directory, so partial visibility never passes for idle.
+ * Joins `ps` and `lsof` output. Throws when lsof lists no working directory
+ * for a live process of this user, so partial visibility never passes for
+ * idle. A working directory lsof lists as unreadable (Linux's non-dumpable
+ * processes, such as `(sd-pam)` or an `sshd` session) is marked `unreadable`,
+ * and busyRoots attributes that process by its absolute path arguments.
  * Other users' processes (root daemons) are listed when lsof can read them.
  */
 export function parseProcesses(table: string, argsOutput: string, lsofOutput: string, uid: number, alive: (pid: number) => boolean): Proc[] {
   const rows = parseTable(table);
   const args = parseArgs(argsOutput);
-  const cwds = parseCwds(lsofOutput);
+  const { cwds, unreadable } = parseCwds(lsofOutput);
   // A process that exited between ps and lsof has nothing left to protect.
-  const unseen = rows.filter(row => row.uid === uid && !row.zombie && !cwds.has(row.pid) && alive(row.pid));
+  const unseen = rows.filter(row => row.uid === uid && !row.zombie && !cwds.has(row.pid) && !unreadable.has(row.pid) && alive(row.pid));
   if (unseen.length > 0) {
     throw new Error(
       `cannot read the working directory of ${unseen
@@ -64,7 +69,9 @@ export function parseProcesses(table: string, argsOutput: string, lsofOutput: st
         .join(", ")}${unseen.length > 3 ? ", ..." : ""}; ${UNLISTED}`,
     );
   }
-  return rows.filter(row => !row.zombie).map(({ pid, ppid, pgid, name }) => ({ pid, ppid, pgid, name, args: args.get(pid) ?? "", cwd: cwds.get(pid) }));
+  return rows
+    .filter(row => !row.zombie)
+    .map(({ pid, ppid, pgid, name }) => ({ pid, ppid, pgid, name, args: args.get(pid) ?? "", cwd: cwds.get(pid), ...(unreadable.has(pid) ? { unreadable: true as const } : {}) }));
 }
 
 interface Row {
@@ -105,24 +112,30 @@ function parseArgs(argsOutput: string): Map<number, string> {
 }
 
 /** Working directories by pid from `lsof -d cwd -Fpn`. */
-function parseCwds(lsofOutput: string): Map<number, string> {
+function parseCwds(lsofOutput: string): { cwds: Map<number, string>; unreadable: Set<number> } {
   const cwds = new Map<number, string>();
+  const unreadable = new Set<number>();
   let current = 0;
   for (const line of lsofOutput.split("\n")) {
     if (line.startsWith("p")) current = Number(line.slice(1));
+    else if (!line.startsWith("n") || !current) continue;
     // Linux's lsof names an unreadable cwd `/proc/<pid>/cwd (readlink: Permission denied)`: that is no directory.
-    else if (line.startsWith("n") && current && !/ \((?:readlink|stat): /.test(line)) cwds.set(current, line.slice(1));
+    else if (/ \((?:readlink|stat): /.test(line)) unreadable.add(current);
+    else cwds.set(current, line.slice(1));
   }
-  return cwds;
+  return { cwds, unreadable };
 }
 
-/** Absolute paths that a command line's path-like arguments (`a/b`, `--flag=./x`, `-C dir`) resolve to. */
-function argumentPaths(args: string, cwd: string): string[] {
+/**
+ * Absolute paths that a command line's path-like arguments (`a/b`, `--flag=./x`, `-C ../dir`) resolve to;
+ * without a working directory, only the absolute ones.
+ */
+function argumentPaths(args: string, cwd: string | undefined): string[] {
   const paths: string[] = [];
   for (const token of args.split(/\s+/).slice(1)) {
     const value = token.startsWith("-") && token.includes("=") ? token.slice(token.indexOf("=") + 1) : token;
     if (value === "" || value.startsWith("-")) continue;
-    if (value.includes("/") || value === "." || value === "..") paths.push(path.resolve(cwd, value));
+    if (cwd === undefined ? path.isAbsolute(value) : value.includes("/") || value === "." || value === "..") paths.push(path.resolve(cwd ?? "/", value));
   }
   return paths;
 }
@@ -152,17 +165,17 @@ export function busyRoots(procs: Proc[], roots: string[], self = process.pid): M
   const byDepth = roots.toSorted((a, b) => b.length - a.length);
   for (const proc of procs) {
     const pipeline = group !== undefined && proc.pgid === group && PIPELINE_FILTERS.has(proc.name);
-    if (!proc.cwd || ancestors.has(proc.pid) || proc.ppid === self || pipeline || idleShell(proc)) continue;
+    if ((!proc.cwd && !proc.unreadable) || ancestors.has(proc.pid) || proc.ppid === self || pipeline || idleShell(proc)) continue;
     for (const root of touchedRoots(proc.cwd, proc.args, byDepth)) busy.set(root, [...(busy.get(root) ?? []), proc]);
   }
   return busy;
 }
 
-/** The deepest root holding a process's cwd, and the deepest holding each path in its arguments. */
-function touchedRoots(cwd: string, args: string, byDepth: string[]): Set<string> {
+/** The deepest root holding a process's cwd, when it is known, and the deepest holding each path in its arguments. */
+function touchedRoots(cwd: string | undefined, args: string, byDepth: string[]): Set<string> {
   const deepest = (location: string) => byDepth.find(candidate => location === candidate || location.startsWith(`${candidate}/`));
   const touched = new Set<string>();
-  const home = deepest(cwd);
+  const home = cwd === undefined ? undefined : deepest(cwd);
   if (home) touched.add(home);
   // A process can work in a root it is not in: `cargo build --manifest-path checkouts/app/Cargo.toml`.
   for (const location of argumentPaths(args, cwd)) {

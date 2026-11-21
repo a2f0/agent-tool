@@ -274,12 +274,16 @@ agent-tool space app web --deps --apply   # named matrix checkouts, or paths
 ```
 
 `space` lists git-ignored, untracked paths whose names mark them as
-regenerable, sized with `du`, and removes them only with `--apply`. Caches
-(`.turbo`, `node_modules/.cache` and `.vite`, `.next/cache`, `.wrangler/tmp`,
-coverage, test reports, Python caches) are always included; `--builds` adds
-build output (`dist`, `build`, `out`, `.next`, `.gradle`, `.build`, Rust
-`target`, `*.tsbuildinfo`) and `--deps` installed dependencies
-(`node_modules`, `.venv`, CocoaPods `Pods`, `vendor/bundle`). `--machine` adds
+regenerable, sized with `du`, and removes them only with `--apply`. These
+lists are complete. Caches are always included: `.turbo`, `.parcel-cache`,
+`.eslintcache`, `.stylelintcache`, `coverage`, `.nyc_output`, `test-results`,
+`playwright-report`, `blob-report`, `__pycache__`, `.pytest_cache`,
+`.mypy_cache`, `.ruff_cache`, and `node_modules/.cache`, `node_modules/.vite`,
+`.next/cache`, and `.wrangler/tmp`. `--builds` adds build output: `dist`,
+`build`, `out`, `.next`, `.nuxt`, `.output`, `.svelte-kit`, `.expo`,
+`.gradle`, `.build`, `DerivedData`, `*.tsbuildinfo`, and `target` beside a
+`Cargo.toml`. `--deps` adds installed dependencies: `node_modules`, `.venv`,
+`Pods` beside a `Podfile`, and `vendor/bundle`. `--machine` adds
 developer caches outside repositories: Xcode DerivedData (never its
 `SourcePackages`, repositories, or data files), `brew cleanup`, the Bun and npm
 caches, and `pnpm store prune`, and reports Gradle caches, Playwright
@@ -296,15 +300,19 @@ tracked (both rechecked just before removal), its name is on the tier's list,
 and neither it nor a parent inside the repository is a symlink, a repository,
 or a credentials or database name (`.git`, `.env*` but not `*.example`,
 `*.sample`, or `*.template`, `.secrets`, `*.sqlite`, `*.sqlite3`, `*.db`), and
-nothing under it is one. It never runs `git clean`. A repository another
+nothing under it is one, except the `build.db` that Xcode writes in
+`XCBuildData/` and SwiftPM in `.build/`. It never runs `git clean`. A repository another
 process is working in (by working directory or a path argument, other than
 this process, its ancestors, its children, idle shells, and text filters in
 its pipeline) is skipped, judged again from a fresh process list just before
 it is cleaned; `--include-busy` cleans it anyway. Package caches wait for any
 running install and DerivedData for Xcode, `--include-busy` or not, each
-judged again just before it runs. When the working directory of a live
-process of this user cannot be read, the command stops rather than guess, or
-with `--include-busy` treats the list as empty.
+judged again just before it runs. When lsof lists no working directory for a
+live process of this user, the command stops rather than guess, or with
+`--include-busy` treats the list as empty; a process whose working directory
+lsof lists as unreadable (Linux's non-dumpable processes) counts only for the
+repositories its absolute path arguments name. Its Git never takes optional
+locks, and the tracked-file check reads path names literally.
 
 The text report ends with the volume's free space before and after; `--json`
 prints `{ applied, workspace, tiers, free: { before, after }, totals: { caches,
@@ -349,7 +357,8 @@ agent-tool perf graph dist main.js --out dist/preload.json
   readyMs: { median, min, max, runs }, samples, requests, transferredBytes,
   networkDoneMs, pendingRequests, waterfall, cpu }`.
 - `shot <url> --out <png>` screenshots the ready state, unthrottled, with a
-  seeded `Math.random` (`measure` seeds it too) (`--no-seed` leaves it alone); `--eval <js>` runs an
+  seeded `Math.random` (`measure` seeds it too); certificate errors are ignored
+  only for `127.0.0.1` and `localhost`, which `serve` signs itself (`--no-seed` leaves it alone); `--eval <js>` runs an
   interaction first and `--hide <css>` hides random decoration, reaching into
   open shadow roots.
 - `diff <a.png> <b.png>` decodes 8-bit RGB or RGBA, non-interlaced PNGs without

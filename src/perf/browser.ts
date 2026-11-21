@@ -23,6 +23,15 @@ export function summarize(samples: number[]): { median: number; min: number; max
 // A deterministic Math.random for screenshots, so randomly placed decoration matches between rounds.
 const SEED_SCRIPT = "{ let s = 0x2545f491; Math.random = () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return (s >>> 0) / 4294967296; }; }";
 
+/** Whether a URL names this machine, as `perf serve`'s do. */
+export function loopback(url: string): boolean {
+  try {
+    return ["127.0.0.1", "localhost", "[::1]"].includes(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
 /** Whether `child` is `parent` or inside it. */
 function within(child: string, parent: string): boolean {
   const relative = path.relative(parent, child);
@@ -105,7 +114,8 @@ async function load(
   capture: { profile?: boolean; seed?: boolean } = {},
 ): Promise<{ page: Page; context: BrowserContext; ready: number; requests: Request[]; profile?: CpuProfile }> {
   // The local server's certificate is self-signed.
-  const context = await browser.newContext({ viewport: { width: options.width, height: options.height }, ignoreHTTPSErrors: true });
+  // `perf serve`'s certificate is self-signed; any other host's certificate is checked as usual.
+  const context = await browser.newContext({ viewport: { width: options.width, height: options.height }, ignoreHTTPSErrors: loopback(url) });
   try {
     if (capture.seed) await context.addInitScript(SEED_SCRIPT);
     const page = await context.newPage();
@@ -122,7 +132,11 @@ async function load(
     }
     if (options.cpu > 1) await cdp.send("Emulation.setCPUThrottlingRate", { rate: options.cpu });
     const requests = new Map<string, Request>();
-    cdp.on("Network.requestWillBeSent", event => requests.set(event.requestId, { url: event.request.url, start: event.timestamp }));
+    // A redirect repeats requestWillBeSent with the same id; the request started at its first hop.
+    cdp.on("Network.requestWillBeSent", event => {
+      const first = requests.get(event.requestId);
+      requests.set(event.requestId, { url: event.request.url, start: first?.start ?? event.timestamp });
+    });
     cdp.on("Network.loadingFinished", event => {
       const request = requests.get(event.requestId);
       if (request) Object.assign(request, { end: event.timestamp, bytes: event.encodedDataLength });
@@ -132,10 +146,10 @@ async function load(
       await cdp.send("Profiler.setSamplingInterval", { interval: 200 });
       await cdp.send("Profiler.start");
     }
-    const started = Date.now();
+    const started = performance.now();
     await navigate(page, url);
     await page.waitForFunction(options.ready, null, { timeout: 180_000, polling: 20 });
-    const ready = Date.now() - started;
+    const ready = Math.round(performance.now() - started);
     // Copied at ready: requests that finish while the profile stops or the context closes are not part of the load.
     const atReady = [...requests.values()].map(request => ({ ...request }));
     const profile = capture.profile ? (await cdp.send("Profiler.stop")).profile : undefined;

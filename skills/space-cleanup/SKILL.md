@@ -29,8 +29,8 @@ Caches are always included; each other flag adds its own tier independently:
 
 | Flag | Removes | Cost to restore |
 | --- | --- | --- |
-| (default) | Caches: `.turbo`, `node_modules/.cache` and `.vite`, `.next/cache`, `.wrangler/tmp`, coverage, test reports, Python caches | Next run is slower |
-| `--builds` | Build output: `dist`, `build`, `out`, `.next`, `.gradle`, `.build`, Rust `target`, `*.tsbuildinfo` | The repository's build |
+| (default) | Caches: `.turbo`, `.parcel-cache`, `.eslintcache`, `.stylelintcache`, `coverage`, `.nyc_output`, test reports (`test-results`, `playwright-report`, `blob-report`), Python caches (`__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`), `node_modules/.cache` and `.vite`, `.next/cache`, `.wrangler/tmp` | Next run is slower |
+| `--builds` | Build output: `dist`, `build`, `out`, `.next`, `.nuxt`, `.output`, `.svelte-kit`, `.expo`, `.gradle`, `.build`, `DerivedData`, Rust `target`, `*.tsbuildinfo` | The repository's build |
 | `--deps` | `node_modules`, `.venv`, CocoaPods `Pods`, `vendor/bundle` | The repository's documented install |
 | `--machine` | Xcode DerivedData (not its `SourcePackages` clones), `brew cleanup`, Bun and npm caches, `pnpm store prune` | Re-downloads and rebuilds |
 

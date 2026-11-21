@@ -182,7 +182,8 @@ export function unsafeReason(root: string, rel: string): string | undefined {
   const held = holdsProtected(current, root);
   if (held) return held;
   // Checked here, not only at scan time: a file can be force-added between scan and removal.
-  const tracked = git(root, ["ls-files", "-z", "--", rel]);
+  // Literal: a path name that looks like pathspec magic (`:(glob)x`) names only itself.
+  const tracked = git(root, ["--literal-pathspecs", "ls-files", "-z", "--", rel]);
   if (!tracked.ok) return "could not list tracked files";
   if (tracked.stdout !== "") return "tracked";
   if (!git(root, ["check-ignore", "-q", "--", rel]).ok) return "not ignored";

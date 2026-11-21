@@ -40,8 +40,12 @@ Reports regenerable, git-ignored, untracked paths and removes them with --apply.
 From a matrix workspace it covers the workspace and every checkout, or the
 named checkouts; elsewhere, the repository holding the working directory.
 
-  (default)        caches: .turbo, coverage, test reports, node_modules/.cache, ...
-  --builds         also build outputs: dist, build, out, .next, .gradle, target, *.tsbuildinfo, ...
+  (default)        caches: .turbo, .parcel-cache, .eslintcache, .stylelintcache, coverage,
+                   .nyc_output, test-results, playwright-report, blob-report, __pycache__,
+                   .pytest_cache, .mypy_cache, .ruff_cache, node_modules/.cache and .vite,
+                   .next/cache, .wrangler/tmp
+  --builds         also build outputs: dist, build, out, .next, .nuxt, .output, .svelte-kit,
+                   .expo, .gradle, .build, DerivedData, *.tsbuildinfo, Cargo's target
   --deps           also installed dependencies: node_modules, .venv, Pods, vendor/bundle
   --machine        also developer caches outside repositories (DerivedData, brew, bun, npm)
   --include-busy   clean repositories other processes are working in
@@ -105,7 +109,7 @@ function tierTotals(repos: RepoReport[]): Record<Tier, number> {
 
 /** The busy processes reported for a repository; undefined when there are none. */
 function workersOf(procs: Proc[] | undefined): RepoReport["busy"] {
-  return procs?.map(({ pid, name, cwd }) => ({ pid, name, cwd: cwd! }));
+  return procs?.map(({ pid, name, cwd }) => ({ pid, name, cwd: cwd ?? "(unreadable)" }));
 }
 
 function free(directory: string): number {
@@ -207,6 +211,8 @@ function cleanRepos(repos: RepoReport[], targets: Target[], options: Options, di
       } catch (error) {
         // Earlier repositories were cleaned already: report this one as not cleaned, and the run's removals.
         repo.error = `not cleaned: ${(error as Error).message}`;
+        // The scan-time list is stale and the repository was not judged busy: only the error stands.
+        repo.busy = undefined;
         failures++;
         continue;
       }

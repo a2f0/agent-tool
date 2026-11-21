@@ -91,9 +91,9 @@ describe("space cleanup", () => {
 
   test("a dry run changes nothing and --apply removes only the chosen tiers", () => {
     const root = fixture();
-    expect(main([root])).toBe(0);
+    expect(main([root], process.cwd(), () => [])).toBe(0);
     expect(existsSync(path.join(root, ".turbo"))).toBe(true);
-    expect(main([root, "--apply", "--include-busy"])).toBe(0);
+    expect(main([root, "--apply", "--include-busy"], process.cwd(), () => [])).toBe(0);
     for (const gone of ["packages/app/.turbo", ".turbo", "node_modules/.cache", ".wrangler/tmp"]) expect(existsSync(path.join(root, gone))).toBe(false);
     for (const kept of [
       "packages/app/dist/.env",
@@ -769,12 +769,24 @@ describe("space cleanup", () => {
     expect(unsafeReason(root, "dist")).toBeUndefined();
   }, 30_000);
 
-  test("treats Linux lsof's unreadable cwd placeholder as no working directory", () => {
-    const table = " 10   1  10 501 S    node";
-    const lsof = "p10\nfcwd\nn/proc/10/cwd (readlink: Permission denied)\n";
-    expect(() => parseProcesses(table, " 10 node build", lsof, 501, () => true)).toThrow("cannot read the working directory of node 10");
-    expect(parseProcesses(table, " 10 node build", lsof, 0, () => true)[0]?.cwd).toBeUndefined();
+  test("counts a process with an unreadable cwd by its absolute path arguments, without stopping the run", () => {
+    const table = [" 10   1  10 501 S    sd-pam", " 11   1  11 501 S    make"].join("\n");
+    const lsof = "p10\nfcwd\nn/proc/10/cwd (readlink: Permission denied)\np11\nfcwd\nn/proc/11/cwd (stat: Permission denied)\n";
+    const procs = parseProcesses(table, " 10 (sd-pam)\n 11 make -C /w/checkouts/a ../b", lsof, 501, () => true);
+    expect(procs).toEqual([
+      { pid: 10, ppid: 1, pgid: 10, name: "sd-pam", args: "(sd-pam)", cwd: undefined, unreadable: true },
+      { pid: 11, ppid: 1, pgid: 11, name: "make", args: "make -C /w/checkouts/a ../b", cwd: undefined, unreadable: true },
+    ]);
+    const busy = busyRoots(procs, ["/w", "/w/checkouts/a", "/w/checkouts/b"], 99);
+    expect(Object.fromEntries([...busy].map(([root, list]) => [root, list.map(proc => proc.pid)]))).toEqual({ "/w/checkouts/a": [11] });
   });
+
+  test("refuses a named checkout whose .git Git cannot read", () => {
+    const workspace = realpathSync(fixture());
+    write(workspace, { "matrix.json": "{}", ".gitignore": "checkouts/\n" });
+    mkdirSync(path.join(workspace, "checkouts", "broken", ".git"), { recursive: true });
+    expect(() => resolveTargets(workspace, ["broken"])).toThrow("checkouts/broken is not a Git repository Git can read");
+  }, 30_000);
 
   test("joins process listings field by field", () => {
     const table = [" 10   1  10 501 S    /usr/bin/node", " 11  10  10 501 S+   bun", "garbage"].join("\n");

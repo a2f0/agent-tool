@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { deflateSync, gunzipSync } from "node:zlib";
 import { gitInit, removeTempDirs, tempDir, write } from "../system/checkouts.testUtils";
-import { installedPlaywright, measureLoad, navigate, profileTable, shot, summarize } from "./browser";
+import { installedPlaywright, loopback, measureLoad, navigate, profileTable, shot, summarize } from "./browser";
 import { compareImages } from "./diff";
 import { importsOf, moduleGraph } from "./graph";
 import { parseOptions } from "./options";
@@ -170,6 +170,11 @@ describe("agent-tool perf", () => {
     short.writeUInt32BE(height, 20);
     expect(() => compare(plain, file("short", short))).toThrow("truncated or the wrong size");
     expect(() => compare(plain, file("filter", png(4, rgba, [5])))).toThrow("Unknown PNG row filter 5.");
+  });
+
+  test("trusts self-signed certificates only on this machine", () => {
+    expect(["https://127.0.0.1:8765/", "https://localhost/", "http://[::1]:3000/"].map(loopback)).toEqual([true, true, true]);
+    expect(["https://example.com/", "https://127.0.0.1.example.com/", "not a url"].map(loopback)).toEqual([false, false, false]);
   });
 
   test("summarizes samples by median and spread", () => {

@@ -100,7 +100,13 @@ export function workspaceCheckouts(workspace: string): Checkout[] {
  */
 export function namedRoot(cwd: string, workspace: string | undefined, name: string): string {
   const short = name.includes("/") && !existsSync(path.resolve(cwd, name)) ? name.split("/").pop()! : name;
-  if (workspace && existsSync(path.join(workspace, "checkouts", short, ".git"))) return realpathSync(path.join(workspace, "checkouts", short));
+  if (workspace && existsSync(path.join(workspace, "checkouts", short, ".git"))) {
+    const root = realpathSync(path.join(workspace, "checkouts", short));
+    const top = toplevel(root);
+    // Git would answer for the enclosing workspace instead.
+    if (top === undefined || realpathSync(top) !== root) throw new Error(`checkouts/${short} is not a Git repository Git can read`);
+    return root;
+  }
   const top = existsSync(path.resolve(cwd, name)) ? toplevel(path.resolve(cwd, name)) : undefined;
   if (!top) throw new Error(`${name} is neither a checkout name nor a path inside a git repository`);
   return realpathSync(top);
