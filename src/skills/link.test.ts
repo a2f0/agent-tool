@@ -406,10 +406,13 @@ describe("skills link CLI", () => {
   const cli = path.resolve(import.meta.dir, "../index.ts");
   test("previews, applies, and checks for --repo with exit codes health reports can use", () => {
     const root = repository(), directory = home(), cwd = temporary();
-    expect(spawnSync("git", ["init", "--quiet", root]).status).toBe(0);
+    // A hook running the suite can export Git's repository variables; keep every call on the fixture.
+    const clean = { ...process.env };
+    for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_PREFIX"]) delete clean[name];
+    expect(spawnSync("git", ["init", "--quiet", root], { env: clean }).status).toBe(0);
     writeFileSync(path.join(root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, skills: { user: NAMES } }));
     const runIn = (repo: string, ...args: string[]) => {
-      const result = spawnSync(process.execPath, [cli, "--repo", repo, "skills", ...args], { cwd, encoding: "utf8", env: { ...process.env, HOME: directory, CLAUDE_CONFIG_DIR: "", AGENT_TOOL_CONFIG: "" } });
+      const result = spawnSync(process.execPath, [cli, "--repo", repo, "skills", ...args], { cwd, encoding: "utf8", env: { ...clean, HOME: directory, CLAUDE_CONFIG_DIR: "", AGENT_TOOL_CONFIG: "" } });
       return { status: result.status, output: result.stdout ? JSON.parse(result.stdout) : undefined, stderr: result.stderr };
     };
     const run = (...args: string[]) => runIn(root, ...args);
@@ -440,7 +443,7 @@ describe("skills link CLI", () => {
     }
     // A linked worktree may not write links.
     unlinkSync(path.join(directory, ".claude2/skills/explicit-state-machines"));
-    const git = (...args: string[]) => expect(spawnSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "-C", root, ...args]).status).toBe(0);
+    const git = (...args: string[]) => expect(spawnSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "-C", root, ...args], { env: clean }).status).toBe(0);
     git("add", "-A");
     git("commit", "--quiet", "--no-verify", "-m", "skills");
     const worktree = path.join(cwd, "worktree");

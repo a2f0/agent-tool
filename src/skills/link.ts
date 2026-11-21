@@ -263,6 +263,14 @@ export function applySkillLinks(changes: SkillLinkPlan[]): SkillLink[] {
   });
 }
 
+/** Whether a directory is, or is inside, a `modules` directory of a Git directory. */
+function insideModules(directory: string): boolean {
+  for (let current = directory; path.dirname(current) !== current; current = path.dirname(current)) {
+    if (path.basename(current) === "modules" && existsSync(path.join(path.dirname(current), "HEAD"))) return true;
+  }
+  return false;
+}
+
 /**
  * Whether the checkout lives in a linked worktree. `git rev-parse --git-common-dir` would miss a
  * submodule inside a linked worktree, so this reads the layout: the checkout's `.git` is a file
@@ -272,14 +280,6 @@ export function applySkillLinks(changes: SkillLinkPlan[]): SkillLink[] {
  * worktree's `modules/`. The walk stops at the outermost Git directory, so a stray `commondir`
  * above the repository never counts.
  */
-/** Whether a directory is, or is inside, a `modules` directory of a Git directory. */
-function insideModules(directory: string): boolean {
-  for (let current = directory; path.dirname(current) !== current; current = path.dirname(current)) {
-    if (path.basename(current) === "modules" && existsSync(path.join(path.dirname(current), "HEAD"))) return true;
-  }
-  return false;
-}
-
 function linkedWorktree(root: string): boolean {
   const read = readRegularFile(path.join(root, ".git"));
   const gitdir = read.status === "file" ? /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(read.contents)?.[1] : undefined;
