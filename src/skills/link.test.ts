@@ -58,6 +58,10 @@ describe("Claude Code config directory discovery", () => {
     mkdirSync(path.join(elsewhere, "custom"));
     expect(claudeConfigDirectories({ HOME: directory, CLAUDE_CONFIG_DIR: path.join(elsewhere, "custom") })).toEqual([path.join(elsewhere, "custom"), ...at(".claude", ".claude-work", ".claude2")]);
     expect(claudeConfigDirectories({ HOME: directory, CLAUDE_CONFIG_DIR: path.join(elsewhere, "absent") })).toEqual(at(".claude", ".claude-work", ".claude2"));
+    // A relative value depends on where Claude Code started, so it adds nothing, even when it exists here.
+    const relative = path.relative(process.cwd(), path.join(elsewhere, "custom"));
+    expect(path.isAbsolute(relative)).toBe(false);
+    for (const value of [relative, "custom", "~/.claude2"]) expect(claudeConfigDirectories({ HOME: directory, CLAUDE_CONFIG_DIR: value })).toEqual(at(".claude", ".claude-work", ".claude2"));
     // CLAUDE_CONFIG_DIR naming a discovered directory, or a link to one, counts it once, in its first place.
     expect(claudeConfigDirectories({ HOME: directory, CLAUDE_CONFIG_DIR: path.join(directory, ".claude2") })).toEqual(at(".claude2", ".claude", ".claude-work"));
     symlinkSync(path.join(directory, ".claude2"), path.join(directory, ".claude3"));
@@ -247,13 +251,31 @@ describe("skills link", () => {
     writeFileSync(path.join(directory, ".claude2/skills/explicit-state-machines"), "mine");
     const applied = applySkillLinks(plan);
     expect(applied.filter(change => change.error !== undefined).map(change => [path.relative(directory, change.path), change.status])).toEqual([[".claude/skills/space-cleanup", "repair"], [".claude2/skills/explicit-state-machines", "create"]]);
-    expect(applied.find(change => change.status === "repair")?.error).toBe(`Refusing to replace ${path.join(skills, "space-cleanup")}, which is no longer a symbolic link.`);
+    expect(applied.find(change => change.status === "repair")?.error).toBe(`Refusing to replace ${path.join(skills, "space-cleanup")}, which changed since the plan.`);
     expect(applied.find(change => change.path.endsWith(".claude2/skills/explicit-state-machines"))?.error).toContain("EEXIST");
     // Both occupants are untouched, no temporary link is left, and every other link was written.
     expect(readFileSync(path.join(skills, "space-cleanup/SKILL.md"), "utf8")).toContain("name: space-cleanup");
     expect(readFileSync(path.join(directory, ".claude2/skills/explicit-state-machines"), "utf8")).toBe("mine");
     expect(readdirSync(skills).sort()).toEqual(["explicit-state-machines", "space-cleanup"]);
     expect(applied.filter(change => change.error === undefined).every(change => readlinkSync(change.path) === change.target)).toBe(true);
+  });
+
+  test("a repair replaces only the link it classified, never one retargeted since the plan", () => {
+    const root = repository(), directory = home(), elsewhere = temporary(), env = { HOME: directory };
+    const skills = path.join(directory, ".claude/skills"), file = path.join(skills, "space-cleanup");
+    mkdirSync(skills);
+    symlinkSync(path.join(elsewhere, "removed"), file);
+    const plan = planSkillLinks(root, ["space-cleanup"], env);
+    expect(plan.find(change => change.path === file)?.status).toBe("repair");
+    // Since the plan, the link was pointed at another skill, then at another clone of this one.
+    for (const occupant of [skill(path.join(elsewhere, "other-skill")), skill(path.join(elsewhere, "clone/space-cleanup"))]) {
+      unlinkSync(file);
+      symlinkSync(occupant, file);
+      const repaired = applySkillLinks(plan).find(change => change.path === file);
+      expect(repaired?.error).toBe(`Refusing to replace ${file}, which changed since the plan.`);
+      expect(readlinkSync(file)).toBe(occupant);
+      expect(readdirSync(skills)).toEqual(["space-cleanup"]);
+    }
   });
 
   test("a linked worktree may preview and check but not write links", () => {

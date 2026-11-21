@@ -613,7 +613,8 @@ Claude Code reads user skills from `skills` in its config directory, and a
 second account can use another one through `CLAUDE_CONFIG_DIR`. The config
 directories are, in order:
 
-1. the directory `CLAUDE_CONFIG_DIR` names, when it is set and non-empty;
+1. the directory `CLAUDE_CONFIG_DIR` names, when it is set to an absolute
+   path (a relative one depends on where Claude Code started);
 2. `~/.claude`, when it exists;
 3. every other directory directly in the home directory whose name starts with
    `.claude` and that holds `settings.json` or `.claude.json`, such as a
@@ -653,9 +654,11 @@ the occupant for you to move. Only the declared names are examined, so
 undeclared entries, `synced/` among them, are never touched, and nothing is
 ever deleted. A write is checked again as it happens: a create fails rather
 than overwrite something that appeared since the plan, and a repair refuses a
-path that is no longer a link. Such a failure adds `error` to its entry, the
-other writes still run, and the command exits 1, so the output says exactly
-what was written.
+path that no longer holds the link it classified, checked just before its
+rename (another process writing the same directory in that instant is outside
+the guard). Such a failure adds `error`
+to its entry, the other writes still run, and the command exits 1, so the
+output says exactly what was written.
 
 `agent-tool skills check-links` is the read-only form for health reports. It
 prints `{ "ok": <bool>, "changes": [...] }` with the same entries and exits 1

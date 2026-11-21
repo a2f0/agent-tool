@@ -74,7 +74,7 @@ function realDirectory(directory: string, hops = 0): string {
 
 /**
  * Claude Code config directories, in this order: the one `CLAUDE_CONFIG_DIR` names when it is set
- * and non-empty; `~/.claude`; then every other directory directly in home whose name starts with
+ * to an absolute path; `~/.claude`; then every other directory directly in home whose name starts with
  * `.claude` and that holds `settings.json` or `.claude.json`, such as `~/.claude2`. Claude Code
  * writes `.claude.json` into a directory it runs with, and provisioning links `settings.json` into
  * one. Only existing directories count, so files such as `~/.claude.json` never do, and a
@@ -83,7 +83,8 @@ function realDirectory(directory: string, hops = 0): string {
 export function claudeConfigDirectories(env: Environment = process.env): string[] {
   const home = userHome(env);
   const candidates: string[] = [];
-  if (env.CLAUDE_CONFIG_DIR) candidates.push(path.resolve(env.CLAUDE_CONFIG_DIR));
+  // Only an absolute path: a relative one depends on where Claude Code started, which is unknown here.
+  if (env.CLAUDE_CONFIG_DIR && path.isAbsolute(env.CLAUDE_CONFIG_DIR)) candidates.push(path.normalize(env.CLAUDE_CONFIG_DIR));
   candidates.push(path.join(home, ".claude"));
   let names: string[] = [];
   try { names = readdirSync(home).sort(); } catch (error) { if (!ABSENT.includes(errorCode(error))) throw error; }
@@ -203,16 +204,26 @@ export function planSkillLinks(rootDir: string, names: string[], env: Environmen
   return links;
 }
 
-/** Replace a link through a fresh temporary link and a rename, so the name is never missing. */
+/**
+ * Replace a link through a fresh temporary link and a rename, so the name is never missing. Only
+ * the link the plan classified is replaced: the path must still hold a link with the same text
+ * just before the rename. Node has no exchanging rename, so a writer racing that instant is
+ * outside this guard; only another process writing the user's skill directories could do it.
+ */
 function replaceLink(link: SkillLink): void {
   const temporary = path.join(link.directory, `.${link.skill}.agent-tool-${randomUUID()}.tmp`);
   symlinkSync(link.target, temporary, "dir");
+  let renamed = false;
   try {
-    // Only a link is ever replaced, never a file or directory that appeared since the plan.
-    if (!isLink(link.path)) throw new Error(`Refusing to replace ${link.path}, which is no longer a symbolic link.`);
+    let current: string | undefined;
+    // EINVAL: not a link.
+    try { current = readlinkSync(link.path); } catch (error) { if (!["ENOENT", "ENOTDIR", "EINVAL"].includes(errorCode(error))) throw error; }
+    if (current === undefined || current !== link.current) throw new Error(`Refusing to replace ${link.path}, which changed since the plan.`);
     renameSync(temporary, link.path);
+    renamed = true;
   } finally {
-    try { unlinkSync(temporary); } catch (error) { if (errorCode(error) !== "ENOENT") throw error; }
+    // Best effort: the original error matters more than a temporary link left behind.
+    if (!renamed) try { unlinkSync(temporary); } catch {}
   }
 }
 
