@@ -4,7 +4,7 @@ import { type Dirent, existsSync, lstatSync, readdirSync, rmSync } from "node:fs
 import os from "node:os";
 import path from "node:path";
 import { holdsProtected, isRepository, measure, protectedName } from "./candidates";
-import type { Proc } from "./processes";
+import { type Proc, selfAndAncestors } from "./processes";
 
 export interface MachineItem {
   readonly id: string;
@@ -81,6 +81,12 @@ function projectRemovals(project: string, entry: Dirent, keep: (entry: string, n
 
 type Guard = NonNullable<MachineItem["guard"]>;
 
+/** Processes other than this one and its launchers, which `bunx ... space` itself would otherwise match as an install. */
+function others(procs: Proc[], self = process.pid): Proc[] {
+  const mine = selfAndAncestors(procs, self);
+  return procs.filter(proc => !mine.has(proc.pid));
+}
+
 /** Package caches wait for any running install. */
 const installing: Guard = list => {
   const proc = list.find(candidate => INSTALLING.test(candidate.args));
@@ -132,7 +138,7 @@ export function machineItems(procs: Proc[], host: Host = HOST): MachineItem[] {
     ...snapshotsItem(host),
     ...dockerItem(host),
   ];
-  for (const item of items) item.skipped = item.guard?.(procs);
+  for (const item of items) item.skipped = item.guard?.(others(procs));
   return items;
 }
 
@@ -269,7 +275,7 @@ function dockerItem(host: Host): MachineItem[] {
 /** Why a guard holds its item back, given a fresh process list; a failure to list processes holds it back too. */
 function guardReason(guard: NonNullable<MachineItem["guard"]>, discover: () => Proc[]): string | undefined {
   try {
-    return guard(discover());
+    return guard(others(discover()));
   } catch (error) {
     return (error as Error).message;
   }

@@ -97,11 +97,22 @@ export function serve(root: string, port: number, http1 = false) {
   };
   warm(base);
   const handler = (request: IncomingMessage | Http2ServerRequest, response: ServerResponse | Http2ServerResponse) => {
-    const pathname = requestPath(request.url);
-    const file = pathname ? inside(pathname) : undefined;
-    respond(response, file ? reply(request, file, compressed) : { status: 404 });
+    // Another site's page reaching this port through a name it rebound to 127.0.0.1 names that host.
+    if (!loopbackHost(request)) return respond(response, { status: 421 });
+    try {
+      const pathname = requestPath(request.url);
+      const file = pathname ? inside(pathname) : undefined;
+      respond(response, file ? reply(request, file, compressed) : { status: 404 });
+    } catch {
+      // A file removed or replaced mid-request, as a rebuild does, fails that request, not the server.
+      if (!response.headersSent) respond(response, { status: 404 });
+    }
   };
   const server = http1 ? createServer(handler) : createSecureServer({ ...certificate(), allowHTTP1: true }, handler);
+  server.once("error", error => {
+    process.stderr.write(`perf serve: ${error.message}\n`);
+    process.exitCode = 1;
+  });
   // Loopback only: the build is for this machine's browser, not the network.
   return server.listen(port, "127.0.0.1", () =>
     console.log(`Serving ${base} at ${http1 ? "http" : "https"}://127.0.0.1:${(server.address() as AddressInfo).port}/`),
@@ -132,6 +143,12 @@ function respond(response: ServerResponse | Http2ServerResponse, { status, heade
   if (response instanceof ServerResponse) response.writeHead(status, headers).end(body);
   else if (body) response.writeHead(status, headers).end(body);
   else response.writeHead(status, headers).end();
+}
+
+/** Whether a request names this machine (`127.0.0.1` or `localhost`, any port) as its host. */
+function loopbackHost(request: IncomingMessage | Http2ServerRequest): boolean {
+  const host = String(request.headers[":authority"] ?? request.headers.host ?? "").toLowerCase();
+  return /^(?:127\.0\.0\.1|localhost)(?::\d+)?$/.test(host);
 }
 
 /** The decoded path a request names, a directory's naming its index.html; empty when it does not decode. */

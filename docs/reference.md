@@ -330,14 +330,16 @@ agent-tool perf graph dist main.js --out dist/preload.json
   `--http1` serves plain HTTP), gzips text files once per version before the
   first request, and answers with `cache-control: no-cache` and an ETag. A
   path that resolves outside the directory, through `..` or a symbolic link,
-  is a 404. It runs until stopped, so start it with `proc start`.
+  is a 404, and a request whose host is not `127.0.0.1` or `localhost` (a
+  rebound DNS name) is a 421. It runs until stopped, so start it with
+  `proc start`; a port already in use ends it with exit 1.
 - `measure <url>` times `--runs` (default 5) cold, cache-disabled loads from
   the start of navigation, waiting only for the commit, until the `--ready`
   expression (default `document.readyState === 'complete'`) is true, under
   `--latency` ms (40), `--mbps` (20; 0 for unthrottled), `--cpu` slowdown (1),
-  and a `--width` by `--height` viewport (1600x900). It prints the median, its
-  spread, requests, bytes, when the finished requests ended, and how many were
-  still pending; `--waterfall` adds each request and `--profile` the first
+  and a `--width` by `--height` viewport (1600x900). It prints the median and
+  spread of every run, and the first run's requests, bytes, when its finished
+  requests ended, and how many were still pending at ready; `--waterfall` adds each request and `--profile` the first
   run's CPU self and inclusive times. `--json` prints `{ url, conditions,
   readyMs: { median, min, max, runs }, samples, requests, transferredBytes,
   networkDoneMs, pendingRequests, waterfall, cpu }`.
@@ -346,7 +348,7 @@ agent-tool perf graph dist main.js --out dist/preload.json
   interaction first and `--hide <css>` hides random decoration, reaching into
   open shadow roots.
 - `diff <a.png> <b.png>` decodes 8-bit RGB or RGBA, non-interlaced PNGs without
-  a browser and prints `{ sizeMismatch, differing, total, maxChannelDelta,
+  a browser, refusing truncated image data and unknown row filters, and prints `{ sizeMismatch, differing, total, maxChannelDelta,
   cells }`, the 20 busiest 50-pixel cells; it exits 1 when any pixel differs or
   the sizes do not match (`differing` is then -1).
 - `graph <dir> <entry...> [--out <file>]` prints, and writes to `--out`, the
@@ -355,10 +357,15 @@ agent-tool perf graph dist main.js --out dist/preload.json
   regular expression literals are not recognised.
 
 `measure` and `shot` launch the installed Google Chrome (`channel: "chrome"`)
-through the `playwright` that the working directory, or `--from <repository>`,
-installs: the nearest `node_modules/playwright` at or above it. agent-tool
-ships no Playwright and never fetches one, so a repository without it is told
-to install it or name another with `--from`. Errors exit 1.
+through the `playwright` that the working directory, or `--from <directory>`,
+installs: the nearest `node_modules/playwright` at or above it, searching no
+higher than the Git checkout holding the working directory. `--from` must be
+inside that checkout, as a matrix workspace's `checkouts/<name>` is, so the
+command never loads Playwright from an arbitrary directory. agent-tool ships
+no Playwright and never fetches one, so a repository without it is told to
+install it or name another with `--from`. Whole-number options (`--runs`,
+`--width`, `--height`, `--port`) refuse fractions, and `--help` anywhere prints
+the usage. Errors exit 1.
 
 ## Configuration
 

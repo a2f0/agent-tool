@@ -6,7 +6,9 @@ import type { Options } from "./options";
 /** An 8-bit RGB or RGBA, non-interlaced PNG, as Chrome writes screenshots, decoded to RGBA. */
 function decodePng(file: Buffer): { width: number; height: number; data: Uint8Array } {
   const { width, height, channels, compressed } = readPngChunks(file);
-  const pixels = unfilterRows(inflateSync(compressed), width, height, channels);
+  const raw = inflateSync(compressed);
+  if (raw.length !== (width * channels + 1) * height) throw new Error("The PNG's image data is truncated or the wrong size.");
+  const pixels = unfilterRows(raw, width, height, channels);
   return { width, height, data: toRgba(pixels, width * height, channels) };
 }
 
@@ -48,6 +50,7 @@ function unfilterRows(raw: Buffer, width: number, height: number, channels: numb
 function unfilterRow(raw: Buffer, pixels: Uint8Array, y: number, stride: number, channels: number): void {
   const filter = raw[y * (stride + 1)]!,
     row = y * stride;
+  if (filter > 4) throw new Error(`Unknown PNG row filter ${filter}.`);
   for (let x = 0; x < stride; x += 1) {
     const value = raw[y * (stride + 1) + 1 + x]!;
     const left = x >= channels ? pixels[row + x - channels]! : 0,

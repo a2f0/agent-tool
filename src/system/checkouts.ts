@@ -76,11 +76,19 @@ export interface Checkout {
   readonly root: string;
 }
 
-/** Every checkout in a workspace's `checkouts/` that is a Git working tree, by name, with real roots. */
+/**
+ * Every checkout in a workspace's `checkouts/` that is its own Git working
+ * tree, by name, with real roots. A directory whose `.git` Git cannot read is
+ * left out, since Git would answer for the enclosing workspace instead.
+ */
 export function workspaceCheckouts(workspace: string): Checkout[] {
   return readdirSync(path.join(workspace, "checkouts"), { withFileTypes: true })
     .filter(entry => entry.isDirectory() && existsSync(path.join(workspace, "checkouts", entry.name, ".git")))
     .map(entry => ({ name: entry.name, root: realpathSync(path.join(workspace, "checkouts", entry.name)) }))
+    .filter(checkout => {
+      const top = toplevel(checkout.root);
+      return top !== undefined && realpathSync(top) === checkout.root;
+    })
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 

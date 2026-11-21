@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, get } from "node:http";
 import { connect } from "node:http2";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { deflateSync, gunzipSync } from "node:zlib";
-import { removeTempDirs, tempDir, write } from "../system/checkouts.testUtils";
+import { gitInit, removeTempDirs, tempDir, write } from "../system/checkouts.testUtils";
 import { installedPlaywright, measureLoad, navigate, profileTable, shot, summarize } from "./browser";
 import { compareImages } from "./diff";
 import { importsOf, moduleGraph } from "./graph";
@@ -120,6 +120,9 @@ describe("agent-tool perf", () => {
     expect(parseOptions([])).toMatchObject({ command: "help", args: [], runs: 5, seed: true, out: undefined });
     expect(() => parseOptions(["shot", "--out"])).toThrow("--out needs a value.");
     expect(() => parseOptions(["shot", "--width", "wide"])).toThrow("--width needs a non-negative number.");
+    expect(() => parseOptions(["measure", "--runs", "2.5"])).toThrow("--runs needs a whole number.");
+    expect(() => parseOptions(["shot", "--width", "0"])).toThrow("--width and --height need at least 1.");
+    expect(() => parseOptions(["serve", "d", "--port", "70000"])).toThrow("--port needs a port number, at most 65535.");
     expect(() => parseOptions(["shot", "--no-json"])).toThrow("Unknown option --no-json.");
   });
 
@@ -162,6 +165,11 @@ describe("agent-tool perf", () => {
     const unsupported = "Only 8-bit RGB or RGBA, non-interlaced PNGs are supported.";
     expect(() => compare(plain, file("deep", png(4, rgba, [0], { depth: 16 })))).toThrow(unsupported);
     expect(() => compare(plain, file("interlaced", png(4, rgba, [0], { interlace: 1 })))).toThrow(unsupported);
+    // Image data that is short for the header's size, or a row filter PNG does not define, is refused, not read as zeros.
+    const short = encodePng({ width, height: height - 1, channels: 4, pixel: rgba }, [0], {});
+    short.writeUInt32BE(height, 20);
+    expect(() => compare(plain, file("short", short))).toThrow("truncated or the wrong size");
+    expect(() => compare(plain, file("filter", png(4, rgba, [5])))).toThrow("Unknown PNG row filter 5.");
   });
 
   test("summarizes samples by median and spread", () => {
@@ -254,6 +262,32 @@ describe("agent-tool perf", () => {
       expect((await fetch(`${origin}/%E0%A4%A`)).status).toBe(404);
       expect(await (await fetch(`${origin}/alias.js`)).text()).toBe("export const x = 1;");
       expect(await (await fetch(`${origin}/lib/inner.js`)).text()).toBe("export {};");
+      expect((await fetch(`${origin}/`, { headers: { host: `localhost:${(server.address() as AddressInfo).port}` } })).status).toBe(200);
+      // A page on another site reaching the port through a rebound DNS name names that site as its host.
+      const rebound = await new Promise<number | undefined>((resolve, reject) =>
+        get({ host: "127.0.0.1", port: (server.address() as AddressInfo).port, path: "/", headers: { host: "rebound.example:80" } }, response => {
+          response.resume();
+          resolve(response.statusCode);
+        }).on("error", reject),
+      );
+      expect(rebound).toBe(421);
+      // A port already in use ends the second server with exit status 1.
+      const saved = process.exitCode;
+      const errors: string[] = [];
+      const write = process.stderr.write;
+      process.stderr.write = ((text: string) => {
+        errors.push(text);
+        return true;
+      }) as typeof process.stderr.write;
+      try {
+        const second = serve(path.join(root, "site"), (server.address() as AddressInfo).port, true);
+        await new Promise(resolve => second.once("error", resolve));
+        expect(process.exitCode).toBe(1);
+        expect(errors.join("")).toContain("perf serve: ");
+      } finally {
+        process.stderr.write = write;
+        process.exitCode = saved ?? 0;
+      }
     } finally {
       server.close();
     }
@@ -358,8 +392,9 @@ describe("agent-tool perf", () => {
 
   test("runs diff, graph, and usage from the CLI with their exit statuses", () => {
     const cli = path.join(import.meta.dir, "../index.ts");
-    const run = (...args: string[]) => {
-      const result = Bun.spawnSync([process.execPath, cli, "perf", ...args], { stdout: "pipe", stderr: "pipe" });
+    const run = (...args: string[]) => runIn(process.cwd(), ...args);
+    const runIn = (cwd: string, ...args: string[]) => {
+      const result = Bun.spawnSync([process.execPath, cli, "perf", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
       return { code: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() };
     };
     const root = tree({ "main.js": 'import "./a.js";', "a.js": "export {};" });
@@ -378,12 +413,21 @@ describe("agent-tool perf", () => {
     expect(JSON.parse(readFileSync(out, "utf8"))).toEqual(["main.js", "a.js"]);
     expect(run()).toMatchObject({ code: 0, stdout: expect.stringMatching(/^Usage: agent-tool perf <command>/) });
     expect(run("--help").code).toBe(0);
+    expect(run("measure", "--help")).toMatchObject({ code: 0, stdout: expect.stringMatching(/^Usage: agent-tool perf <command>/) });
     expect(run("bogus")).toMatchObject({ code: 1, stderr: expect.stringContaining("Unknown perf command 'bogus'.") });
     expect(run("graph", root)).toMatchObject({ code: 1, stderr: "Error: graph needs a directory and at least one entry.\n" });
-    // Without the measured repository's playwright, measuring says where to run it, and never fetches one.
-    expect(installedPlaywright(root)).toBeUndefined();
-    expect(installedPlaywright(path.join(import.meta.dir, "../.."))).toContain(`${path.sep}node_modules${path.sep}playwright${path.sep}`);
-    expect(run("measure", "http://127.0.0.1:9/", "--from", root)).toMatchObject({ code: 1, stderr: expect.stringContaining("does not install; run it there or pass --from <repository>.") });
+    // Playwright loads only from inside the invoking checkout, never fetched and never from another directory.
+    const repository = path.join(import.meta.dir, "../..");
+    expect(installedPlaywright(repository)).toContain(`${path.sep}node_modules${path.sep}playwright${path.sep}`);
+    expect(installedPlaywright("src/perf")).toBe(installedPlaywright(repository));
+    expect(() => installedPlaywright(root)).toThrow("is outside the checkout");
+    expect(() => installedPlaywright(".", root)).toThrow("run it inside one");
+    expect(() => installedPlaywright("missing", repository)).toThrow("--from missing does not exist.");
+    gitInit(root);
+    write(root, { "node_modules/.keep": "" });
+    expect(installedPlaywright(".", root)).toBeUndefined();
+    expect(runIn(root, "measure", "http://127.0.0.1:9/")).toMatchObject({ code: 1, stderr: expect.stringContaining("does not install; run it there or pass --from <repository>.") });
+    expect(run("measure", "http://127.0.0.1:9/", "--from", root)).toMatchObject({ code: 1, stderr: expect.stringContaining("is outside the checkout") });
   }, 30_000);
 });
 

@@ -39,6 +39,10 @@ function printCpuRows(title: string, rows: { fn: string; ms: number }[]): void {
  * process alive; `diff` exits 1 when any pixel differs. Usage errors throw.
  */
 export async function perfCommand(argv: string[]): Promise<number> {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    print(PERF_USAGE);
+    return 0;
+  }
   const options = parseOptions(argv);
   switch (options.command) {
     case "serve": {
@@ -66,8 +70,6 @@ export async function perfCommand(argv: string[]): Promise<number> {
       return 0;
     }
     case "help":
-    case "--help":
-    case "-h":
       print(PERF_USAGE);
       return 0;
     default:

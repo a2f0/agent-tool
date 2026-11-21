@@ -413,6 +413,28 @@ describe("space cleanup", () => {
     for (const args of ["bun test", "npm run build", "brew list", "node install.js", "bun --cwd /repo test"]) expect(INSTALLING.test(args)).toBe(false);
   });
 
+  test("a launcher that ran this command, such as bunx, is not a running install", () => {
+    const home = tempDir("space-cleanup-home");
+    write(home, { ".npm/_cacache/x": "x" });
+    const fake: Host = { home, has: command => command === "npm", output: () => "", run: () => "" };
+    const launched: Proc[] = [
+      { pid: process.pid, ppid: 4_000_001, name: "bun", args: "bun /x/agent-tool/src/index.ts space --machine", cwd: "/x" },
+      { pid: 4_000_001, ppid: 1, name: "bunx", args: "bunx --bun @a2f0/agent-tool@latest space --machine", cwd: "/x" },
+    ];
+    expect(machineItems(launched, fake).find(item => item.id === "npm-cache")?.skipped).toBeUndefined();
+    const items = machineItems([...launched, { pid: 4_000_002, ppid: 1, name: "npx", args: "npx tsc", cwd: "/y" }], fake);
+    expect(items.find(item => item.id === "npm-cache")?.skipped).toBe("an install is running (pid 4000002)");
+    expect(applyMachine(machineItems([], fake), () => launched)).toBe(0);
+  }, 30_000);
+
+  test("leaves out a checkout whose .git Git cannot read, which would answer for the workspace", () => {
+    const workspace = realpathSync(fixture());
+    write(workspace, { "matrix.json": "{}", ".gitignore": "checkouts/\n" });
+    const checkout = realpathSync(fixture(path.join(workspace, "checkouts", "app")));
+    mkdirSync(path.join(workspace, "checkouts", "broken", ".git"), { recursive: true });
+    expect(resolveTargets(workspace, []).targets.map(target => target.root)).toEqual([workspace, checkout]);
+  }, 30_000);
+
   test("lists processes again before each guarded machine item", () => {
     const home = tempDir("space-cleanup-home");
     write(home, {

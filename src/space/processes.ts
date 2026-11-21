@@ -125,6 +125,14 @@ function argumentPaths(args: string, cwd: string): string[] {
   return paths;
 }
 
+/** This process and its ancestors: the agent, shell, or launcher (`bunx`, `bun run`) that ran it. */
+export function selfAndAncestors(procs: Proc[], self = process.pid): Set<number> {
+  const parent = new Map(procs.map(proc => [proc.pid, proc.ppid]));
+  const ancestors = new Set<number>();
+  for (let pid: number | undefined = self; pid && !ancestors.has(pid); pid = parent.get(pid)) ancestors.add(pid);
+  return ancestors;
+}
+
 /**
  * Processes working in each root, other than this process, its ancestors (the
  * agent or shell that ran it), its children, idle shells, and text filters
@@ -136,9 +144,7 @@ function argumentPaths(args: string, cwd: string): string[] {
  * nested root counts only for the deepest root containing it.
  */
 export function busyRoots(procs: Proc[], roots: string[], self = process.pid): Map<string, Proc[]> {
-  const parent = new Map(procs.map(proc => [proc.pid, proc.ppid]));
-  const ancestors = new Set<number>();
-  for (let pid: number | undefined = self; pid && !ancestors.has(pid); pid = parent.get(pid)) ancestors.add(pid);
+  const ancestors = selfAndAncestors(procs, self);
   const group = procs.find(proc => proc.pid === self)?.pgid;
   const busy = new Map<string, Proc[]>();
   const byDepth = roots.toSorted((a, b) => b.length - a.length);

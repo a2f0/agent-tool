@@ -15,7 +15,8 @@ pixel, a mesh, or a behaviour is a regression, not a win.
 `agent-tool perf` runs the measurements; run the repository's pinned
 agent-tool (`bun run agent-tool perf` or `node_modules/.bin/agent-tool perf`).
 It drives Chrome through the measured repository's own `playwright`, found
-from the working directory or `--from <repository>`, and never fetches one.
+from the working directory or `--from <directory>` inside the checkout it
+runs in, and never fetches one.
 From a matrix workspace, measure a checkout with
 `agent-tool perf <command> --from checkouts/<name>`. If the pinned agent-tool
 predates the command, run `bunx --bun @a2f0/agent-tool@latest perf`.

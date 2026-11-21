@@ -169,7 +169,7 @@ try {
     return file;
   };
   assert.equal(JSON.parse(run("perf", "diff", shot("before", 0), shot("after", 0))).differing, 0, "the installed CLI diffs screenshots");
-  assert.throws(() => execFileSync(executable, ["perf", "measure", "http://127.0.0.1:9/"], { cwd: consumer, env, encoding: "utf8", stdio: "pipe" }), error => {
+  assert.throws(() => execFileSync(executable, ["--repo", cleaned, "perf", "measure", "http://127.0.0.1:9/"], { cwd: consumer, env, encoding: "utf8", stdio: "pipe" }), error => {
     const failure = error as { status?: number; stderr?: string };
     assert.equal(failure.status, 1);
     assert.match(String(failure.stderr), /does not install; run it there or pass --from <repository>/);

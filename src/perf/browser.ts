@@ -4,10 +4,11 @@
  * imported for its types only, which Bun erases, so agent-tool needs no
  * Playwright of its own at run time.
  */
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import type { Browser, BrowserContext, BrowserType, Page } from "playwright";
+import { toplevel } from "../system/checkouts";
 import type { Options } from "./options";
 
 /** Median and spread of repeated samples; the median is what rounds compare. */
@@ -22,14 +23,28 @@ export function summarize(samples: number[]): { median: number; min: number; max
 // A deterministic Math.random for screenshots, so randomly placed decoration matches between rounds.
 const SEED_SCRIPT = "{ let s = 0x2545f491; Math.random = () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return (s >>> 0) / 4294967296; }; }";
 
+/** Whether `child` is `parent` or inside it. */
+function within(child: string, parent: string): boolean {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 /**
- * The `playwright` entry the measured repository installs: resolved from the
- * nearest directory at or above `from` whose node_modules holds it, never
- * through Bun's auto-install, which fetches the newest release when no
- * node_modules is found.
+ * The `playwright` entry the measured repository installs: the nearest
+ * `node_modules/playwright` at or above `from`, searching no higher than the
+ * checkout holding the working directory. `from` must be inside that checkout
+ * (a matrix workspace's checkouts are inside it), so the command never loads
+ * Playwright from an arbitrary directory, and never through Bun's
+ * auto-install, which fetches the newest release when no node_modules is found.
  */
-export function installedPlaywright(from: string): string | undefined {
-  for (let directory = path.resolve(from); ; directory = path.dirname(directory)) {
+export function installedPlaywright(from: string, cwd = process.cwd()): string | undefined {
+  const top = toplevel(cwd);
+  if (!top) throw new Error("agent-tool perf measures from the measured repository's checkout; run it inside one.");
+  const boundary = realpathSync(top);
+  if (!existsSync(path.resolve(cwd, from))) throw new Error(`--from ${from} does not exist.`);
+  const start = realpathSync(path.resolve(cwd, from));
+  if (!within(start, boundary)) throw new Error(`--from ${from} is outside the checkout ${boundary}; run agent-tool perf from the checkout that holds it.`);
+  for (let directory = start; ; directory = path.dirname(directory)) {
     if (existsSync(path.join(directory, "node_modules", "playwright", "package.json"))) {
       try {
         return createRequire(path.join(directory, "package.json")).resolve("playwright");
@@ -37,7 +52,7 @@ export function installedPlaywright(from: string): string | undefined {
         return undefined;
       }
     }
-    if (path.dirname(directory) === directory) return undefined;
+    if (directory === boundary || path.dirname(directory) === directory) return undefined;
   }
 }
 
@@ -117,8 +132,10 @@ async function load(
     await navigate(page, url);
     await page.waitForFunction(options.ready, null, { timeout: 180_000, polling: 20 });
     const ready = Date.now() - started;
+    // Copied at ready: requests that finish while the profile stops or the context closes are not part of the load.
+    const atReady = [...requests.values()].map(request => ({ ...request }));
     const profile = capture.profile ? (await cdp.send("Profiler.stop")).profile : undefined;
-    return { page, context, ready, requests: [...requests.values()], profile };
+    return { page, context, ready, requests: atReady, profile };
   } catch (error) {
     await context.close();
     throw error;

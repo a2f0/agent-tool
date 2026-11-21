@@ -73,6 +73,9 @@ export function parseOptions(argv: string[]): Options {
   };
   for (let i = 1; i < argv.length; i += 1) i = readArgument(options, argv, i);
   if (options.runs < 1) throw new Error("--runs needs at least 1.");
+  for (const name of ["runs", "width", "height", "port"] as const) if (!Number.isInteger(options[name])) throw new Error(`--${name} needs a whole number.`);
+  if (options.width < 1 || options.height < 1) throw new Error("--width and --height need at least 1.");
+  if (options.port > 65535) throw new Error("--port needs a port number, at most 65535.");
   return options;
 }
 

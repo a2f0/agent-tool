@@ -29,7 +29,8 @@ export const CATALOG: CatalogEntry[] = [
   // Removes only ignored, regenerable output in repositories nothing else is working in, and developer
   // caches a reinstall refills; every tier is restored by a rebuild or the documented install.
   { command: "space", class: "read", applyClass: "local" },
-  // Both drive Chrome through the measured repository's own playwright, as `bun test` runs its tests.
+  // Both drive Chrome through a playwright installed inside the invoking checkout, as `bun test` runs its tests;
+  // --from outside that checkout is refused.
   ...["perf measure", "perf shot"].map(command => ({ command, class: "local" as const })),
   { command: "permissions install", class: "read", applyClass: "policy" },
   // Linking writes outside the checkout, into the user skill directories every session loads.
