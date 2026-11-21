@@ -24,8 +24,9 @@ keep README and this file concise.
 Validate changes with `bun run typecheck`, `bun src/index.ts graph check`,
 `bun test --parallel=2`, `bun scripts/testing/smoke-package.ts`, `bun run build`,
 and `bun scripts/testing/smoke.ts dist/agent-tool`. The build regenerates
-embedded skills from `skills/*/SKILL.md` and `skills/*/references/*.md`; commit
-`src/skills/bundled.ts` with skill changes.
+embedded skills from `skills/*/SKILL.md`, `skills/*/references/*.md`, and
+`skills/*/agents/openai.yaml`; commit `src/skills/bundled.ts` with skill
+changes.
 CI also verifies Linux Debian packaging. Preserve the review snapshot,
 read-only tool permissions, pinned-base checks, and exact-head merge behavior.
 

@@ -8,9 +8,9 @@ shell, prepend `~/.local/share/mise/installs/bun/<version>/bin` to PATH; do not 
 
 Shared implementation lives under `src/` by domain: `workflows/` for repository
 mechanics, `pr/` and `git/` for existing GitHub guards, `release/` for registry
-logic, `commands/` for execution receipts, and `review/`, `version/`, `skills/`,
-`images/`, `screenshots/`, `space/` (disk cleanup), and `perf/` (page-load
-measurement) for their respective APIs. Tests live beside
+logic, `commands/` for execution receipts, `seo/` for the `seo probe` command,
+and `review/`, `version/`, `skills/`, `images/`, `screenshots/`, `space/` (disk
+cleanup), and `perf/` (page-load measurement) for their respective APIs. Tests live beside
 implementation. `screenshots/gallery.ts`, `gallery.css`, and `manifest.ts` are
 browser entry points that the package exports; they import nothing from Node
 or Bun, and `tsconfig.browser.json`, part of `typecheck`, checks them with the
@@ -20,7 +20,9 @@ Repository scripts are grouped by purpose: `scripts/build/` generates the skill
 bundle, `scripts/testing/` contains installed/compiled package smoke checks,
 `scripts/release/` builds distributable artifacts, and `scripts/checks/` contains
 the historical extraction inventory helper. Canonical portable skills live in
-`skills/`, each a `SKILL.md` with optional Markdown files in `references/`. Do
+`skills/`, each a `SKILL.md` with optional Markdown files in `references/` and
+an optional `agents/openai.yaml` for Codex. Nothing else ships, so a skill's
+procedure runs through agent-tool commands rather than scripts beside it. Do
 not install generated copies over those sources.
 
 README explains purpose, setup, and normal use. AGENTS.md contains operational
@@ -58,7 +60,7 @@ its layers. A test asserts the real configuration passes.
    schemas.
 3. Domains: `bun/`, `commands/`, `dependencies/`, `graph/`, `images/`, `perf/`,
    `permissions/`, `pr/`, `processes/`, `release/`, `review/`, `screenshots/`,
-   `skills/`, `space/`, `stateMachines/`, `version/`, and `harnesses.ts`.
+   `seo/`, `skills/`, `space/`, `stateMachines/`, `version/`, and `harnesses.ts`.
    Domains may use each other without cycles.
 4. Workflows: the rest of `workflows/`, which compose domains into repository
    commands such as `branch`, `pr`, `hooks`, `push-gate`, and `repo`.

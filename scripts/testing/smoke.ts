@@ -108,11 +108,20 @@ try {
   assert.equal(space.status, 0, space.stderr);
   assert.deepEqual(JSON.parse(space.stdout).repos[0].candidates.map((candidate: { path: string }) => candidate.path), [".turbo"], "disk cleanup previews without Bun");
   assert.ok(existsSync(path.join(repository, ".turbo/cache")));
+  // The embedded runtime's fetch probes a local site; the server answers while the binary runs.
+  const site = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response('<html lang="en"><title>Smoke Site</title><meta name="robots" content="noindex"></html>', { headers: { "content-type": "text/html", "x-robots-tag": "noindex" } }) });
+  try {
+    const child = Bun.spawn([binary, "seo", "probe", "--page", `127.0.0.1:${site.port}`, "/"], { cwd: repository, env: { ...env, SEO_PROBE_SCHEME: "http" }, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, status] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    assert.equal(status, 0, stderr);
+    assert.match(stdout, /title \(10 chars\): Smoke Site\n  description/);
+    assert.match(stdout, /x-robots-tag: noindex\n/);
+  } finally { site.stop(true); }
   stub("claude", `cat > /dev/null\ngit -c commit.gpgsign=false -c core.hooksPath=/dev/null -C ${q(repository)} commit --allow-empty -qm 'test: concurrent head change'\nprintf 'Complete review\\nVERDICT: CLEAN\\n'`);
   const drifted = run("review", "claude", "--base", "main");
   assert.equal(drifted.status, 1);
   assert.match(drifted.stderr, /HEAD changed during review/);
-  console.log("Standalone executable passed reviews for all three harnesses, skill installation, image rendering, pixel diffs, disk cleanup previews, cleanup, HEAD drift rejection, and failure handling without Bun or Node on PATH.");
+  console.log("Standalone executable passed reviews for all three harnesses, skill installation, image rendering, pixel diffs, disk cleanup previews, an SEO probe, cleanup, HEAD drift rejection, and failure handling without Bun or Node on PATH.");
 } finally {
   rmSync(temporary, { recursive: true, force: true });
 }

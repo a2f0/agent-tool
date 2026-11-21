@@ -6,6 +6,7 @@ import { checkTerraformPlan } from "./dependencies/terraformPlan";
 import { dependencyDiff } from "./dependencies/diff";
 import { checkGraph } from "./graph/check";
 import { stateMachinesCommand } from "./stateMachines/command";
+import { seoCommand } from "./seo/probe";
 import { buildScreenshots, describeScreenshots } from "./screenshots/build";
 import { spaceCommand } from "./space/command";
 import { perfCommand } from "./perf/command";
@@ -95,6 +96,7 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   screenshots build [target...] [--out <dir>] [--json]  Stage guarded captures and a gallery manifest
   graph check                           Import cycles and layer violations per agent-tool.json
   state-machines [path...] [--limit N] [--min-score N] [--json]  Rank files that look like implicit state machines
+  seo probe [--page|--headers|--links|--sitemap] <host> [path...]  Live search and preview metadata of a site
   space [checkout-or-path...] [--builds] [--deps] [--machine] [--include-busy] [--apply] [--json]
                                         Regenerable, git-ignored output and developer caches; dry run until --apply
   perf serve <dir> | measure <url> | shot <url> --out <png> | diff <a.png> <b.png> | graph <dir> <entry...>
@@ -197,6 +199,7 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
     output(report); return report.ok ? 0 : 1;
   }
   if (command === "state-machines") return stateMachinesCommand(args, process.cwd(), undefined, invoked);
+  if (command === "seo") return seoCommand(args);
   if (command === "space") return spaceCommand(args);
   if (command === "perf") return perfCommand(args);
   if (command === "skills") {

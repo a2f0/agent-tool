@@ -39,7 +39,8 @@ try {
     assert.match(run("logs", compact.log), /installed harness output/);
   } finally { rmSync(path.dirname(compact.log), { recursive: true, force: true }); }
   const skills = JSON.parse(run("skills", "list"));
-  for (const name of ["ship-pr", "update-dependencies", "open-issue", "space-cleanup", "performance-pass"]) assert.ok(skills.includes(name), `the package bundles ${name}`);
+  for (const name of ["ship-pr", "update-dependencies", "open-issue", "seo-optimization", "space-cleanup", "performance-pass"]) assert.ok(skills.includes(name), `the package bundles ${name}`);
+  assert.match(run("seo", "probe", "--help"), /seo probe --sitemap <host>/);
   assert.equal(JSON.parse(run("config", "show")).schemaVersion, 1);
   assert.equal(JSON.parse(run("skills", "install")).applied, false);
   assert.equal(existsSync(path.join(consumer, ".agents")), false);
@@ -55,6 +56,7 @@ try {
     run("--repo", selected, "skills", "install", "--harness", harness!, "--apply");
     assert.equal(JSON.parse(run("--repo", selected, "skills", "check", "--harness", harness!)).ok, true);
     assert.equal(readFileSync(path.join(selected, directory!, "skills/update-dependencies/SKILL.md"), "utf8"), dependencySkill);
+    assert.equal(readFileSync(path.join(selected, directory!, "skills/seo-optimization/agents/openai.yaml"), "utf8"), readFileSync(path.join(root, "skills/seo-optimization/agents/openai.yaml"), "utf8"));
     assert.equal(existsSync(path.join(selected, ".hermes")), false, "skill discovery does not grant trust or create an adapter");
   }
   // Exercise the installed tarball, not this checkout's source CLI, against real owning-manager fixtures.
