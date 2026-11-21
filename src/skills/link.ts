@@ -145,7 +145,9 @@ function skillName(directory: string): string | undefined {
   const read = readRegularFile(file);
   if (read.status !== "file") return undefined;
   const front = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(read.contents)?.[1];
-  const name = front === undefined ? undefined : /^name:[ \t]*(.*?)[ \t]*$/m.exec(front)?.[1]?.replace(/^(["'])(.*)\1$/, "$2");
+  const raw = front === undefined ? undefined : /^name:[ \t]*(.*?)[ \t]*$/m.exec(front)?.[1];
+  // A quoted value keeps everything inside its quotes; an unquoted one ends at a YAML comment.
+  const name = raw === undefined ? undefined : /^(["'])(.*)\1$/.exec(raw)?.[2] ?? raw.replace(/(?:^|\s+)#.*$/, "");
   return name || path.basename(directory);
 }
 

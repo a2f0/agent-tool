@@ -246,6 +246,9 @@ describe("skills link", () => {
       ["space-cleanup", "---\nname:\n---\n", "kept"],
       ["other-skill", "# No front matter\n", "conflict"],
       ["other-folder", "---\nname: 'space-cleanup'\n---\n", "kept"],
+      ["other-folder", "---\nname: space-cleanup # a comment\n---\n", "kept"],
+      ["space-cleanup", "---\nname: # only a comment\n---\n", "kept"],
+      ["other-folder", "---\nname: \"space-cleanup # not a comment\"\n---\n", "conflict"],
     ] as const) {
       const target = path.join(clone, folder);
       rmSync(target, { recursive: true, force: true });
