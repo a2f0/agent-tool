@@ -209,7 +209,7 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
         output(result); return result.ok ? 0 : 1;
       }
       const result = linkSkills(root, names, apply);
-      output(result); return result.changes.some(change => change.status === "conflict" || change.error !== undefined) ? 1 : 0;
+      output(result); return result.changes.some(change => change.status === "conflict" || change.result === "failed") ? 1 : 0;
     }
     usage(action === "install" || action === "check", "Usage: agent-tool skills <list|install|check|link|check-links>");
     let target = "all", apply = false;

@@ -22,10 +22,11 @@ export interface UserSkillDirectory { harness: UserSkillHarness; directory: stri
  */
 export type SkillLinkStatus = "create" | "repair" | "unchanged" | "kept" | "conflict";
 /**
- * One declared skill in one user skill directory. `current` is an existing link's own text, and
- * `error` says why an applied write failed.
+ * One declared skill in one user skill directory. `status` is the plan's classification and
+ * `current` an existing link's own text. Only an applied write sets `result`: `written`, or
+ * `failed` with `error` saying why; an entry without one was not written.
  */
-export interface SkillLink { skill: string; directory: string; path: string; target: string; status: SkillLinkStatus; current?: string; error?: string }
+export interface SkillLink { skill: string; directory: string; path: string; target: string; status: SkillLinkStatus; current?: string; result?: "written" | "failed"; error?: string }
 
 type Environment = Record<string, string | undefined>;
 const errorCode = (error: unknown) => (error as NodeJS.ErrnoException).code ?? "";
@@ -241,18 +242,19 @@ export function applySkillLinks(changes: SkillLink[]): SkillLink[] {
         // Fails rather than overwrites if anything appeared since the plan.
         symlinkSync(change.target, change.path, "dir");
       } else replaceLink(change);
-      return change;
+      return { ...change, result: "written" as const };
     } catch (error) {
-      return { ...change, error: error instanceof Error ? error.message : String(error) };
+      return { ...change, result: "failed" as const, error: error instanceof Error ? error.message : String(error) };
     }
   });
 }
 
 /**
  * Whether the checkout lives in a linked worktree: its `.git` is a file naming a Git directory
- * that, or one of whose ancestors, holds `commondir`, which Git writes only into a linked
- * worktree's Git directory. The ancestors cover a submodule checked out inside a linked worktree,
- * whose Git directory sits under that worktree's.
+ * that, or one of whose ancestors up to the enclosing `.git` directory, holds `commondir`, which
+ * Git writes only into a linked worktree's Git directory. The ancestors cover a submodule checked
+ * out inside a linked worktree, whose Git directory sits under that worktree's; stopping at the
+ * enclosing `.git` keeps a stray file above the repository from counting.
  */
 function linkedWorktree(root: string): boolean {
   const read = readRegularFile(path.join(root, ".git"));
@@ -260,7 +262,7 @@ function linkedWorktree(root: string): boolean {
   if (gitdir === undefined) return false;
   for (let directory = path.resolve(root, gitdir); ; directory = path.dirname(directory)) {
     if (existsSync(path.join(directory, "commondir"))) return true;
-    if (path.dirname(directory) === directory) return false;
+    if (path.basename(directory) === ".git" || path.dirname(directory) === directory) return false;
   }
 }
 
@@ -277,7 +279,7 @@ export function linkSkills(rootDir: string, names: string[], apply = false, env:
     throw new Error("Refusing to link user-wide skills from a linked worktree, whose removal would break them; run skills link from the main checkout.");
   }
   const applied = applySkillLinks(changes);
-  return { applied: applied.every(change => change.error === undefined), changes: applied };
+  return { applied: applied.every(change => change.result !== "failed"), changes: applied };
 }
 
 /** Read-only: ok while every declared link is unchanged or kept, so health reports can gate on it. */

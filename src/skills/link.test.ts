@@ -159,7 +159,9 @@ describe("skills link", () => {
     expect(existsSync(path.join(directory, ".claude/skills"))).toBe(false);
     expect(checkSkillLinks(root, NAMES, env).ok).toBe(false);
 
-    expect(linkSkills(root, NAMES, true, env).applied).toBe(true);
+    const applied = linkSkills(root, NAMES, true, env);
+    expect(applied.applied).toBe(true);
+    expect(applied.changes.map(change => [change.status, change.result])).toEqual(Array(6).fill(["create", "written"]));
     for (const name of [".agents/skills", ".claude/skills", ".claude2/skills"]) expect(statSync(path.join(directory, name)).mode & 0o777).toBe(0o700);
     for (const change of preview.changes) {
       expect(lstatSync(change.path).isSymbolicLink()).toBe(true);
@@ -170,7 +172,8 @@ describe("skills link", () => {
     expect(check.ok).toBe(true);
     expect(check.changes.map(change => change.status)).toEqual(Array(6).fill("unchanged"));
     expect(check.changes[0]!.current).toBe(path.join(root, "skills/space-cleanup"));
-    expect(linkSkills(root, NAMES, true, env).changes.every(change => change.status === "unchanged")).toBe(true);
+    // Nothing to write leaves every entry without a result.
+    expect(linkSkills(root, NAMES, true, env).changes.every(change => change.status === "unchanged" && change.result === undefined)).toBe(true);
   });
 
   test("repairs dangling links and links to directories without SKILL.md in place", () => {
@@ -251,7 +254,8 @@ describe("skills link", () => {
     mkdirSync(path.join(directory, ".claude2/skills"));
     writeFileSync(path.join(directory, ".claude2/skills/explicit-state-machines"), "mine");
     const applied = applySkillLinks(plan);
-    expect(applied.filter(change => change.error !== undefined).map(change => [path.relative(directory, change.path), change.status])).toEqual([[".claude/skills/space-cleanup", "repair"], [".claude2/skills/explicit-state-machines", "create"]]);
+    expect(applied.filter(change => change.result === "failed").map(change => [path.relative(directory, change.path), change.status])).toEqual([[".claude/skills/space-cleanup", "repair"], [".claude2/skills/explicit-state-machines", "create"]]);
+    expect(applied.filter(change => change.result !== "failed").every(change => change.result === "written" && change.error === undefined)).toBe(true);
     expect(applied.find(change => change.status === "repair")?.error).toBe(`Refusing to replace ${path.join(skills, "space-cleanup")}, which changed since the plan.`);
     expect(applied.find(change => change.path.endsWith(".claude2/skills/explicit-state-machines"))?.error).toContain("EEXIST");
     // Both occupants are untouched, no temporary link is left, and every other link was written.
@@ -269,6 +273,7 @@ describe("skills link", () => {
     try {
       const result = linkSkills(root, NAMES, true, env);
       expect(result.applied).toBe(false);
+      expect(result.changes.map(change => change.result)).toEqual(["written", "written", "written", "written", "failed", "failed"]);
       expect(result.changes.filter(change => change.error !== undefined).map(change => [change.path, change.error!.includes("EACCES")])).toEqual(NAMES.map(name => [path.join(locked, name), true]));
       expect(result.changes.filter(change => change.error === undefined).every(change => readlinkSync(change.path) === change.target)).toBe(true);
     } finally { chmodSync(locked, 0o700); }
@@ -293,7 +298,7 @@ describe("skills link", () => {
   });
 
   test("a linked worktree, or a submodule inside one, may preview and check but not write links", () => {
-    const root = repository(), directory = home(), main = temporary(), env = { HOME: directory };
+    const root = repository(), directory = home(), outer = temporary(), main = path.join(outer, "main"), env = { HOME: directory };
     // Git writes `commondir` into each linked worktree's Git directory.
     const worktree = path.join(main, ".git/worktrees/feature");
     mkdirSync(path.join(worktree, "modules/project"), { recursive: true });
@@ -306,7 +311,8 @@ describe("skills link", () => {
       expect(() => linkSkills(root, NAMES, true, env)).toThrow("Refusing to link user-wide skills from a linked worktree");
       expect(existsSync(path.join(directory, ".agents"))).toBe(false);
     }
-    // A submodule of the main checkout links.
+    // A submodule of the main checkout links, even below a stray `commondir` above the repository.
+    writeFileSync(path.join(outer, "commondir"), "stray");
     writeFileSync(path.join(root, ".git"), `gitdir: ${path.relative(root, path.join(main, ".git/modules/project"))}\n`);
     expect(linkSkills(root, NAMES, true, env).applied).toBe(true);
   });
@@ -325,6 +331,7 @@ describe("skills link", () => {
       setup(file);
       const before = lstatSync(file);
       const result = linkSkills(root, NAMES, true, env);
+      expect(result.changes.some(change => change.result !== undefined)).toBe(false);
       expect({ occupant, applied: result.applied, conflicts: result.changes.filter(change => change.status === "conflict").map(change => change.path) }).toEqual({ occupant, applied: false, conflicts: [file] });
       // Nothing was written anywhere, and the occupant is exactly as it was.
       expect(existsSync(path.join(directory, ".agents"))).toBe(false);

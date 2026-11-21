@@ -638,8 +638,11 @@ is not a directory is an error.
 `skills link` prints `{ "applied": <bool>, "changes": [...] }`, where
 `applied` is true only when `--apply` wrote every planned link, with one entry
 per skill and directory: `skill`, `directory`, `path` (the link),
-`target` (the source), `status`, and, for an existing link, `current`, the
-link's own text.
+`target` (the source), `status`, the plan's classification, and, for an
+existing link, `current`, the link's own text. An entry that `--apply` tried
+to write adds `result`: `written`, or `failed` with `error`. An entry without
+`result` was not written: a preview, a link already in place, or every entry
+when a conflict blocked the writes.
 
 | Status | At the link path | With `--apply` |
 | --- | --- | --- |
@@ -658,9 +661,8 @@ ever deleted. A write is checked again as it happens: a create fails rather
 than overwrite something that appeared since the plan, and a repair refuses a
 path that no longer holds the link it classified, checked just before its
 rename (another process writing the same directory in that instant is outside
-the guard). Such a failure adds `error`
-to its entry, the other writes still run, and the command exits 1, so the
-output says exactly what was written.
+the guard). Such a failure marks its entry `failed`, the other writes still
+run, and the command exits 1.
 
 `agent-tool skills check-links` is the read-only form for health reports. It
 prints `{ "ok": <bool>, "changes": [...] }` with the same entries and exits 1
