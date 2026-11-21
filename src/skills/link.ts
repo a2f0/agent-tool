@@ -8,20 +8,24 @@ import { readRegularFile } from "../system/files";
  * User-wide skills: a repository declares them by name in `skills.user`, and `skills link`
  * links each into every user skill directory, so every harness session sees them whatever
  * repository it starts in. Claude Code reads `<config dir>/skills` for each config directory;
- * Codex, OpenCode, and Hermes read `~/.agents/skills`.
+ * `~/.agents/skills` is the user-level counterpart of a project's `.agents/skills`.
  */
 export type UserSkillHarness = "claude" | "agents";
 export interface UserSkillDirectory { harness: UserSkillHarness; directory: string }
 
 /**
- * What a link path holds: nothing (`create`), a symbolic link that does not resolve to a skill
- * directory (`repair`), a link to this repository's source (`unchanged`), a link to the same
- * skill elsewhere, such as another clone (`kept`), or anything else (`conflict`): a file or
- * directory, or a link to a different skill. Only `create` and `repair` are ever written.
+ * What a link path holds: nothing (`create`); a symbolic link that does not resolve to a skill
+ * directory, or that resolves to another copy of the skill in this repository (`repair`); a link
+ * to this repository's source (`unchanged`); a link to the same skill elsewhere, such as another
+ * clone (`kept`); or anything else (`conflict`): a file or directory, or a link to a different
+ * skill. Only `create` and `repair` are ever written.
  */
 export type SkillLinkStatus = "create" | "repair" | "unchanged" | "kept" | "conflict";
-/** One declared skill in one user skill directory; `current` is an existing link's own text. */
-export interface SkillLink { skill: string; directory: string; path: string; target: string; status: SkillLinkStatus; current?: string }
+/**
+ * One declared skill in one user skill directory. `current` is an existing link's own text, and
+ * `error` says why an applied write failed.
+ */
+export interface SkillLink { skill: string; directory: string; path: string; target: string; status: SkillLinkStatus; current?: string; error?: string }
 
 type Environment = Record<string, string | undefined>;
 const errorCode = (error: unknown) => (error as NodeJS.ErrnoException).code ?? "";
@@ -30,6 +34,9 @@ const ABSENT = ["ENOENT", "ENOTDIR", "ELOOP"];
 
 function statOrNull(file: string) {
   try { return statSync(file); } catch (error) { if (ABSENT.includes(errorCode(error))) return null; throw error; }
+}
+function isLink(file: string): boolean {
+  try { return lstatSync(file).isSymbolicLink(); } catch (error) { if (["ENOENT", "ENOTDIR"].includes(errorCode(error))) return false; throw error; }
 }
 const isDirectory = (file: string) => statOrNull(file)?.isDirectory() ?? false;
 /** A directory holding a regular `SKILL.md`, following links as the harnesses do. */
@@ -50,14 +57,19 @@ function unique<T>(items: T[], key: (item: T) => string): T[] {
   return items.filter(item => { const value = key(item); if (seen.has(value)) return false; seen.add(value); return true; });
 }
 
-/** The real path of a directory that may not exist yet: its nearest existing ancestor's, then the rest. */
-function realDirectory(directory: string): string {
+/**
+ * The real path of a directory that may not exist yet: its nearest existing ancestor's, then the
+ * rest, following a dangling link to where it points, so a link to a directory not created yet
+ * names that directory. A link loop stops at the link's own path.
+ */
+function realDirectory(directory: string, hops = 0): string {
   try { return realpathSync(directory); }
-  catch (error) {
-    if (!ABSENT.includes(errorCode(error))) throw error;
-    const parent = path.dirname(directory);
-    return parent === directory ? directory : path.join(realDirectory(parent), path.basename(directory));
-  }
+  catch (error) { if (!ABSENT.includes(errorCode(error))) throw error; }
+  const parent = path.dirname(directory);
+  if (parent === directory) return directory;
+  const resolved = path.join(realDirectory(parent, hops), path.basename(directory));
+  if (hops >= 40 || !isLink(resolved)) return resolved;
+  return realDirectory(path.resolve(path.dirname(resolved), readlinkSync(resolved)), hops + 1);
 }
 
 /**
@@ -85,14 +97,21 @@ export function claudeConfigDirectories(env: Environment = process.env): string[
 
 /**
  * `~/.agents/skills`, then `<dir>/skills` for each Claude Code config directory. A skills
- * directory reached twice, such as `~/.claude2/skills` linked to `~/.claude/skills`, counts once.
+ * directory reached twice, such as `~/.claude2/skills` linked to `~/.claude/skills`, counts once,
+ * under the name that is not itself a link, so a link to a directory not created yet resolves
+ * once that directory is created.
  */
 export function userSkillDirectories(env: Environment = process.env): UserSkillDirectory[] {
-  const directories: UserSkillDirectory[] = [
-    { harness: "agents", directory: path.join(userHome(env), ".agents", "skills") },
+  const directories = [
+    { harness: "agents" as const, directory: path.join(userHome(env), ".agents", "skills") },
     ...claudeConfigDirectories(env).map(directory => ({ harness: "claude" as const, directory: path.join(directory, "skills") })),
-  ];
-  return unique(directories, item => realDirectory(item.directory));
+  ].map(item => ({ ...item, key: realDirectory(item.directory), link: isLink(item.directory) }));
+  const chosen = new Map<string, typeof directories[number]>();
+  for (const item of directories) {
+    const first = chosen.get(item.key);
+    if (!first || (first.link && !item.link)) chosen.set(item.key, item);
+  }
+  return directories.filter(item => chosen.get(item.key) === item).map(({ harness, directory }) => ({ harness, directory }));
 }
 
 /**
@@ -123,8 +142,17 @@ function skillName(directory: string): string | undefined {
   return name || path.basename(directory);
 }
 
+/** Inside the repository and not inside a repository nested in it, such as a workspace's checkouts. */
+function inRepository(root: string, file: string): boolean {
+  if (!within(root, file)) return false;
+  for (let directory = file; directory !== root && within(root, directory); directory = path.dirname(directory)) {
+    if (existsSync(path.join(directory, ".git"))) return false;
+  }
+  return true;
+}
+
 /** Classify one link path against its intended target without changing anything. */
-function classify(file: string, target: string, skill: string): Pick<SkillLink, "status" | "current"> {
+function classify(root: string, file: string, target: string, skill: string): Pick<SkillLink, "status" | "current"> {
   let link: boolean;
   try { link = lstatSync(file).isSymbolicLink(); }
   catch (error) { if (errorCode(error) === "ENOENT") return { status: "create" }; throw error; }
@@ -136,7 +164,9 @@ function classify(file: string, target: string, skill: string): Pick<SkillLink, 
   if (resolved === target) return { status: "unchanged", current };
   const name = skillName(resolved);
   if (name === undefined) return { status: "repair", current };
-  return { status: name === skill ? "kept" : "conflict", current };
+  if (name !== skill) return { status: "conflict", current };
+  // This repository owns both copies, so the link moves to the one this harness should load.
+  return { status: inRepository(root, resolved) ? "repair" : "kept", current };
 }
 
 /** Whether a user skill directory exists; one that names anything but a directory is refused. */
@@ -167,7 +197,7 @@ export function planSkillLinks(rootDir: string, names: string[], env: Environmen
     const exists = directoryExists(directory);
     names.forEach((skill, index) => {
       const target = sources[harness][index]!, file = path.join(directory, skill);
-      links.push({ skill, directory, path: file, target, ...(exists ? classify(file, target, skill) : { status: "create" as const }) });
+      links.push({ skill, directory, path: file, target, ...(exists ? classify(root, file, target, skill) : { status: "create" as const }) });
     });
   }
   return links;
@@ -179,7 +209,7 @@ function replaceLink(link: SkillLink): void {
   symlinkSync(link.target, temporary, "dir");
   try {
     // Only a link is ever replaced, never a file or directory that appeared since the plan.
-    if (!lstatSync(link.path).isSymbolicLink()) throw new Error(`Refusing to replace ${link.path}, which is no longer a symbolic link.`);
+    if (!isLink(link.path)) throw new Error(`Refusing to replace ${link.path}, which is no longer a symbolic link.`);
     renameSync(temporary, link.path);
   } finally {
     try { unlinkSync(temporary); } catch (error) { if (errorCode(error) !== "ENOENT") throw error; }
@@ -187,21 +217,45 @@ function replaceLink(link: SkillLink): void {
 }
 
 /**
+ * Writes a plan's `create` and `repair` entries. Each write stands alone: one that fails, such as
+ * a create whose path was taken since the plan, records its `error` and the rest still run, so
+ * the result says exactly what was written. Nothing that is not a link is replaced or removed.
+ */
+export function applySkillLinks(changes: SkillLink[]): SkillLink[] {
+  return changes.map(change => {
+    if (change.status !== "create" && change.status !== "repair") return change;
+    try {
+      if (change.status === "create") {
+        mkdirSync(change.directory, { recursive: true, mode: 0o700 });
+        // Fails rather than overwrites if anything appeared since the plan.
+        symlinkSync(change.target, change.path, "dir");
+      } else replaceLink(change);
+      return change;
+    } catch (error) {
+      return { ...change, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+}
+
+/** A linked worktree's `.git` is a file naming a directory in the main repository's `worktrees/`. */
+function linkedWorktree(root: string): boolean {
+  const read = readRegularFile(path.join(root, ".git"));
+  const gitdir = read.status === "file" ? /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(read.contents)?.[1] : undefined;
+  return gitdir !== undefined && path.basename(path.dirname(path.resolve(root, gitdir))) === "worktrees";
+}
+
+/**
  * Previews by default. With `apply`, creates missing links, creating a missing skills directory
- * (mode 0700), and repairs broken ones; a conflict anywhere blocks every write, and nothing that
- * is not a link is ever replaced or removed.
+ * (mode 0700), and repairs broken ones. A conflict anywhere blocks every write. Links follow the
+ * checked-out working tree, so a linked worktree, which is removed when its work is done, is refused.
  */
 export function linkSkills(rootDir: string, names: string[], apply = false, env: Environment = process.env): { applied: boolean; changes: SkillLink[] } {
   const changes = planSkillLinks(rootDir, names, env);
   if (!apply || changes.some(change => change.status === "conflict")) return { applied: false, changes };
-  for (const change of changes) {
-    if (change.status === "create") {
-      mkdirSync(change.directory, { recursive: true, mode: 0o700 });
-      // Fails rather than overwrites if anything appeared since the plan.
-      symlinkSync(change.target, change.path, "dir");
-    } else if (change.status === "repair") replaceLink(change);
+  if (changes.some(change => change.status === "create" || change.status === "repair") && linkedWorktree(realpathSync(rootDir))) {
+    throw new Error("Refusing to link user-wide skills from a linked worktree, whose removal would break them; run skills link from the main checkout.");
   }
-  return { applied: true, changes };
+  return { applied: true, changes: applySkillLinks(changes) };
 }
 
 /** Read-only: ok while every declared link is unchanged or kept, so health reports can gate on it. */

@@ -130,7 +130,7 @@ For repository workflow commands added alongside these interfaces, see
 | `skills list` | List embedded portable skills |
 | `skills install [--harness all\|claude\|codex\|opencode\|hermes] [--apply]` | Preview by default; install or update managed skills |
 | `skills check [--harness all\|claude\|codex\|opencode\|hermes]` | Read-only CI check for current managed skills and the agent-tool version their manifest records |
-| `skills link [--apply]` | Preview by default; link each [user-wide skill](#user-wide-skills) that `skills.user` declares into `~/.agents/skills` and each Claude Code config directory's `skills`; exit 1 on a conflict |
+| `skills link [--apply]` | Preview by default; link each [user-wide skill](#user-wide-skills) that `skills.user` declares into `~/.agents/skills` and each Claude Code config directory's `skills`; exit 1 on a conflict or a failed write |
 | `skills check-links` | Read-only: the same entries, exiting 1 while any link is missing, broken, or conflicts |
 | `bun install [--cwd dir]` | Frozen-lockfile install with the Bun that `.mise.toml` pins; requires an existing lockfile |
 | `bun update <name[@version]>... [--cwd dir]` | Change versions of declared registry dependencies only, keeping each one's section |
@@ -604,6 +604,11 @@ link names the source's absolute real path. A declared name with neither
 source for either harness is an error before anything is read from the home
 directory, and so is a source that resolves outside the repository.
 
+The links point into the checkout's working tree, so every session loads
+whatever it has checked out: run `--apply` from a durable checkout that stays
+on its default branch. `--apply` refuses a linked worktree, whose removal
+would break the links; previews and `check-links` still work there.
+
 Claude Code reads user skills from `skills` in its config directory, and a
 second account can use another one through `CLAUDE_CONFIG_DIR`. The config
 directories are, in order:
@@ -620,9 +625,13 @@ directories are, in order:
 A directory reached twice counts once, by real path, as when
 `~/.claude2/skills` links to `~/.claude/skills` or `CLAUDE_CONFIG_DIR` names
 `~/.claude2`; the same holds between `~/.agents/skills` and a Claude Code
-skills directory. `HOME` names the home directory, and only existing config
+skills directory. It keeps the first name that is not itself a link, so a
+skills directory that links to one not created yet, such as `~/.claude/skills`
+to a missing `~/.agents/skills`, counts as that directory, which `--apply`
+then creates. `HOME` names the home directory, and only existing config
 directories count. `--apply` creates a missing `skills` directory inside one,
-and a missing `~/.agents/skills`, with mode 0700.
+and a missing `~/.agents/skills`, with mode 0700; any other skills path that
+is not a directory is an error.
 
 `skills link` prints `{ "applied": <bool>, "changes": [...] }`, with one entry
 per skill and directory: `skill`, `directory`, `path` (the link),
@@ -632,9 +641,9 @@ link's own text.
 | Status | At the link path | With `--apply` |
 | --- | --- | --- |
 | `create` | Nothing | Creates the link |
-| `repair` | A link that is dangling or does not resolve to a directory holding `SKILL.md` | Replaces the link atomically, through a temporary link and a rename |
+| `repair` | A link that is dangling, loops, does not resolve to a directory holding `SKILL.md`, or resolves to another copy of the skill in this repository | Replaces the link atomically, through a temporary link and a rename |
 | `unchanged` | A link that resolves to this repository's source | Nothing |
-| `kept` | A link to the same skill somewhere else, such as another clone of the repository | Nothing |
+| `kept` | A link to the same skill somewhere else, such as another clone of the repository, or a repository nested in this one | Nothing |
 | `conflict` | A file or directory, or a link to a different skill | Nothing anywhere: one conflict blocks every write |
 
 A linked directory holds the same skill when its `SKILL.md` front matter
@@ -642,7 +651,11 @@ A linked directory holds the same skill when its `SKILL.md` front matter
 `skills link` exits 1 when any entry conflicts, in a preview too, and leaves
 the occupant for you to move. Only the declared names are examined, so
 undeclared entries, `synced/` among them, are never touched, and nothing is
-ever deleted.
+ever deleted. A write is checked again as it happens: a create fails rather
+than overwrite something that appeared since the plan, and a repair refuses a
+path that is no longer a link. Such a failure adds `error` to its entry, the
+other writes still run, and the command exits 1, so the output says exactly
+what was written.
 
 `agent-tool skills check-links` is the read-only form for health reports. It
 prints `{ "ok": <bool>, "changes": [...] }` with the same entries and exits 1

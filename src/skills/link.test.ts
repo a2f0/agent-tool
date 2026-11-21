@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { checkSkillLinks, claudeConfigDirectories, linkSkills, planSkillLinks, skillSource, userSkillDirectories } from "./link";
+import { applySkillLinks, checkSkillLinks, claudeConfigDirectories, linkSkills, planSkillLinks, skillSource, userSkillDirectories } from "./link";
 
 const roots: string[] = [];
 /** Real paths, since macOS temporary directories sit behind a `/var` link. */
@@ -79,6 +79,25 @@ describe("Claude Code config directory discovery", () => {
     expect(userSkillDirectories({ HOME: directory }).map(item => item.directory)).toEqual([".agents/skills", ".claude/skills"].map(name => path.join(directory, name)));
     // Neither discovery nor planning creates anything.
     expect(existsSync(path.join(directory, ".agents"))).toBe(false);
+  });
+
+  test("a skills link to a directory not created yet counts once, under the real directory's name", () => {
+    const root = repository();
+    // ~/.claude/skills links to a ~/.agents/skills that does not exist yet.
+    const forward = home();
+    symlinkSync(path.join(forward, ".agents/skills"), path.join(forward, ".claude/skills"));
+    expect(userSkillDirectories({ HOME: forward }).map(item => path.relative(forward, item.directory))).toEqual([".agents/skills", ".claude2/skills"]);
+    expect(linkSkills(root, NAMES, true, { HOME: forward }).applied).toBe(true);
+    expect(readlinkSync(path.join(forward, ".claude/skills/explicit-state-machines"))).toBe(path.join(root, ".agents/skills/explicit-state-machines"));
+    expect(checkSkillLinks(root, NAMES, { HOME: forward }).ok).toBe(true);
+    // ~/.agents/skills links to a ~/.claude/skills that does not exist yet.
+    const backward = home();
+    mkdirSync(path.join(backward, ".agents"));
+    symlinkSync(path.join(backward, ".claude/skills"), path.join(backward, ".agents/skills"));
+    expect(userSkillDirectories({ HOME: backward }).map(item => `${item.harness} ${path.relative(backward, item.directory)}`)).toEqual(["claude .claude/skills", "claude .claude2/skills"]);
+    expect(linkSkills(root, NAMES, true, { HOME: backward }).applied).toBe(true);
+    expect(readlinkSync(path.join(backward, ".agents/skills/space-cleanup"))).toBe(path.join(root, "skills/space-cleanup"));
+    expect(checkSkillLinks(root, NAMES, { HOME: backward }).ok).toBe(true);
   });
 });
 
@@ -168,6 +187,23 @@ describe("skills link", () => {
     expect(checkSkillLinks(root, NAMES, env).ok).toBe(true);
   });
 
+  test("repairs a link loop and a link to another copy of the skill in this repository", () => {
+    const root = repository(), directory = home(), env = { HOME: directory };
+    const skills = path.join(directory, ".claude/skills");
+    mkdirSync(skills);
+    symlinkSync(path.join(skills, "loop"), path.join(skills, "space-cleanup"));
+    symlinkSync(path.join(skills, "space-cleanup"), path.join(skills, "loop"));
+    // Installing the managed copy for Claude Code moves the link from the Codex copy.
+    symlinkSync(path.join(root, ".agents/skills/explicit-state-machines"), path.join(skills, "explicit-state-machines"));
+    expect(summary(planSkillLinks(root, NAMES, env).filter(change => change.directory === skills), directory)).toEqual([".claude/skills space-cleanup repair", ".claude/skills explicit-state-machines repair"]);
+    linkSkills(root, NAMES, true, env);
+    expect(readlinkSync(path.join(skills, "space-cleanup"))).toBe(path.join(root, "skills/space-cleanup"));
+    expect(readlinkSync(path.join(skills, "explicit-state-machines"))).toBe(path.join(root, ".claude/skills/explicit-state-machines"));
+    // The undeclared half of the loop stays.
+    expect(readlinkSync(path.join(skills, "loop"))).toBe(path.join(skills, "space-cleanup"));
+    expect(checkSkillLinks(root, NAMES, env).ok).toBe(true);
+  });
+
   test("keeps links to the same skill in another clone, and that alone does not fail the check", () => {
     const root = repository(), directory = home(), clone = temporary(), env = { HOME: directory };
     linkSkills(root, NAMES, true, env);
@@ -186,6 +222,50 @@ describe("skills link", () => {
     expect(linkSkills(root, NAMES, true, env).applied).toBe(true);
     expect(readlinkSync(path.join(skills, "space-cleanup"))).toBe(path.join(clone, "skills/space-cleanup"));
     expect(readlinkSync(path.join(skills, "explicit-state-machines"))).toBe(path.join(clone, "renamed"));
+  });
+
+  test("a repository nested in this one, such as a workspace checkout, is another clone", () => {
+    const root = repository(), directory = home(), env = { HOME: directory };
+    const nested = path.join(root, "checkouts/other");
+    mkdirSync(path.join(nested, ".git"), { recursive: true });
+    skill(path.join(nested, "skills/space-cleanup"));
+    mkdirSync(path.join(directory, ".claude/skills"));
+    symlinkSync(path.join(nested, "skills/space-cleanup"), path.join(directory, ".claude/skills/space-cleanup"));
+    expect(planSkillLinks(root, NAMES, env).find(change => change.path === path.join(directory, ".claude/skills/space-cleanup"))?.status).toBe("kept");
+  });
+
+  test("a write that fails after the plan is reported on its entry while the others still apply", () => {
+    const root = repository(), directory = home(), elsewhere = temporary(), env = { HOME: directory };
+    const skills = path.join(directory, ".claude/skills");
+    mkdirSync(skills);
+    symlinkSync(path.join(elsewhere, "removed"), path.join(skills, "space-cleanup"));
+    const plan = planSkillLinks(root, NAMES, env);
+    // Since the plan, a directory replaced the dangling link and a file took a path to create.
+    unlinkSync(path.join(skills, "space-cleanup"));
+    skill(path.join(skills, "space-cleanup"));
+    mkdirSync(path.join(directory, ".claude2/skills"));
+    writeFileSync(path.join(directory, ".claude2/skills/explicit-state-machines"), "mine");
+    const applied = applySkillLinks(plan);
+    expect(applied.filter(change => change.error !== undefined).map(change => [path.relative(directory, change.path), change.status])).toEqual([[".claude/skills/space-cleanup", "repair"], [".claude2/skills/explicit-state-machines", "create"]]);
+    expect(applied.find(change => change.status === "repair")?.error).toBe(`Refusing to replace ${path.join(skills, "space-cleanup")}, which is no longer a symbolic link.`);
+    expect(applied.find(change => change.path.endsWith(".claude2/skills/explicit-state-machines"))?.error).toContain("EEXIST");
+    // Both occupants are untouched, no temporary link is left, and every other link was written.
+    expect(readFileSync(path.join(skills, "space-cleanup/SKILL.md"), "utf8")).toContain("name: space-cleanup");
+    expect(readFileSync(path.join(directory, ".claude2/skills/explicit-state-machines"), "utf8")).toBe("mine");
+    expect(readdirSync(skills).sort()).toEqual(["explicit-state-machines", "space-cleanup"]);
+    expect(applied.filter(change => change.error === undefined).every(change => readlinkSync(change.path) === change.target)).toBe(true);
+  });
+
+  test("a linked worktree may preview and check but not write links", () => {
+    const root = repository(), directory = home(), env = { HOME: directory };
+    writeFileSync(path.join(root, ".git"), "gitdir: /src/project/.git/worktrees/feature\n");
+    expect(linkSkills(root, NAMES, false, env).changes.every(change => change.status === "create")).toBe(true);
+    expect(checkSkillLinks(root, NAMES, env).ok).toBe(false);
+    expect(() => linkSkills(root, NAMES, true, env)).toThrow("Refusing to link user-wide skills from a linked worktree");
+    expect(existsSync(path.join(directory, ".agents"))).toBe(false);
+    // A submodule's .git file names a modules directory, so it links.
+    writeFileSync(path.join(root, ".git"), "gitdir: ../.git/modules/project\n");
+    expect(linkSkills(root, NAMES, true, env).applied).toBe(true);
   });
 
   test("a file, a directory, or a link to another skill is a conflict that blocks every write", () => {
