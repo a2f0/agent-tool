@@ -248,7 +248,8 @@ const VALUED_DIRECTIVES = new Set(["max-snippet", "max-image-preview", "max-vide
 /**
  * Whether a robots value keeps a page out of search: a whole `noindex` or
  * `none` directive, in a list separated by commas or spaces. A valued
- * directive such as `max-image-preview:none` never counts. In an
+ * directive such as `max-image-preview:none` never counts, nor does its value
+ * after a space (`max-image-preview: none`). In an
  * `X-Robots-Tag` header (`agentPrefix`), an element may begin with any other
  * `name:`, which names a crawler, as in `googlebot: none` or
  * `googlebot:noindex`; robots meta tags name the crawler in the tag instead.
@@ -258,7 +259,12 @@ export function blocksIndexing(value: string, agentPrefix: boolean): boolean {
     const tokens = element.trim().split(/\s+/);
     const colon = tokens[0]!.indexOf(":");
     if (agentPrefix && colon >= 0 && !VALUED_DIRECTIVES.has(tokens[0]!.slice(0, colon))) tokens[0] = tokens[0]!.slice(colon + 1);
-    return tokens.some(token => token === "noindex" || token === "none");
+    for (let index = 0; index < tokens.length; index++) {
+      const token = tokens[index]!;
+      if (token.endsWith(":") && VALUED_DIRECTIVES.has(token.slice(0, -1))) index++; // the next token is its value
+      else if (token === "noindex" || token === "none") return true;
+    }
+    return false;
   });
 }
 

@@ -297,9 +297,9 @@ one finding per line, as it learns each one:
   `X-Robots-Tag` or robots meta has a whole `noindex` or `none` directive;
   the five most repeated duplicate titles and descriptions; then
   `### <host>  sitemap URLs: N, with problems: M`. Directives are separated by
-  commas or spaces; a valued directive such as `max-image-preview:none` never
-  counts, and in the header any other `name:` prefix names a crawler, as in
-  `googlebot: none`.
+  commas or spaces; a valued directive such as `max-image-preview:none` or
+  `max-image-preview: none` never counts, and in the header any other `name:`
+  prefix names a crawler, as in `googlebot: none`.
 
 A `<result>` is `<status> <content-type>` of the final response, prefixed with
 `<first-status> -> <location> => ` when the first answer redirected; `000`
@@ -317,6 +317,8 @@ most 50 within a 20-second limit per URL (15 seconds for the reachability
 check and the `http://` root), and only `http:` and `https:` URLs are ever
 requested, including redirect targets, since `og:image`, sitemap entries,
 links, and `Location` come from remote markup. Bodies are read up to 64 MiB.
+Repeated header lines, such as two `X-Robots-Tag` headers, print joined with
+`, `, as HTTP combines them. Requests run one at a time.
 
 A URL the command line did not name (a link, sitemap entry, child sitemap, or
 `og:image`) and every redirect target must also resolve to public addresses
@@ -333,8 +335,6 @@ still resolving when the request's time limit runs out is refused, and the
 named host gets 15 seconds before it is treated as public. A name that
 resolves differently by the time `fetch` connects (DNS rebinding) is not
 caught.
-Repeated header lines, such as two `X-Robots-Tag` headers, print joined with
-`, `, as HTTP combines them. Requests run one at a time.
 
 Markup is matched with the shell probe's patterns over the HTML with newlines
 and tabs collapsed: double-quoted attributes only, case-insensitive names, the

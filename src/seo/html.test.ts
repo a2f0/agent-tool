@@ -98,6 +98,11 @@ test("only a whole noindex or none directive blocks indexing", () => {
     ["max-snippet:-1 noindex", true, true],
     ["max-snippet:-1, noindex", false, true],
     ["googlebot:max-image-preview:none nofollow", true, false],
+    ["max-image-preview: none", false, false],
+    ["max-image-preview: none", true, false],
+    ["googlebot: max-image-preview: none", true, false],
+    ["max-image-preview: none, noindex", false, true],
+    ["max-image-preview: none noindex", true, true],
     ["", true, false],
   ] as [string, boolean, boolean][]) expect({ value, header, blocks: blocksIndexing(value, header) }).toEqual({ value, header, blocks: expected });
 });
