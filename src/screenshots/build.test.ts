@@ -10,6 +10,8 @@ import { parseScreenshotManifest, type ScreenshotManifest } from "./manifest";
 const temporary = mkdtempSync(path.join(tmpdir(), "agent-tool-screenshots-"));
 afterAll(() => rmSync(temporary, { recursive: true, force: true }));
 const COMMIT = "0123456789abcdef0123456789abcdef01234567";
+// A SHA-256 repository's commit, as `screenshots capture` records it there.
+const COMMIT_SHA256 = `${COMMIT}0123456789abcdef01234567`;
 const png = (width: number, height: number, shade = 0) => encodePng({ width, height, channels: 3, data: new Uint8Array(width * height * 3).fill(shade) });
 const config = parseScreenshots({
   targets: {
@@ -52,6 +54,11 @@ const captures = {
 };
 
 describe("staging screenshots", () => {
+  test("accepts a SHA-256 repository's commit in the capture record", () => {
+    const root = repository(captures, { linked: true, record: { ...complete, commit: COMMIT_SHA256 } });
+    expect(buildScreenshots(root, config, []).capture?.commit).toBe(COMMIT_SHA256);
+  });
+
   test("copies listed captures in configured order with sizes, content versions, and the capture record", () => {
     const root = repository(captures, { linked: true, record: complete });
     const receipt = buildScreenshots(root, config, []);

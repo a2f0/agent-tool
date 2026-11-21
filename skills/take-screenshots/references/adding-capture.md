@@ -95,7 +95,7 @@ A website that publishes screenshots stages them with
 manifest, and it checks `.screenshots/capture.json` before and after copying.
 Every capture writes a `running` record before it touches an image, so an
 unchanged `complete` record on both sides proves no capture overlapped the
-copy. It refuses a capture that is not complete, names no 40-hex commit, is
+copy. It refuses a capture that is not complete, names no commit, is
 dirty, or changed meanwhile, and a linked, non-empty store with no record
 (its images have no known commit, as after `link` moves an older capture into
 the store). A missing or plain `.screenshots` (CI, an unlinked clone) builds

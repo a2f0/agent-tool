@@ -962,6 +962,16 @@ console.log(error ? "lost" : "won");
     expect(Object.keys(JSON.parse((await run(["capture", "--json"])).lines.join("\n")))).not.toContain("links");
   }, 30_000);
 
+  test("refuses a capture into another repository's namespace before linking any clone", async () => {
+    const { home, app } = workspace();
+    expect(await main(["link", "--apply"], app, undefined, print)).toBe(0);
+    const sibling = repo(path.join(home, "app-sibling"), ".screenshots\n");
+    gitIn(app, "remote", "set-url", "origin", "git@github.com:someone/app.git");
+    await expect(main(["capture", "--apply"], app, { capture: async () => ({ code: 0 }) }, print)).rejects.toThrow("not someone/app");
+    expect(lstatSync(path.join(sibling, LINK), { throwIfNoEntry: false })).toBeUndefined();
+    expect(githubRepo("git@github.com:-b/x.git")).toBeUndefined();
+  }, 30_000);
+
   test("refuses a held lock before linking any clone, and forwards --help after --", async () => {
     const { home, app } = workspace();
     expect(await main(["link", "--apply"], app, undefined, print)).toBe(0);

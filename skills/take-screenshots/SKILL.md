@@ -62,9 +62,9 @@ cannot run at all.
 4. Read the repository's capture docs for prerequisites (simulators, Maestro,
    Playwright browsers, seed data, mise-pinned tools). Maestro drives one
    device at a time on this machine: check for a running `maestro` first.
-5. Run `capture` as a dry run, then with `--apply` through the repository's
-   output capture (`bun run agent:run --label screenshots --
-   node_modules/.bin/agent-tool screenshots capture --apply`). Captures take
+5. Run `capture` as a dry run, then with `--apply` through output capture
+   (`agent-tool run --label screenshots -- agent-tool screenshots capture
+   --apply`, with the repository's pinned agent-tool for both). Captures take
    minutes; run them in the background and do not start a second one for the
    same project (the lock refuses it).
 6. Verify the result, not just the exit code: `status` shows `complete` at your

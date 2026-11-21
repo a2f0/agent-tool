@@ -91,7 +91,8 @@ and refuses:
 
 - a record whose `status` is not `complete` (`running`, `failed`,
   `incomplete`, ...);
-- a record that names no 40-hex `commit`, or is not `dirty: false`;
+- a record that names no commit (40 hex digits, or 64 in a SHA-256
+  repository), or is not `dirty: false`;
 - a record that changed while copying (a capture started); and
 - a non-empty store with no record that is linked, as the source or through
   a parent directory, since its images name no commit.

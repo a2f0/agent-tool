@@ -9,7 +9,7 @@ import { LINK, lexists, type Target, writeAtomic } from "./store";
 /** owner/name from a GitHub remote URL in the forms Git accepts; any other host is not GitHub. */
 export function githubRepo(url: string): string | undefined {
   const match =
-    /^(?:git@github\.com:|(?:ssh:\/\/)?git@github\.com\/|(?:https?|git|ssh):\/\/(?:[^@/\s]+@)?github\.com(?::\d+)?\/)([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?\/?$/.exec(
+    /^(?:git@github\.com:|(?:ssh:\/\/)?git@github\.com\/|(?:https?|git|ssh):\/\/(?:[^@/\s]+@)?github\.com(?::\d+)?\/)([A-Za-z0-9][A-Za-z0-9-]*)\/([A-Za-z0-9._-]+?)(?:\.git)?\/?$/.exec(
       url.trim(),
     );
   return match ? `${match[1]}/${match[2]}` : undefined;
@@ -25,10 +25,12 @@ function canonicalRepo(root: string, parsed?: string): Resolved | undefined {
   if (process.env.MATRIX_ARTIFACTS_NO_GH) return undefined;
   // Without a github.com origin there is no name to ask about, and bare `gh repo view` could answer for a fork's parent.
   if (!parsed) return undefined;
+  // Bounded: a stalled network falls back to origin's URL rather than hanging `status`.
   const result = spawnSync("gh", ["repo", "view", parsed, "--json", "nameWithOwner,id", "--jq", '.nameWithOwner + " " + .id'], {
     cwd: root,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
+    timeout: 20_000,
   });
   const [repo, id] = result.status === 0 ? result.stdout.trim().split(/\s+/) : [];
   return repo && /^[^/\s]+\/[^/\s]+$/.test(repo) ? { repo, ...(id ? { id } : {}) } : undefined;

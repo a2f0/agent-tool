@@ -141,6 +141,9 @@ export function planCapture(target: Target, artifacts: string, options: Omit<Cap
   }
   const state = linkState(target, artifacts);
   if (state.state !== "linked" && !willLink) throw new Error(`${target.name}/${LINK} is ${state.state}, not linked to the store; run \`link --apply\` first`);
+  // Refused here too, not only under the lock, so a capture into another repository's namespace links no clone.
+  const foreign = claimNamespace(target, artifacts, false);
+  if (foreign) throw new Error(foreign);
   const commit = gitValue(target.root, "rev-parse", "HEAD");
   if (!commit) throw new Error(`${target.name} has no commit to capture`);
   const dirty = isDirty(target.root);
