@@ -37,10 +37,10 @@ command they alias. `run`, `run-group`, and `push-gate run` execute arbitrary
 commands (the last runs a repository's declared push-gate steps), so they stay
 unclassified and keep the harness's default decision; do not add a broad
 `agent-tool *` allow rule, which would include them. `seo probe` stays
-unclassified too: it changes nothing, but it sends requests to whatever hosts
-its arguments and the fetched pages name, like `curl`, which harnesses also
-leave to their default, so an allow rule would let an agent send data to any
-host without a prompt. `src/permissions/catalog.ts` holds the
+unclassified too: it changes nothing, but it sends requests to whatever host
+its arguments name, and to the public hosts the fetched pages name, like
+`curl`, which harnesses also leave to their default, so an allow rule would
+let an agent send data to any host without a prompt. `src/permissions/catalog.ts` holds the
 table; a test checks that every entry names a command the CLI accepts.
 
 Direct package-manager and `gh` spellings receive no generated rules either.

@@ -1,13 +1,15 @@
 /**
  * `agent-tool seo probe`: a host's live search and preview metadata, for the
  * seo-optimization skill. It reports what the deployed site serves before
- * JavaScript runs; it changes nothing, but it requests whatever URLs its
- * arguments and the fetched pages name.
+ * JavaScript runs; it changes nothing, but it requests the URLs its arguments
+ * name and those the fetched pages name, the latter only on public addresses
+ * unless the named host is itself local.
  */
 import { writeSync } from "node:fs";
+import { addressGuard, type Guard } from "./address";
 import {
-  attr, attrValues, canonicalOf, clip, collapse, contentOf, first, internalLinks, isSitemapDocument,
-  length, lines, locs, matches, names, pngSize, robotsMeta, titleOf,
+  blocksIndexing, canonicalOf, clip, collapse, contentOf, h1Count, internalLinks, isSitemapDocument, jsonLdBlocks,
+  jsonLdTypes, langOf, length, lines, locs, ogProperties, pngSize, robotsMeta, robotsMetaContents, themeColors, titleOf,
 } from "./html";
 import { follow, request, type Followed, type Reply, type RequestOptions } from "./http";
 
@@ -31,6 +33,8 @@ exits 1 and a usage error exits 2. Set SEO_PROBE_USER_AGENT to send a browser
 user agent; SEO_PROBE_SCHEME (default https) exists for tests.`;
 
 type Mode = "full" | "page" | "headers" | "links" | "sitemap";
+/** Whether a URL is built from the command line's host and path, or taken from markup or a redirect. */
+type Source = "named" | "markup";
 const MODES: Record<string, Mode> = { "--page": "page", "--headers": "headers", "--links": "links", "--sitemap": "sitemap" };
 
 export interface ProbeOptions {
@@ -39,6 +43,8 @@ export interface ProbeOptions {
   paths: string[];
   scheme: "http" | "https";
   userAgent: string;
+  /** Refuses non-public hosts from markup; computed from the named host when absent, never switched off by omission. */
+  guard?: Guard;
 }
 
 class UsageError extends Error {}
@@ -85,14 +91,16 @@ export async function probe(options: ProbeOptions, print: (line: string) => void
   const bust = `seo-probe=${Math.floor(Date.now() / 1000)}`;
   const withBust = (url: string) => `${url}${url.includes("?") ? "&" : "?"}${bust}`;
   const unbust = (url: string) => url.replace(new RegExp(`[?&]${bust}`), "");
-  const web = (seconds: number, body = true): RequestOptions => ({ userAgent: options.userAgent, seconds, body });
+  // URLs built from the command line are "named"; those from markup and redirects pass the guard.
+  const guard = options.guard ?? await addressGuard(host);
+  const web = (seconds: number, source: Source, body = true): RequestOptions => ({ userAgent: options.userAgent, seconds, body, guard, named: source === "named" });
 
-  const reachable = await request(`${origin}/`, web(15, false));
+  const reachable = await request(`${origin}/`, web(15, "named", false));
   if (reachable.code === "000") { print(`### ${host}  does not respond: ${reachable.error ?? ""}`); return 1; }
 
   if (mode === "headers") {
     for (const path of paths) {
-      const reply = await request(withBust(origin + path), web(20, false));
+      const reply = await request(withBust(origin + path), web(20, "named", false));
       const location = unbust(reply.location);
       print(`${host}${path}  ${reply.code}  x-robots-tag: ${tag(reply)}  type: ${reply.contentType || "-"}${location ? `  -> ${location}` : ""}`);
     }
@@ -101,7 +109,7 @@ export async function probe(options: ProbeOptions, print: (line: string) => void
 
   if (mode === "links") {
     const path = paths[0] ?? "/";
-    const page = await follow(withBust(origin + path), web(20));
+    const page = await follow(withBust(origin + path), web(20, "named"));
     const pageResult = describe(page);
     if (!okHtml(pageResult)) { print(`### ${host}${path}  page: ${pageResult}  (cannot audit its links)`); return 1; }
     const finalUrl = new URL(page.final.url);
@@ -109,7 +117,7 @@ export async function probe(options: ProbeOptions, print: (line: string) => void
     const links = internalLinks(collapse(decode(page.final.body)), finalUrl);
     let bad = 0;
     for (const link of links) {
-      const reply = await request(withBust(link), web(20, false));
+      const reply = await request(withBust(link), web(20, "markup", false));
       if (reply.code === "200") continue;
       bad++;
       print(`  ${link.startsWith(finalOrigin) ? link.slice(finalOrigin.length) : link}  ${reply.code}${reply.location ? ` -> ${reply.location}` : ""}`);
@@ -123,7 +131,7 @@ export async function probe(options: ProbeOptions, print: (line: string) => void
   if (mode === "sitemap") return sitemap(host, origin, withBust, web, print);
 
   const path = paths[0] ?? "/";
-  const page = await follow(withBust(origin + path), web(20));
+  const page = await follow(withBust(origin + path), web(20, "named"));
   const body = collapse(decode(page.final.body));
   const title = titleOf(body);
   const description = contentOf(body, "description");
@@ -133,17 +141,17 @@ export async function probe(options: ProbeOptions, print: (line: string) => void
   print(`  description (${length(description)} chars): ${clip(description)}`);
   print(`  canonical: ${canonicalOf(body)}`);
   print(`  robots meta: ${robotsMeta(body)}`);
-  print(`  lang: ${attr(first(body, '<html[^>]*lang="[^"]*"'), "lang")}`);
-  print(`  theme-color: ${matches(body, '<meta[^>]+name="theme-color"[^>]*>').flatMap(meta => attrValues(meta, "content")).map(value => `${value} `).join("")}`);
-  print(`  og: ${names(body, 'property="og:[a-z_:]+"').replace(/property=/g, "")}`);
+  print(`  lang: ${langOf(body)}`);
+  print(`  theme-color: ${themeColors(body)}`);
+  print(`  og: ${ogProperties(body)}`);
   print(`  og:url: ${contentOf(body, "og:url")}`);
   print(`  twitter:card: ${contentOf(body, "twitter:card")}`);
-  print(`  json-ld blocks: ${matches(body, "application/ld\\+json").length}`);
-  print(`  json-ld types (including nested): ${names(body, '"@type": *("[A-Za-z]+"|\\[[^\\]]*\\])').replace(/"@type": */g, "")}`);
-  print(`  h1 count (static HTML, before JavaScript): ${matches(body, "<h1[ >]").length}`);
+  print(`  json-ld blocks: ${jsonLdBlocks(body)}`);
+  print(`  json-ld types (including nested): ${jsonLdTypes(body)}`);
+  print(`  h1 count (static HTML, before JavaScript): ${h1Count(body)}`);
   const image = contentOf(body, "og:image");
   if (image) {
-    const fetched = await follow(withBust(image), web(20));
+    const fetched = await follow(withBust(image), web(20, "markup"));
     const size = pngSize(fetched.final.body);
     print(`  og:image: ${image} [${describe(fetched)}] ${size ? `size ${size}` : ""} x-robots-tag: ${tag(fetched.final)}`);
   } else {
@@ -151,7 +159,7 @@ export async function probe(options: ProbeOptions, print: (line: string) => void
   }
   if (mode === "page") return 0;
 
-  const robots = await follow(withBust(`${origin}/robots.txt`), web(20));
+  const robots = await follow(withBust(`${origin}/robots.txt`), web(20, "named"));
   const robotsText = decode(robots.final.body);
   const robotsLines = lines(robotsText);
   let robotsResult = describe(robots);
@@ -170,17 +178,17 @@ export async function probe(options: ProbeOptions, print: (line: string) => void
       for (const line of sitemaps) print(`    | ${line.replace(/\r/g, "")}`);
     }
   }
-  const sitemapReply = await follow(withBust(`${origin}/sitemap.xml`), web(20));
+  const sitemapReply = await follow(withBust(`${origin}/sitemap.xml`), web(20, "named"));
   let sitemapResult = describe(sitemapReply);
   if (sitemapResult.includes("text/html")) sitemapResult += "  (HTML, not a sitemap)";
   print(`  sitemap.xml: ${sitemapResult}  urls: ${decode(sitemapReply.final.body).split("<loc>").length - 1}`);
-  const missing = await follow(withBust(`${origin}/seo-probe-missing-page`), web(20));
+  const missing = await follow(withBust(`${origin}/seo-probe-missing-page`), web(20, "named"));
   print(`  missing path: ${describe(missing)}  body: ${missing.final.body.length} bytes  title: ${titleOf(collapse(decode(missing.final.body)))}`);
-  const nested = await follow(withBust(`${origin}/seo-probe/missing/page`), web(20));
+  const nested = await follow(withBust(`${origin}/seo-probe/missing/page`), web(20, "named"));
   print(`  nested missing path: ${describe(nested)}  body: ${nested.final.body.length} bytes`);
-  const error = await follow(withBust(`${origin}/404`), web(20));
+  const error = await follow(withBust(`${origin}/404`), web(20, "named"));
   print(`  /404: ${describe(error)}  robots meta: ${robotsMeta(collapse(decode(error.final.body)))}  x-robots-tag: ${tag(error.final)}`);
-  const http = await request(withBust(`http://${host}/`), web(15, false));
+  const http = await request(withBust(`http://${host}/`), web(15, "named", false));
   const httpResult = unbust(`${http.code} ${http.location}`);
   const httpNote = /^30[178] https:\/\//.test(httpResult) ? "redirects to HTTPS" : "does not redirect to HTTPS";
   print(`  http:// root: ${httpResult}  (${httpNote})  x-robots-tag: ${tag(http)}`);
@@ -188,8 +196,8 @@ export async function probe(options: ProbeOptions, print: (line: string) => void
 }
 
 /** Every URL in the sitemap, through one level of sitemap index, without following redirects. */
-async function sitemap(host: string, origin: string, withBust: (url: string) => string, web: (seconds: number, body?: boolean) => RequestOptions, print: (line: string) => void): Promise<number> {
-  const index = await follow(withBust(`${origin}/sitemap.xml`), web(20));
+async function sitemap(host: string, origin: string, withBust: (url: string) => string, web: (seconds: number, source: Source, body?: boolean) => RequestOptions, print: (line: string) => void): Promise<number> {
+  const index = await follow(withBust(`${origin}/sitemap.xml`), web(20, "named"));
   const indexResult = describe(index);
   const indexBody = decode(index.final.body);
   if (!okStatus(indexResult) || !isSitemapDocument(indexBody)) { print(`### ${host}  sitemap.xml: ${indexResult}  (not a sitemap document)`); return 1; }
@@ -198,7 +206,7 @@ async function sitemap(host: string, origin: string, withBust: (url: string) => 
   if (indexBody.includes("<sitemapindex")) {
     const children: string[] = [];
     for (const child of urls) {
-      const reply = await follow(withBust(child), web(20));
+      const reply = await follow(withBust(child), web(20, "markup"));
       const result = describe(reply);
       const body = decode(reply.final.body);
       if (okStatus(result) && isSitemapDocument(body) && body.includes("<urlset")) children.push(...locs(body));
@@ -208,14 +216,13 @@ async function sitemap(host: string, origin: string, withBust: (url: string) => 
   }
   const titles: string[] = [], descriptions: string[] = [];
   for (const url of urls) {
-    const reply = await request(withBust(url), web(20));
+    const reply = await request(withBust(url), web(20, "markup"));
     const body = collapse(decode(reply.body));
     const canonical = canonicalOf(body);
-    const robots = ` ${`${reply.robotsTag} ${robotsMeta(body)}`.toLowerCase()} `;
     let note = "";
     if (reply.code !== "200") note += ` status ${reply.code};`;
     if (canonical !== url) note += ` canonical ${canonical || "missing"};`;
-    if (robots.includes("noindex") || /[ ,:]none[ ,]/.test(robots)) note += " noindex;";
+    if (blocksIndexing(reply.robotsTag, true) || robotsMetaContents(body).some(content => blocksIndexing(content, false))) note += " noindex;";
     if (note) { problems++; print(`  ${url}:${note}`); }
     titles.push(titleOf(body));
     descriptions.push(contentOf(body, "description"));

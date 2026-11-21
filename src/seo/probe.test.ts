@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import path from "node:path";
+import { addressGuard } from "./address";
 import { keepsRepeatedHeaders, parseProbe, probe, seoCommand } from "./probe";
 
 // The probe runs against local fixture servers, so its parsing, redirect, and
@@ -390,4 +391,68 @@ test("probe reports through the given printer", async () => {
   const status = await probe({ mode: "headers", host: siteHost, paths: ["/about/"], scheme: "http", userAgent: "seo-probe" }, line => { lines.push(line); });
   expect(status).toBe(0);
   expect(lines).toEqual([`${siteHost}/about/  200  x-robots-tag: (absent)  type: text/html`]);
+}, 30_000);
+
+test("--sitemap counts only whole noindex and none directives", async () => {
+  let origin = "";
+  const directives = Bun.serve({
+    hostname: "127.0.0.1", port: 0, fetch: request => {
+      const path = new URL(request.url).pathname;
+      const meta = (content: string) => `<meta name="robots" content="${content}">`;
+      const html = (title: string, extra = "", headers: Record<string, string> = {}) => new Response(
+        `<html><head><title>${title}</title><meta name="description" content="${title}"><link rel="canonical" href="${origin}${path}">${extra}</head></html>`,
+        { headers: { "content-type": "text/html", ...headers } },
+      );
+      switch (path) {
+        case "/sitemap.xml":
+          return new Response(`<urlset>${["/preview", "/agent-preview", "/header-noindex", "/agent-none", "/meta-none"].map(entry => `<url><loc>${origin}${entry}</loc></url>`).join("")}</urlset>`, { headers: { "content-type": "application/xml" } });
+        case "/preview": return html("Preview", meta("index, follow, max-image-preview:none, max-snippet:-1"));
+        case "/agent-preview": return html("Agent preview", "", { "x-robots-tag": "googlebot: max-image-preview:none" });
+        case "/header-noindex": return html("Header noindex", "", { "x-robots-tag": "noindex" });
+        case "/agent-none": return html("Agent none", "", { "x-robots-tag": "googlebot: none" });
+        case "/meta-none": return html("Meta none", meta("NONE"));
+        default: return new Response("ok", { headers: { "content-type": "text/html" } });
+      }
+    },
+  });
+  try {
+    const host = `127.0.0.1:${directives.port}`;
+    origin = `http://${host}`;
+    const { stdout, exitCode } = await run("--sitemap", host);
+    expect(exitCode).toBe(1);
+    expect(stdout).not.toContain("/preview:");
+    expect(stdout).not.toContain("/agent-preview:");
+    expect(stdout).toContain(`${origin}/header-noindex: noindex;`);
+    expect(stdout).toContain(`${origin}/agent-none: noindex;`);
+    expect(stdout).toContain(`${origin}/meta-none: noindex;`);
+    expect(stdout).toContain("sitemap URLs: 5, with problems: 3");
+  } finally { directives.stop(true); }
+}, 30_000);
+
+test("URLs from markup and redirects never reach a non-public address when the named host is public", async () => {
+  // As if the command line had named a public host: this site's own loopback address now comes only from markup.
+  const guard = await addressGuard("public.example", async () => ["93.184.216.34"]);
+  const lines: string[] = [];
+  const named = (mode: "page" | "links" | "sitemap", path?: string) => probe({ mode, host: siteHost, paths: path ? [path] : [], scheme: "http", userAgent: "seo-probe", guard }, line => { lines.push(line); });
+  const origin = `http://${siteHost}`;
+
+  expect(await named("page", "/")).toBe(0);
+  // The named page loads; its og:image, on a loopback address, is refused without a request.
+  expect(lines[0]).toBe(`### ${siteHost}/  [200 text/html]`);
+  expect(lines).toContain(`  og:image: ${origin}/og-image.png [000 ]  x-robots-tag: (absent)`);
+
+  lines.length = 0;
+  expect(await named("page", "/elsewhere")).toBe(0);
+  // A redirect to a non-public address ends the chain at that redirect.
+  expect(lines[0]).toBe(`### ${siteHost}/elsewhere  [302 -> http://${indexedHost}/ => 302 ]`);
+
+  lines.length = 0;
+  expect(await named("links", "/")).toBe(1);
+  expect(lines).toContain("  /about/  000");
+  expect(lines.at(-1)).toBe(`### ${siteHost}/  internal links in the static HTML: 6, not a direct 200: 6`);
+
+  lines.length = 0;
+  expect(await named("sitemap")).toBe(1);
+  expect(lines).toContain(`  ${origin}/about/: status 000; canonical missing;`);
+  expect(lines.at(-1)).toBe(`### ${siteHost}  sitemap URLs: 7, with problems: 7`);
 }, 30_000);
