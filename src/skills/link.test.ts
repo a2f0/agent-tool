@@ -406,8 +406,9 @@ describe("skills link CLI", () => {
   const cli = path.resolve(import.meta.dir, "../index.ts");
   test("previews, applies, and checks for --repo with exit codes health reports can use", () => {
     const root = repository(), directory = home(), cwd = temporary();
-    // A hook running the suite can export Git's repository variables; keep every call on the fixture.
-    const clean = { ...process.env };
+    // A hook running the suite can export Git's repository variables, and user or system config can
+    // add hooks and templates; keep every call on the fixture alone.
+    const clean: Record<string, string | undefined> = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
     for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_PREFIX"]) delete clean[name];
     expect(spawnSync("git", ["init", "--quiet", root], { env: clean }).status).toBe(0);
     writeFileSync(path.join(root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, skills: { user: NAMES } }));
