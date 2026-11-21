@@ -135,8 +135,9 @@ export function parseConfig(source: string): AgentToolConfig {
   }
   const variants = object(result.review.opencodeVariants, "review.opencodeVariants");
   keys(variants, ["low", "medium", "high", "xhigh", "max"], "review.opencodeVariants");
-  for (const value of Object.values(variants)) if (typeof value !== "string" || !/^[^\s]+$/.test(value)) invalid("review.opencodeVariants");
-  if (typeof result.review.opencodeModel !== "string" || !/^[^\s/]+\/[^\s]+$/.test(result.review.opencodeModel)) invalid("review.opencodeModel");
+  // OpenCode 2 takes the model as provider/model#variant, so neither part may contain '#'.
+  for (const value of Object.values(variants)) if (typeof value !== "string" || !/^[^\s#]+$/.test(value)) invalid("review.opencodeVariants");
+  if (typeof result.review.opencodeModel !== "string" || !/^[^\s/#]+\/[^\s#]+$/.test(result.review.opencodeModel)) invalid("review.opencodeModel");
   if (!Number.isSafeInteger(result.review.timeoutMs) || result.review.timeoutMs < 1000 || result.review.timeoutMs > 3_600_000) invalid("review.timeoutMs");
   const packageDirs = (dirs: unknown): boolean => strings(dirs) && !dirs.some(dir => dir !== "." && (path.isAbsolute(dir) || dir.includes("\\") || dir.split("/").some(part => !part || part === "." || part === "..")));
   if (result.versions.packages !== null && !packageDirs(result.versions.packages)) invalid("versions.packages");

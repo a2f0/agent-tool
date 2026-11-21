@@ -6,7 +6,8 @@ const specifications = [
   { name: "gh", help: ["pr", "checks", "--help"], flags: ["--json"] },
   { name: "claude", help: ["--help"], flags: ["--safe-mode", "--permission-mode", "--effort"] },
   { name: "codex", help: ["exec", "--help"], flags: ["--ignore-user-config", "--ignore-rules", "--strict-config", "--ephemeral", "--output-last-message"] },
-  { name: "opencode", help: ["run", "--help"], flags: ["--pure", "--variant", "--agent"] },
+  // OpenCode 2: the variant rides in --model as provider/model#variant, and --standalone runs a private server.
+  { name: "opencode", help: ["run", "--help"], flags: ["--standalone", "--agent", "--archived", "provider/model#variant"] },
 ];
 
 /** Probe only local versions and flags; never launch a model or print credentials. */
