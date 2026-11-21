@@ -21,12 +21,13 @@ export interface UserSkillDirectory { harness: UserSkillHarness; directory: stri
  * skill. Only `create` and `repair` are ever written.
  */
 export type SkillLinkStatus = "create" | "repair" | "unchanged" | "kept" | "conflict";
+/** One declared skill in one user skill directory: `status` is the plan's classification and `current` an existing link's own text. */
+export interface SkillLinkPlan { skill: string; directory: string; path: string; target: string; status: SkillLinkStatus; current?: string }
 /**
- * One declared skill in one user skill directory. `status` is the plan's classification and
- * `current` an existing link's own text. Only an applied write sets `result`: `written`, or
- * `failed` with `error` saying why; an entry without one was not written.
+ * A planned entry and, only when an applied write was attempted, its `result`: `written`, or
+ * `failed` with `error` saying why. An entry without one was not written.
  */
-export interface SkillLink { skill: string; directory: string; path: string; target: string; status: SkillLinkStatus; current?: string; result?: "written" | "failed"; error?: string }
+export type SkillLink = SkillLinkPlan & ({ result?: never; error?: never } | { result: "written"; error?: never } | { result: "failed"; error: string });
 
 type Environment = Record<string, string | undefined>;
 const errorCode = (error: unknown) => (error as NodeJS.ErrnoException).code ?? "";
@@ -148,17 +149,22 @@ function skillName(directory: string): string | undefined {
   return name || path.basename(directory);
 }
 
+/** Whether anything, even a dangling link, exists at `file`; an entry that cannot be inspected counts. */
+function hasEntry(file: string): boolean {
+  try { lstatSync(file); return true; } catch (error) { return errorCode(error) !== "ENOENT"; }
+}
+
 /** Inside the repository and not inside a repository nested in it, such as a workspace's checkouts. */
 function inRepository(root: string, file: string): boolean {
   if (!within(root, file)) return false;
   for (let directory = file; directory !== root && within(root, directory); directory = path.dirname(directory)) {
-    if (existsSync(path.join(directory, ".git"))) return false;
+    if (hasEntry(path.join(directory, ".git"))) return false;
   }
   return true;
 }
 
 /** Classify one link path against its intended target without changing anything. */
-function classify(root: string, file: string, target: string, skill: string): Pick<SkillLink, "status" | "current"> {
+function classify(root: string, file: string, target: string, skill: string): Pick<SkillLinkPlan, "status" | "current"> {
   let link: boolean;
   try { link = lstatSync(file).isSymbolicLink(); }
   catch (error) { if (errorCode(error) === "ENOENT") return { status: "create" }; throw error; }
@@ -192,14 +198,14 @@ function directoryExists(directory: string): boolean {
  * harnesses, so a declaration without one fails on every machine and before anything is read
  * from home. Only the declared names are ever examined.
  */
-export function planSkillLinks(rootDir: string, names: string[], env: Environment = process.env): SkillLink[] {
+export function planSkillLinks(rootDir: string, names: string[], env: Environment = process.env): SkillLinkPlan[] {
   if (!names.length) return [];
   const root = realpathSync(rootDir);
   const sources = {
     agents: names.map(name => skillSource(root, "agents", name)),
     claude: names.map(name => skillSource(root, "claude", name)),
   };
-  const links: SkillLink[] = [];
+  const links: SkillLinkPlan[] = [];
   for (const { harness, directory } of userSkillDirectories(env)) {
     const exists = directoryExists(directory);
     names.forEach((skill, index) => {
@@ -216,7 +222,7 @@ export function planSkillLinks(rootDir: string, names: string[], env: Environmen
  * just before the rename. Node has no exchanging rename, so a writer racing that instant is
  * outside this guard; only another process writing the user's skill directories could do it.
  */
-function replaceLink(link: SkillLink): void {
+function replaceLink(link: SkillLinkPlan): void {
   const temporary = path.join(link.directory, `.${link.skill}.agent-tool-${randomUUID()}.tmp`);
   symlinkSync(link.target, temporary, "dir");
   let renamed = false;
@@ -236,10 +242,13 @@ function replaceLink(link: SkillLink): void {
 /**
  * Writes a plan's `create` and `repair` entries. Each write stands alone: one that fails, such as
  * a create whose path was taken since the plan, records its `error` and the rest still run, so
- * the result says exactly what was written. Nothing that is not a link is replaced or removed.
+ * the result says exactly what was written. Nothing that is not a link is replaced or removed,
+ * and a plan with a conflict writes nothing. `linkSkills` also refuses linked worktrees first;
+ * this is exported so tests can change the filesystem between the plan and the writes.
  */
-export function applySkillLinks(changes: SkillLink[]): SkillLink[] {
-  return changes.map(change => {
+export function applySkillLinks(changes: SkillLinkPlan[]): SkillLink[] {
+  if (changes.some(change => change.status === "conflict")) return changes;
+  return changes.map((change): SkillLink => {
     if (change.status !== "create" && change.status !== "repair") return change;
     try {
       if (change.status === "create") {
@@ -247,9 +256,9 @@ export function applySkillLinks(changes: SkillLink[]): SkillLink[] {
         // Fails rather than overwrites if anything appeared since the plan.
         symlinkSync(change.target, change.path, "dir");
       } else replaceLink(change);
-      return { ...change, result: "written" as const };
+      return { ...change, result: "written" };
     } catch (error) {
-      return { ...change, result: "failed" as const, error: error instanceof Error ? error.message : String(error) };
+      return { ...change, result: "failed", error: error instanceof Error ? error.message : String(error) };
     }
   });
 }
@@ -263,6 +272,14 @@ export function applySkillLinks(changes: SkillLink[]): SkillLink[] {
  * worktree's `modules/`. The walk stops at the outermost Git directory, so a stray `commondir`
  * above the repository never counts.
  */
+/** Whether a directory is, or is inside, a `modules` directory of a Git directory. */
+function insideModules(directory: string): boolean {
+  for (let current = directory; path.dirname(current) !== current; current = path.dirname(current)) {
+    if (path.basename(current) === "modules" && existsSync(path.join(path.dirname(current), "HEAD"))) return true;
+  }
+  return false;
+}
+
 function linkedWorktree(root: string): boolean {
   const read = readRegularFile(path.join(root, ".git"));
   const gitdir = read.status === "file" ? /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(read.contents)?.[1] : undefined;
@@ -271,8 +288,9 @@ function linkedWorktree(root: string): boolean {
     if (existsSync(path.join(directory, "commondir"))) return true;
     const parent = path.dirname(directory);
     if (parent === directory || path.basename(directory) === ".git") return false;
-    // A Git directory with no `modules` directory above it is the outermost, as with `--separate-git-dir`.
-    if (existsSync(path.join(directory, "HEAD")) && !parent.split(path.sep).includes("modules")) return false;
+    // A Git directory that is not a submodule's, under another Git directory's `modules/`, is the
+    // outermost, as with `--separate-git-dir`.
+    if (existsSync(path.join(directory, "HEAD")) && !insideModules(parent)) return false;
   }
 }
 

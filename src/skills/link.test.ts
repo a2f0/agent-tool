@@ -242,7 +242,14 @@ describe("skills link", () => {
     skill(path.join(nested, "skills/space-cleanup"));
     mkdirSync(path.join(directory, ".claude/skills"));
     symlinkSync(path.join(nested, "skills/space-cleanup"), path.join(directory, ".claude/skills/space-cleanup"));
-    expect(planSkillLinks(root, NAMES, env).find(change => change.path === path.join(directory, ".claude/skills/space-cleanup"))?.status).toBe("kept");
+    const status = () => planSkillLinks(root, NAMES, env).find(change => change.path === path.join(directory, ".claude/skills/space-cleanup"))?.status;
+    expect(status()).toBe("kept");
+    // A `.git` entry of any kind marks a nested repository, even a dangling link.
+    rmSync(path.join(nested, ".git"), { recursive: true });
+    symlinkSync(path.join(nested, "gone"), path.join(nested, ".git"));
+    expect(status()).toBe("kept");
+    unlinkSync(path.join(nested, ".git"));
+    expect(status()).toBe("repair");
   });
 
   test("a write that fails after the plan is reported on its entry while the others still apply", () => {
@@ -256,6 +263,8 @@ describe("skills link", () => {
     skill(path.join(skills, "space-cleanup"));
     mkdirSync(path.join(directory, ".claude2/skills"));
     writeFileSync(path.join(directory, ".claude2/skills/explicit-state-machines"), "mine");
+    // A plan with a conflict writes nothing, even through the exported apply.
+    expect(applySkillLinks([...plan, { ...plan[0]!, status: "conflict" }]).some(change => change.result !== undefined)).toBe(false);
     const applied = applySkillLinks(plan);
     expect(applied.filter(change => change.result === "failed").map(change => [path.relative(directory, change.path), change.status])).toEqual([[".claude/skills/space-cleanup", "repair"], [".claude2/skills/explicit-state-machines", "create"]]);
     expect(applied.filter(change => change.result !== "failed").every(change => change.result === "written" && change.error === undefined)).toBe(true);
@@ -321,7 +330,7 @@ describe("skills link", () => {
     writeFileSync(path.join(main, ".git/HEAD"), "ref: refs/heads/main\n");
     writeFileSync(path.join(root, ".git"), `gitdir: ${path.relative(root, path.join(main, ".git/modules/project"))}\n`);
     expect(linkSkills(root, NAMES, false, env).changes.every(change => change.status === "create")).toBe(true);
-    const separate = path.join(outer, "separate/project-git");
+    const separate = path.join(outer, "modules/project-git");
     mkdirSync(separate, { recursive: true });
     writeFileSync(path.join(separate, "HEAD"), "ref: refs/heads/main\n");
     writeFileSync(path.join(root, ".git"), `gitdir: ${separate}\n`);

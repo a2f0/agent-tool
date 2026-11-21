@@ -671,8 +671,9 @@ while any is `create`, `repair`, or `conflict`; `kept` is not a failure. With
 no declared user skills, both commands print an empty `changes` list and exit
 0. Both run in a Git checkout and read its top level's `agent-tool.json`, from
 any directory inside it, and both accept the global `--repo <directory>`, so a
-workspace can link its checkouts' skills with its own pinned agent-tool. Restart a harness session if
-newly linked skills do not appear. Because `--apply` writes outside the
+workspace can link its checkouts' skills with its own pinned agent-tool.
+Restart a harness session if newly linked skills do not appear. Because
+`--apply` writes outside the
 checkout, into directories every session loads, it is in the `policy`
 permission class, which covers creating the links, not later changes to the
 files they point at ([permissions](permissions.md#what-the-rules-protect)).
