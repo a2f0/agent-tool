@@ -24,7 +24,7 @@ out of agent sessions where that matters.
 
 | Class | Decision | Commands |
 | --- | --- | --- |
-| `read` | allow | Context, checks, listings, previews, diagnostics, logs, and read-only scans such as `state-machines`, `push-gate hook\|check`, `repo base-health`, and `review carry` |
+| `read` | allow | Context, checks, listings, previews, diagnostics, logs, and read-only scans such as `state-machines`, `push-gate hook\|check`, `repo base-health`, `review carry`, and `perf diff` |
 | `local` | allow | `bun install\|update\|remove\|test`, `bun x` for executables classified `local`, `branch create`, `versions`, `images build`, `screenshots build`, `review` (other than `review carry`), `teardown --apply`, and applied skill or hook installs |
 | `share` | allow | `branch push`, `pr open`, `pr cancel-runs`, `pr threads reply\|resolve`, `repo cleanup --apply` |
 | `release` | ask | `pr merge` and executables classified `release` |
@@ -40,7 +40,14 @@ unclassified and keep the harness's default decision; do not add a broad
 unclassified too: it changes nothing, but it sends requests to whatever host
 its arguments name, and to the public hosts the fetched pages name, like
 `curl`, which harnesses also leave to their default, so an allow rule would
-let an agent send data to any host without a prompt. `src/permissions/catalog.ts` holds the
+let an agent send data to any host without a prompt. For the same reason
+`perf measure` and `perf shot`, which open any URL in Chrome and evaluate the
+JavaScript their arguments give, `perf serve`, which serves a directory to
+every local user, and `perf graph`, whose `--out` overwrites whatever file it
+names, keep the default, and so does `space`: its dry run is harmless, but its
+`--apply` removes output in other checkouts and developer caches across the
+machine (with `--include-busy`, even where other sessions are working), and a
+prefix rule cannot tell the two apart. `src/permissions/catalog.ts` holds the
 table; a test checks that every entry names a command the CLI accepts.
 
 Direct package-manager and `gh` spellings receive no generated rules either.

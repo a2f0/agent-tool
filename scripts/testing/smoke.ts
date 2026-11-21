@@ -97,6 +97,14 @@ try {
   assert.deepEqual(JSON.parse(images.stdout).targets[0].written, ["public/icon.png"]);
   const icon = readFileSync(path.join(repository, "public/icon.png"));
   assert.deepEqual([icon.readUInt32BE(16), icon.readUInt32BE(20), icon[25]], [48, 48, 2], "the embedded renderer writes an opaque PNG");
+  assert.equal(JSON.parse(run("perf", "diff", path.join(repository, "public/icon.png"), path.join(repository, "public/icon.png")).stdout).differing, 0, "the embedded PNG decoder diffs screenshots");
+  writeFileSync(path.join(repository, ".gitignore"), ".turbo\n");
+  mkdirSync(path.join(repository, ".turbo"));
+  writeFileSync(path.join(repository, ".turbo/cache"), "x");
+  const space = run("space", "--json", "--include-busy");
+  assert.equal(space.status, 0, space.stderr);
+  assert.deepEqual(JSON.parse(space.stdout).repos[0].candidates.map((candidate: { path: string }) => candidate.path), [".turbo"], "disk cleanup previews without Bun");
+  assert.ok(existsSync(path.join(repository, ".turbo/cache")));
   // The embedded runtime's fetch probes a local site; the server answers while the binary runs.
   const site = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response('<html lang="en"><title>Smoke Site</title><meta name="robots" content="noindex"></html>', { headers: { "content-type": "text/html", "x-robots-tag": "noindex" } }) });
   try {
@@ -110,7 +118,7 @@ try {
   const drifted = run("review", "claude", "--base", "main");
   assert.equal(drifted.status, 1);
   assert.match(drifted.stderr, /HEAD changed during review/);
-  console.log("Standalone executable passed reviews for all three harnesses, skill installation, image rendering, an SEO probe, cleanup, HEAD drift rejection, and failure handling without Bun or Node on PATH.");
+  console.log("Standalone executable passed reviews for all three harnesses, skill installation, image rendering, pixel diffs, disk cleanup previews, an SEO probe, cleanup, HEAD drift rejection, and failure handling without Bun or Node on PATH.");
 } finally {
   rmSync(temporary, { recursive: true, force: true });
 }

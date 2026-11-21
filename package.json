@@ -1,6 +1,6 @@
 {
   "name": "@a2f0/agent-tool",
-  "version": "0.1.72",
+  "version": "0.1.73",
   "packageManager": "bun@1.4.4",
   "type": "module",
   "description": "Portable cross-agent review, PR workflows, and shared skills",
@@ -43,6 +43,7 @@
     "@happy-dom/global-registrator": "21.0.4",
     "@types/bun": "1.4.4",
     "happy-dom": "21.0.4",
+    "playwright": "1.64.1",
     "typescript": "7.0.2"
   },
   "dependencies": {

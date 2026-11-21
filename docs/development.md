@@ -9,8 +9,8 @@ shell, prepend `~/.local/share/mise/installs/bun/<version>/bin` to PATH; do not 
 Shared implementation lives under `src/` by domain: `workflows/` for repository
 mechanics, `pr/` and `git/` for existing GitHub guards, `release/` for registry
 logic, `commands/` for execution receipts, `seo/` for the `seo probe` command,
-and `review/`, `version/`, `skills/`, `images/`, and `screenshots/` for their
-respective APIs. Tests live beside
+and `review/`, `version/`, `skills/`, `images/`, `screenshots/`, `space/` (disk
+cleanup), and `perf/` (page-load measurement) for their respective APIs. Tests live beside
 implementation. `screenshots/gallery.ts`, `gallery.css`, and `manifest.ts` are
 browser entry points that the package exports; they import nothing from Node
 or Bun, and `tsconfig.browser.json`, part of `typecheck`, checks them with the
@@ -49,17 +49,18 @@ its layers. A test asserts the real configuration passes.
 
 1. Primitives: `git/`, `system/` (PATH lookup outside the repository, Bun workspace
    discovery, link-refusing atomic file writes and non-blocking regular-file
-   reads, and the agent-tool version the skills and permissions manifests
-   record, shared by several domains), `workflows/core.ts`
+   reads, the agent-tool version the skills and permissions manifests
+   record, and isolated Git and matrix workspace resolution for commands that
+   cover several checkouts, shared by several domains), `workflows/core.ts`
    (process, Git, and `gh` helpers and argument parsing), `workflows/config.ts`,
    `permissions/catalog.ts`, `images/config.ts`, `screenshots/config.ts`, and
    `graph/config.ts`. They
    import nothing above themselves.
 2. Configuration: `config.ts`, which parses `agent-tool.json` from the primitive
    schemas.
-3. Domains: `bun/`, `commands/`, `dependencies/`, `graph/`, `images/`,
+3. Domains: `bun/`, `commands/`, `dependencies/`, `graph/`, `images/`, `perf/`,
    `permissions/`, `pr/`, `processes/`, `release/`, `review/`, `screenshots/`,
-   `seo/`, `skills/`, `stateMachines/`, `version/`, and `harnesses.ts`.
+   `seo/`, `skills/`, `space/`, `stateMachines/`, `version/`, and `harnesses.ts`.
    Domains may use each other without cycles.
 4. Workflows: the rest of `workflows/`, which compose domains into repository
    commands such as `branch`, `pr`, `hooks`, `push-gate`, and `repo`.
@@ -81,6 +82,8 @@ bun run agent:run --label build -- bun run build
 bun run agent:run --label compiled-smoke -- bun scripts/testing/smoke.ts dist/agent-tool
 ```
 
+The `perf` tests drive the installed Google Chrome through the development
+dependency `playwright`, so a local run needs Chrome, as CI's runners have.
 Tests run as isolated files across two worker processes with `--parallel=2`,
 since most of their time goes to spawning the CLI against disposable
 repositories. CPU-count concurrency can oversubscribe subprocesses on shared

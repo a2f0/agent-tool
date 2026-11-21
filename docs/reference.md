@@ -19,6 +19,12 @@ version management, and portable skills for Claude Code, Codex, OpenCode, and He
   with framework-free gallery and carousel elements.
 - **Compact output**: run noisy commands with full private logs and bounded
   diagnostics, keeping routine output out of an agent's context.
+- **Free disk space**: remove only regenerable, git-ignored output from a
+  repository or a matrix workspace's checkouts, and developer caches, after a
+  dry run.
+- **Measure page loads**: serve a build as a CDN would, time cold loads and
+  screenshot the ready state through the repository's own Playwright, and
+  diff screenshots pixel by pixel.
 - **Probe websites**: report what a deployed site serves to search engines and
   link previews, for the bundled SEO skill.
 
@@ -151,6 +157,8 @@ For repository workflow commands added alongside these interfaces, see
 | `images build [target...] [--out dir]` | Render image targets from `assets/brand/*.svg`; `--out` redirects one target |
 | `screenshots build [target...] [--out dir] [--json]` | Stage guarded captures and a gallery manifest per the `screenshots` section; `--out` redirects one target |
 | `graph check` | Fail on import cycles and layer violations among the TypeScript sources the `graph` section names; print a JSON report |
+| `space [checkout-or-path...] [--builds] [--deps] [--machine] [--include-busy] [--apply] [--json]` | Preview by default; remove regenerable, git-ignored output from the repository, or a matrix workspace and its checkouts, and with `--machine` developer caches ([disk space](#disk-space)) |
+| `perf serve\|measure\|shot\|diff\|graph ...` | Serve a build as a CDN would, time cold loads and screenshot them through the repository's own Playwright, count differing pixels, or list a module graph ([page performance](#page-performance)) |
 | `seo probe [--page\|--headers\|--links\|--sitemap] <host> [path...]` | Report a website's live search and preview metadata as served before JavaScript runs, for the `seo-optimization` skill; changes nothing, but requests whatever URLs its arguments and the fetched pages name ([SEO probe](#seo-probe)) |
 | `state-machines [path...] [--limit N] [--min-score N] [--json]` | Rank tracked source files by signals of implicit state machines in the repository holding the working directory, or each named path's repository; read-only, exit 1 when a repository cannot be listed |
 | `init` / `config show` | Create or inspect data-only project policy |
@@ -255,6 +263,133 @@ Review commands retain full reviewer stderr in separate private
 `agent-tool-review-log-*` directories and show bounded stderr on failure, while
 always displaying the final findings and verdict. Empty reviewer logs are removed.
 The bundled shipping, review, and dependency skills use this distinction.
+
+### Disk space
+
+```sh
+agent-tool space                          # dry run: this repository's caches
+agent-tool space --builds --deps --machine --json
+agent-tool space --apply                  # remove the caches it listed
+agent-tool space app web --deps --apply   # named matrix checkouts, or paths
+```
+
+`space` lists git-ignored, untracked paths whose names mark them as
+regenerable, sized with `du`, and removes them only with `--apply`. These
+lists are complete. Caches are always included: `.turbo`, `.parcel-cache`,
+`.eslintcache`, `.stylelintcache`, `coverage`, `.nyc_output`, `test-results`,
+`playwright-report`, `blob-report`, `__pycache__`, `.pytest_cache`,
+`.mypy_cache`, `.ruff_cache`, and `node_modules/.cache`, `node_modules/.vite`,
+`.next/cache`, and `.wrangler/tmp`. `--builds` adds build output: `dist`,
+`build`, `out`, `.next`, `.nuxt`, `.output`, `.svelte-kit`, `.expo`,
+`.gradle`, `.build`, `DerivedData`, `*.tsbuildinfo`, and `target` beside a
+`Cargo.toml`. `--deps` adds installed dependencies: `node_modules`, `.venv`,
+`Pods` beside a `Podfile`, and `vendor/bundle`. `--machine` adds
+developer caches outside repositories: Xcode DerivedData (never its
+`SourcePackages`, repositories, or data files), `brew cleanup`, the Bun and npm
+caches, and `pnpm store prune`, and reports Gradle caches, Playwright
+browsers, simulators, iOS DeviceSupport, Time Machine local snapshots, and
+Docker as `review` items it never removes.
+
+With no names it covers the repository holding the working directory, or,
+from a matrix workspace (`matrix.json` beside `checkouts/`), the workspace
+and every checkout in `checkouts/`. A name is a workspace checkout's name (or
+`owner/name`), else a path naming the repository that holds it.
+
+A path is removed only when Git reports it ignored and nothing under it is
+tracked (both rechecked just before removal), its name is on the tier's list,
+and neither it nor a parent inside the repository is a symlink, a repository,
+or a credentials or database name (`.git`, `.env*` but not `*.example`,
+`*.sample`, or `*.template`, `.secrets`, `*.sqlite`, `*.sqlite3`, `*.db`), and
+nothing under it is one, except the `build.db` that Xcode writes in
+`XCBuildData/` and SwiftPM in `.build/`. It never runs `git clean`. A repository another
+process is working in (by working directory or a path argument, other than
+this process, its ancestors, its children, idle shells, and text filters in
+its pipeline) is skipped, judged again from a fresh process list just before
+it is cleaned; `--include-busy` cleans it anyway. Package caches wait for any
+running install and DerivedData for Xcode, `--include-busy` or not, each
+judged again just before it runs. When lsof lists no working directory for a
+live process of this user, the command stops rather than guess, or with
+`--include-busy` treats the list as empty; a process whose working directory
+lsof lists as unreadable (Linux's non-dumpable processes) counts only for the
+repositories its absolute path arguments name. Its Git never takes optional
+locks, and the tracked-file check reads path names literally.
+
+The text report ends with the volume's free space before and after; `--json`
+prints `{ applied, workspace, tiers, free: { before, after }, totals: { caches,
+builds, deps }, repos, machine }`, where `after` comes only with `--apply`,
+`machine` only with `--machine`, and each repository is
+`{ name, root, busy, error, candidates: [{ path, tier, bytes }], removed,
+failed, skipped }` (`skipped` is `"busy"`) and each machine item
+`{ id, description, reportOnly, bytes, skipped, result }`. It exits 1 when a repository could
+not be scanned or a removal or machine item failed, and 2 with the message on stderr when it
+cannot run: an unknown option, a name that is no checkout or repository, or a
+process list it cannot read. `--apply` reaches other checkouts and
+developer caches across the machine, so `space` keeps the harness's default
+permission decision ([permissions](permissions.md#classes)).
+
+### Page performance
+
+```sh
+agent-tool proc start --label serve -- agent-tool perf serve dist
+agent-tool perf measure https://127.0.0.1:8765/ --ready 'window.ready === true' --waterfall --profile
+agent-tool perf measure https://127.0.0.1:8765/ --ready 'window.ready === true' --latency 150 --mbps 5 --cpu 4
+agent-tool perf shot https://127.0.0.1:8765/ --ready 'window.ready === true' --out before.png --hide '#stars'
+agent-tool perf diff before.png after.png
+agent-tool perf graph dist main.js --out dist/preload.json
+```
+
+- `serve <dir> [--port 8765] [--http1]` serves a build on 127.0.0.1 over
+  HTTP/2 with a throwaway self-signed certificate (`openssl` makes it;
+  `--http1` serves plain HTTP), gzips text files once per version before the
+  first request, and answers with `cache-control: no-cache` and an ETag. A
+  path that resolves outside the directory, through `..` or a symbolic link,
+  is a 404, and a request whose host is not `127.0.0.1` or `localhost` (a
+  rebound DNS name) is a 421. It runs until stopped, so start it with
+  `proc start`; a port already in use makes it exit 1 at once.
+- `measure <url>` times `--runs` (default 5) cold, cache-disabled loads from
+  the start of navigation, waiting only for the commit, until the `--ready`
+  expression (default `document.readyState === 'complete'`) is true, under
+  `--latency` ms (40), `--mbps` (20; 0 for unthrottled), `--cpu` slowdown (1),
+  and a `--width` by `--height` viewport (1600x900). It prints the median and
+  spread of every run, and the first run's requests, bytes, when its finished
+  requests ended, and how many were still pending at ready; `--waterfall` adds
+  each request, and `--profile` the CPU self and inclusive times of an extra,
+  unsampled run, since profiling slows the load. `--json` prints `{ url, conditions,
+  readyMs: { median, min, max, runs }, samples, requests, transferredBytes,
+  networkDoneMs, pendingRequests, waterfall, cpu }`.
+- `shot <url> --out <png>` screenshots the ready state, unthrottled, with a
+  seeded `Math.random`, as `measure` also seeds it (`--no-seed` leaves it
+  alone); `--eval <js>` runs an interaction first and `--hide <css>` hides
+  random decoration, reaching into open shadow roots.
+- `diff <a.png> <b.png>` decodes 8-bit RGB or RGBA, non-interlaced PNGs without
+  a browser, refusing truncated image data and unknown row filters, and prints
+  `{ sizeMismatch, differing, total, maxChannelDelta, cells }`, the 20 busiest
+  50-pixel cells; it exits 1 when any pixel differs or
+  the sizes do not match (`differing` is then -1).
+- `graph <dir> <entry...> [--out <file>]` prints, and writes to `--out`, the
+  relative static and dynamic import closure of ES modules as a JSON array,
+  entries first, refusing an entry or import that leaves `<dir>` or a module
+  it cannot read, naming the importer. Comments and import-like text in
+  strings are ignored; regular expression literals, and template literals
+  whose `${...}` holds quotes, are not recognised.
+
+`measure` and `shot` launch the installed Google Chrome (`channel: "chrome"`)
+as Playwright does by default, without Chrome's sandbox, so measure only pages
+you trust. For a page on `127.0.0.1`, `localhost`, or `[::1]`, whose
+certificate `serve` signs itself, certificate errors are ignored for every
+request the page makes; other pages are checked as usual. Chrome is driven
+through the `playwright` that the working directory, or `--from <directory>`,
+installs: the nearest `node_modules/playwright` at or above it, searching no
+higher than the Git checkout holding the working directory. `--from` must be
+inside that checkout, as a matrix workspace's `checkouts/<name>` is, so the
+command never loads Playwright from an arbitrary directory. agent-tool ships
+no Playwright and never fetches one, so a repository without it is told to
+install it or name another with `--from`. Whole-number options (`--runs`,
+`--width`, `--height`, `--port`) refuse fractions, and `--help` anywhere prints
+the usage. Errors exit 1. Only `diff` is in a permission class (`read`);
+`serve`, `measure`, `shot`, and `graph`, which serve a directory to every
+local user, open any URL and run the JavaScript their arguments give, or
+overwrite the file `--out` names, keep the harness's default decision.
 
 ### SEO probe
 
@@ -628,7 +763,9 @@ The bundle provides `cross-agent-review`, `open-issue`, `open-pr`,
 `squash-merge`, `ship-pr`, `reset`, `update-dependencies`,
 `explicit-state-machines`, which pairs with the `state-machines` scanner,
 `seo-optimization`, which pairs with [`seo probe`](#seo-probe),
-`app-store-readiness`, and `audit-trails`. A skill may ship Markdown files
+`app-store-readiness`, `audit-trails`, `space-cleanup`, which runs
+[`space`](#disk-space), and `performance-pass`, which runs
+[`perf`](#page-performance). A skill may ship Markdown files
 under `references/` beside its `SKILL.md`, and the `agents/openai.yaml` that
 Codex reads for its display name, description, and default prompt; they
 install, update, and check like the skill itself, each with its own ownership
