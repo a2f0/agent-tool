@@ -201,9 +201,18 @@ function cleanRepos(repos: RepoReport[], targets: Target[], options: Options, di
     if (repo.error) continue;
     // Scans and earlier removals take a while; judge each repository from a fresh process list.
     if (!options.includeBusy) {
+      let procs: Proc[];
+      try {
+        procs = discover();
+      } catch (error) {
+        // Earlier repositories were cleaned already: report this one as not cleaned, and the run's removals.
+        repo.error = `not cleaned: ${(error as Error).message}`;
+        failures++;
+        continue;
+      }
       repo.busy = workersOf(
         busyRoots(
-          discover(),
+          procs,
           targets.map(target => target.root),
         ).get(repo.root),
       );

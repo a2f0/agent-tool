@@ -47,8 +47,12 @@ export async function perfCommand(argv: string[]): Promise<number> {
   switch (options.command) {
     case "serve": {
       if (!options.args[0]) throw new Error("serve needs a directory.");
-      serve(options.args[0], options.port, options.http1);
-      return 0;
+      const server = serve(options.args[0], options.port, options.http1);
+      // Listening keeps the process alive; a port already in use ends it with 1.
+      return new Promise(resolve => {
+        server.once("listening", () => resolve(0));
+        server.once("error", () => resolve(1));
+      });
     }
     case "measure":
       await measure(options);

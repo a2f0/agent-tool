@@ -55,6 +55,8 @@ function classify(rel: string, root: string): Tier | undefined {
   if (name === "target" && existsSync(path.join(parent, "Cargo.toml"))) return "builds";
   if (DEPS_NAMES.has(name)) return "deps";
   if (name === "Pods" && existsSync(path.join(parent, "Podfile"))) return "deps";
+  // Bundler's install path, ignored on its own beside a tracked vendor/.
+  if (name === "bundle" && path.posix.basename(path.posix.dirname(rel)) === "vendor") return "deps";
   return undefined;
 }
 
@@ -76,6 +78,11 @@ export interface Candidate {
 // `.env*` covers `.envrc` and `.env-production` as well as `.env.local`.
 const PROTECTED = [".git", ".env*", ".secrets", "*.sqlite", "*.sqlite3", "*.db"];
 const TEMPLATE = /\.(example|sample|template)$/;
+/**
+ * The llbuild databases Xcode (`Build/Intermediates.noindex/XCBuildData/build.db`, in DerivedData
+ * or a `build/` directory) and SwiftPM (`.build/build.db`) write beside their output.
+ */
+const BUILD_DATABASES = ["*/XCBuildData/build.db", "*/.build/build.db"];
 
 /** Whether one path component is protected, by the same patterns `find` applies below. */
 export function protectedName(name: string): boolean {
@@ -127,6 +134,8 @@ export function holdsProtected(directory: string, base: string): string | undefi
       "!",
       "-name",
       "*.template",
+      // Build systems' own dependency databases are build output, not local data.
+      ...BUILD_DATABASES.flatMap(pattern => ["!", "-path", pattern]),
       "-print",
       "-quit",
     ],

@@ -435,6 +435,52 @@ describe("space cleanup", () => {
     expect(resolveTargets(workspace, []).targets.map(target => target.root)).toEqual([workspace, checkout]);
   }, 30_000);
 
+  test("removes build output that holds a build system's own database, and Bundler's vendor/bundle", () => {
+    const home = tempDir("space-cleanup-home");
+    const derived = path.join(home, "Library/Developer/Xcode/DerivedData");
+    write(derived, {
+      "App-abc/Build/Intermediates.noindex/XCBuildData/build.db": "x",
+      "App-abc/Build/Products/Debug/App.app/App": "x",
+      "App-abc/Index.noindex/DataStore/v5/units/x": "x",
+      "App-abc/Logs/data.db": "x",
+    });
+    expect(derivedDataRemovals(derived).toSorted()).toEqual([path.join(derived, "App-abc/Build"), path.join(derived, "App-abc/Index.noindex")]);
+    const root = realpathSync(tempDir("space-cleanup-build-db"));
+    gitInit(root);
+    write(root, {
+      ".gitignore": ".build/\nbuild/\nvendor/bundle/\ndist/\n",
+      "Package.swift": "x",
+      ".build/build.db": "x",
+      ".build/debug/App": "x",
+      "build/XCBuildData/build.db": "x",
+      "vendor/keep.txt": "x",
+      "vendor/bundle/ruby/3.3.0/gems/rake/x": "x",
+      "dist/cache.db": "x",
+    });
+    gitIn(root, "add", ".gitignore", "Package.swift", "vendor/keep.txt");
+    gitIn(root, "commit", "-qm", "init");
+    expect(Object.fromEntries(findCandidates(root).map(candidate => [candidate.path, candidate.tier]))).toEqual({ ".build": "builds", build: "builds", "vendor/bundle": "deps" });
+    expect(unsafeReason(root, "dist")).toBe("contains dist/cache.db");
+  }, 30_000);
+
+  test("reports a repository it could not judge mid-apply as not cleaned, with what it removed before", () => {
+    const first = realpathSync(fixture());
+    const second = realpathSync(fixture());
+    let calls = 0;
+    const discover = (): Proc[] => {
+      if (++calls > 2) throw new Error("cannot list processes with lsof");
+      return [];
+    };
+    let output = "";
+    expect(main([first, second, "--apply", "--json"], first, discover, text => {
+      output += text;
+    })).toBe(1);
+    const report = JSON.parse(output);
+    expect(report.repos[0].removed).toContain(".turbo");
+    expect(report.repos[1]).toMatchObject({ error: "not cleaned: cannot list processes with lsof" });
+    expect(existsSync(path.join(second, ".turbo"))).toBe(true);
+  }, 30_000);
+
   test("lists processes again before each guarded machine item", () => {
     const home = tempDir("space-cleanup-home");
     write(home, {

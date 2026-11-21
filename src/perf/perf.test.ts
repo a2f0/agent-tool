@@ -415,6 +415,13 @@ describe("agent-tool perf", () => {
     expect(run("--help").code).toBe(0);
     expect(run("measure", "--help")).toMatchObject({ code: 0, stdout: expect.stringMatching(/^Usage: agent-tool perf <command>/) });
     expect(run("bogus")).toMatchObject({ code: 1, stderr: expect.stringContaining("Unknown perf command 'bogus'.") });
+    // serve exits 1 when its port is taken, rather than 0 before the socket fails.
+    const busy = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("") });
+    try {
+      expect(run("serve", root, "--http1", "--port", String(busy.port))).toMatchObject({ code: 1, stderr: expect.stringContaining("perf serve: ") });
+    } finally {
+      busy.stop(true);
+    }
     expect(run("graph", root)).toMatchObject({ code: 1, stderr: "Error: graph needs a directory and at least one entry.\n" });
     // Playwright loads only from inside the invoking checkout, never fetched and never from another directory.
     const repository = path.join(import.meta.dir, "../..");

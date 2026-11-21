@@ -46,11 +46,14 @@ export function installedPlaywright(from: string, cwd = process.cwd()): string |
   if (!within(start, boundary)) throw new Error(`--from ${from} is outside the checkout ${boundary}; run agent-tool perf from the checkout that holds it.`);
   for (let directory = start; ; directory = path.dirname(directory)) {
     if (existsSync(path.join(directory, "node_modules", "playwright", "package.json"))) {
+      let resolved: string;
       try {
-        return createRequire(path.join(directory, "package.json")).resolve("playwright");
+        resolved = createRequire(path.join(directory, "package.json")).resolve("playwright");
       } catch {
         return undefined;
       }
+      // Resolution can fall through to NODE_PATH or a global folder; only the checkout's own install counts.
+      return within(resolved, path.join(directory, "node_modules")) ? resolved : undefined;
     }
     if (directory === boundary || path.dirname(directory) === directory) return undefined;
   }

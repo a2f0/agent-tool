@@ -317,8 +317,9 @@ failed, skipped }` (`skipped` is `"busy"`) and each machine item
 `{ id, description, reportOnly, bytes, skipped, result }`. It exits 1 when a repository could
 not be scanned or a removal or machine item failed, and 2 with the message on stderr when it
 cannot run: an unknown option, a name that is no checkout or repository, or a
-process list it cannot read. `--apply` removes regenerable output only, so it
-is in the `local` permission class.
+process list it cannot read. `--apply` reaches other checkouts and
+developer caches across the machine, so `space` keeps the harness's default
+permission decision ([permissions](permissions.md#classes)).
 
 ### Page performance
 
@@ -338,7 +339,7 @@ agent-tool perf graph dist main.js --out dist/preload.json
   path that resolves outside the directory, through `..` or a symbolic link,
   is a 404, and a request whose host is not `127.0.0.1` or `localhost` (a
   rebound DNS name) is a 421. It runs until stopped, so start it with
-  `proc start`; a port already in use ends it with exit 1.
+  `proc start`; a port already in use makes it exit 1 at once.
 - `measure <url>` times `--runs` (default 5) cold, cache-disabled loads from
   the start of navigation, waiting only for the commit, until the `--ready`
   expression (default `document.readyState === 'complete'`) is true, under
@@ -371,7 +372,10 @@ command never loads Playwright from an arbitrary directory. agent-tool ships
 no Playwright and never fetches one, so a repository without it is told to
 install it or name another with `--from`. Whole-number options (`--runs`,
 `--width`, `--height`, `--port`) refuse fractions, and `--help` anywhere prints
-the usage. Errors exit 1.
+the usage. Errors exit 1. `diff` is in the `read` permission class and
+`graph` in `local`; `serve`, `measure`, and `shot`, which serve a directory to
+every local user or open any URL and run the JavaScript their arguments give,
+keep the harness's default decision.
 
 ### SEO probe
 

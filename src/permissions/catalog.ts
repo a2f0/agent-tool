@@ -5,7 +5,7 @@
  */
 export const CLASSES = {
   read: { decision: "allow", description: "Reads local or GitHub state without changing it." },
-  local: { decision: "allow", description: "Changes only this checkout: files, local branches, lockfile installs, and versions of declared or already-resolved dependencies; or removes regenerable output a rebuild or reinstall restores." },
+  local: { decision: "allow", description: "Changes only this checkout: files, local branches, lockfile installs, and versions of declared or already-resolved dependencies." },
   share: { decision: "allow", description: "Publishes work for review without changing a shared branch: pushes a feature branch, opens a PR, answers review threads, or prunes a merged PR's feature branch." },
   release: { decision: "ask", description: "Merges into a shared branch, publishes a package, or deletes remote state." },
   intake: { decision: "ask", description: "Brings new third-party code into the repository." },
@@ -19,19 +19,13 @@ export type Decision = "allow" | "ask";
 export interface CatalogEntry { command: string; class: PermissionClass; applyClass?: PermissionClass }
 
 export const CATALOG: CatalogEntry[] = [
-  ...["--help", "--version", "logs", "runs list", "doctor", "config show", "branch check", "branch status", "commits check", "checks binaries", "repo context", "policy check", "toolchain check", "ci gate", "release plan", "release verify", "pr context", "pr checks", "pr logs", "pr preflight", "pr threads list", "versions plan", "versions check", "dependencies check-terraform-plan", "dependencies diff", "skills list", "skills check", "skills check-links", "hooks check", "push-gate hook", "push-gate check", "repo base-health", "review carry", "images list", "graph check", "state-machines", "permissions show", "permissions check", "proc list", "perf serve", "perf diff"]
+  ...["--help", "--version", "logs", "runs list", "doctor", "config show", "branch check", "branch status", "commits check", "checks binaries", "repo context", "policy check", "toolchain check", "ci gate", "release plan", "release verify", "pr context", "pr checks", "pr logs", "pr preflight", "pr threads list", "versions plan", "versions check", "dependencies check-terraform-plan", "dependencies diff", "skills list", "skills check", "skills check-links", "hooks check", "push-gate hook", "push-gate check", "repo base-health", "review carry", "images list", "graph check", "state-machines", "permissions show", "permissions check", "proc list", "perf diff"]
     .map(command => ({ command, class: "read" as const })),
   ...["bun install", "bun update", "bun remove", "bun test", "branch create", "versions bump", "versions prepare", "versions resolve-conflicts", "images build", "screenshots build", "review", "init", "proc stop", "perf graph"]
     .map(command => ({ command, class: "local" as const })),
   { command: "skills install", class: "read", applyClass: "local" },
   { command: "hooks install", class: "read", applyClass: "local" },
   { command: "teardown", class: "read", applyClass: "local" },
-  // Removes only ignored, regenerable output in repositories nothing else is working in, and developer
-  // caches a reinstall refills; every tier is restored by a rebuild or the documented install.
-  { command: "space", class: "read", applyClass: "local" },
-  // Both drive Chrome through a playwright installed inside the invoking checkout, as `bun test` runs its tests;
-  // --from outside that checkout is refused.
-  ...["perf measure", "perf shot"].map(command => ({ command, class: "local" as const })),
   { command: "permissions install", class: "read", applyClass: "policy" },
   // Linking writes outside the checkout, into the user skill directories every session loads.
   { command: "skills link", class: "read", applyClass: "policy" },
@@ -48,6 +42,9 @@ export const CATALOG: CatalogEntry[] = [
 ];
 // `run`, `run-group`, `push-gate run` and `proc start` execute arbitrary commands, so they stay unclassified and keep the harness default.
 // `seo probe` requests whatever hosts its arguments and fetched pages name, like curl, so it keeps the harness default too.
+// So do `perf measure` and `perf shot`, which open any URL in Chrome and evaluate the JavaScript their arguments give,
+// `perf serve`, which serves a directory to every local user, and `space`, whose --apply removes output in other
+// checkouts and developer caches across the machine, with --include-busy even where other sessions work.
 // `bun x` runs only executables that `permissions.executables` classifies; project.ts adds those.
 // Package scripts are not classified, so `bun run` keeps the harness default.
 
