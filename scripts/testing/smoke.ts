@@ -78,9 +78,6 @@ try {
   assert.doesNotMatch(invalidPlan.stderr, /private-attribute/);
   assert.equal(run("skills", "check").status, 0);
   assert.equal(run("skills", "check", "--apply").status, 1);
-  // Without declared user skills, both link forms pass with nothing to do.
-  assert.deepEqual(JSON.parse(run("skills", "check-links").stdout), { ok: true, changes: [] });
-  assert.deepEqual(JSON.parse(run("skills", "link", "--apply").stdout), { applied: true, changes: [] });
   const skill = path.join(repository, ".agents/skills/ship-pr/SKILL.md");
   const source = readFileSync(skill, "utf8");
   writeFileSync(skill, "local edit");

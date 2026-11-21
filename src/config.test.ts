@@ -60,20 +60,10 @@ describe("portable project policy", () => {
       [{ layers: [{ name: "low", include: ["a/**"] }, { name: "low", include: ["b/**"] }] }, "graph.layers names must be unique."],
     ] as const) expect(() => parseConfig(JSON.stringify({ schemaVersion: 1, graph: value }))).toThrow(message);
   });
-  test("declares user-wide skills by plain skill directory name", () => {
-    expect(DEFAULT_CONFIG.skills).toEqual({ user: [] });
-    expect(parseConfig('{"schemaVersion":1}').skills).toEqual({ user: [] });
-    const user = ["space-cleanup", "explicit-state-machines", "a1", "x".repeat(64)];
-    expect(parseConfig(JSON.stringify({ schemaVersion: 1, skills: { user } })).skills).toEqual({ user });
-    for (const [skills, message] of [
-      [[], "skills must be an object."],
-      [{ users: ["space-cleanup"] }, "Unknown skills setting 'users'."],
-      [{ user: "space-cleanup" }, "Invalid config setting 'skills.user'."],
-      [{ user: null }, "Invalid config setting 'skills.user'."],
-      ...["", "Space-Cleanup", "space_cleanup", "-space", "space-", "space--cleanup", "../space", "skills/space", ".hidden", "space cleanup", "x".repeat(65), "synced"].map(name => [{ user: [name] }, "Invalid config setting 'skills.user'."]),
-      [{ user: [7] }, "Invalid config setting 'skills.user'."],
-      [{ user: ["space-cleanup", "space-cleanup"] }, "Invalid config setting 'skills.user'."],
-    ] as const) expect(() => parseConfig(JSON.stringify({ schemaVersion: 1, skills }))).toThrow(message);
+  test("refuses the removed skills.user section", () => {
+    // User-wide skill links were removed once their skills became managed skills.
+    expect(Object.keys(DEFAULT_CONFIG)).not.toContain("skills");
+    expect(() => parseConfig(JSON.stringify({ schemaVersion: 1, skills: { user: ["seo-optimization"] } }))).toThrow("Unknown config setting 'skills'.");
   });
   test("accepts version preparation and base freshness policy", () => {
     const config = parseConfig(JSON.stringify({
