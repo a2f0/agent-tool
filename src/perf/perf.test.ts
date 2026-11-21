@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, get } from "node:http";
 import { connect } from "node:http2";
 import type { AddressInfo } from "node:net";
@@ -199,6 +199,10 @@ describe("agent-tool perf", () => {
       "late.js": "export {};",
     });
     expect(moduleGraph(root, ["main.js"])).toEqual(["main.js", "lib/a.js", "b.js", "late.js"]);
+    write(root, { "escape.js": 'import "../outside.js";', "broken.js": 'import "./missing.js";' });
+    expect(() => moduleGraph(root, ["escape.js"])).toThrow(`The graph leaves ${root} at ../outside.js, imported by escape.js.`);
+    expect(() => moduleGraph(root, ["../main.js"])).toThrow("at entry ../main.js.");
+    expect(() => moduleGraph(root, ["broken.js"])).toThrow("Cannot read missing.js, imported by broken.js: ENOENT.");
   });
 
   test("measures from the navigation's commit, not its load event", async () => {
@@ -315,8 +319,16 @@ describe("agent-tool perf", () => {
           request.on("error", reject);
           request.end();
         });
+        // A rebound DNS name reaches the HTTP/2 server with that name as its :authority.
+        const rebound = await new Promise((resolve, reject) => {
+          const request = session.request({ ":path": "/", ":authority": "rebound.example" });
+          request.on("response", headers => resolve(headers[":status"]));
+          request.on("error", reject);
+          request.end();
+        });
         session.close();
         expect(status).toBe(200);
+        expect(rebound).toBe(421);
         const report = await measureLoad(
           parseOptions(["measure", `https://127.0.0.1:${port}/`, "--runs", "1", "--latency", "0", "--mbps", "0", "--ready", "window.ready === true"]),
         );
@@ -433,6 +445,17 @@ describe("agent-tool perf", () => {
     gitInit(root);
     write(root, { "node_modules/.keep": "" });
     expect(installedPlaywright(".", root)).toBeUndefined();
+    // A linker's store inside the checkout counts; a link out of it does not.
+    const store = path.join(root, "node_modules/.bun/playwright@1.0.0/node_modules/playwright");
+    write(store, { "package.json": '{"name":"playwright","main":"index.js"}', "index.js": "" });
+    mkdirSync(path.join(root, "packages/site/node_modules"), { recursive: true });
+    symlinkSync(store, path.join(root, "packages/site/node_modules/playwright"));
+    expect(installedPlaywright("packages/site", root)).toBe(realpathSync(path.join(store, "index.js")));
+    const outside = tempDir("performance-pass-outside");
+    write(outside, { "package.json": '{"name":"playwright","main":"index.js"}', "index.js": "" });
+    mkdirSync(path.join(root, "packages/other/node_modules"), { recursive: true });
+    symlinkSync(outside, path.join(root, "packages/other/node_modules/playwright"));
+    expect(installedPlaywright("packages/other", root)).toBeUndefined();
     expect(runIn(root, "measure", "http://127.0.0.1:9/")).toMatchObject({ code: 1, stderr: expect.stringContaining("does not install; run it there or pass --from <repository>.") });
     expect(run("measure", "http://127.0.0.1:9/", "--from", root)).toMatchObject({ code: 1, stderr: expect.stringContaining("is outside the checkout") });
   }, 30_000);

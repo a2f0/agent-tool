@@ -30,7 +30,8 @@ export function processes(): Proc[] {
     return result.stdout;
   };
   const table = list("ps", ["-axo", "pid=,ppid=,pgid=,uid=,stat=,comm="]);
-  const args = list("ps", ["-axo", "pid=,args="]);
+  // -ww: never truncate command lines, which busy detection reads for path arguments and installs.
+  const args = list("ps", ["-ww", "-axo", "pid=,args="]);
   const cwds = list("lsof", ["-nP", "-d", "cwd", "-Fpn"]);
   return parseProcesses(table, args, cwds, process.getuid?.() ?? -1, pid => {
     try {
@@ -109,7 +110,8 @@ function parseCwds(lsofOutput: string): Map<number, string> {
   let current = 0;
   for (const line of lsofOutput.split("\n")) {
     if (line.startsWith("p")) current = Number(line.slice(1));
-    else if (line.startsWith("n") && current) cwds.set(current, line.slice(1));
+    // Linux's lsof names an unreadable cwd `/proc/<pid>/cwd (readlink: Permission denied)`: that is no directory.
+    else if (line.startsWith("n") && current && !/ \((?:readlink|stat): /.test(line)) cwds.set(current, line.slice(1));
   }
   return cwds;
 }

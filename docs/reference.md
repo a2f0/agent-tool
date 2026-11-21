@@ -349,7 +349,7 @@ agent-tool perf graph dist main.js --out dist/preload.json
   readyMs: { median, min, max, runs }, samples, requests, transferredBytes,
   networkDoneMs, pendingRequests, waterfall, cpu }`.
 - `shot <url> --out <png>` screenshots the ready state, unthrottled, with a
-  seeded `Math.random` (`--no-seed` leaves it alone); `--eval <js>` runs an
+  seeded `Math.random` (`measure` seeds it too) (`--no-seed` leaves it alone); `--eval <js>` runs an
   interaction first and `--hide <css>` hides random decoration, reaching into
   open shadow roots.
 - `diff <a.png> <b.png>` decodes 8-bit RGB or RGBA, non-interlaced PNGs without
@@ -358,8 +358,10 @@ agent-tool perf graph dist main.js --out dist/preload.json
   the sizes do not match (`differing` is then -1).
 - `graph <dir> <entry...> [--out <file>]` prints, and writes to `--out`, the
   relative static and dynamic import closure of ES modules as a JSON array,
-  entries first. Comments and import-like text in strings are ignored;
-  regular expression literals are not recognised.
+  entries first, refusing an entry or import that leaves `<dir>` or a module
+  it cannot read, naming the importer. Comments and import-like text in
+  strings are ignored; regular expression literals, and template literals
+  whose `${...}` holds quotes, are not recognised.
 
 `measure` and `shot` launch the installed Google Chrome (`channel: "chrome"`)
 through the `playwright` that the working directory, or `--from <directory>`,
@@ -370,10 +372,10 @@ command never loads Playwright from an arbitrary directory. agent-tool ships
 no Playwright and never fetches one, so a repository without it is told to
 install it or name another with `--from`. Whole-number options (`--runs`,
 `--width`, `--height`, `--port`) refuse fractions, and `--help` anywhere prints
-the usage. Errors exit 1. `diff` is in the `read` permission class and
-`graph` in `local`; `serve`, `measure`, and `shot`, which serve a directory to
-every local user or open any URL and run the JavaScript their arguments give,
-keep the harness's default decision.
+the usage. Errors exit 1. Only `diff` is in a permission class (`read`);
+`serve`, `measure`, `shot`, and `graph`, which serve a directory to every
+local user, open any URL and run the JavaScript their arguments give, or
+overwrite the file `--out` names, keep the harness's default decision.
 
 ### SEO probe
 

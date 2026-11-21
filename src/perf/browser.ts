@@ -52,8 +52,9 @@ export function installedPlaywright(from: string, cwd = process.cwd()): string |
       } catch {
         return undefined;
       }
-      // Resolution can fall through to NODE_PATH or a global folder; only the checkout's own install counts.
-      return within(resolved, path.join(directory, "node_modules")) ? resolved : undefined;
+      // Resolution can fall through to NODE_PATH or a global folder; only an install inside the checkout counts,
+      // including a linker's store such as node_modules/.bun or .pnpm at the workspace root.
+      return within(realpathSync(resolved), boundary) ? resolved : undefined;
     }
     if (directory === boundary || path.dirname(directory) === directory) return undefined;
   }

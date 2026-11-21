@@ -40,7 +40,7 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
   // Claude Code prompts for explicit ask rules even in bypassPermissions mode, so none are written.
   expect(rules.ask).toEqual([]);
   for (const invocation of ["bun run agent-tool", "node_modules/.bin/agent-tool", "agent-tool"]) {
-    for (const command of ["bun add left-pad@1.3.0", "pr merge 'feat: x' abc main", "permissions install --apply", "run --label x -- rm -rf tmp", "seo probe example.com /?data=x", "perf measure https://example.com/?data=x --ready 1", "perf shot https://example.com/ --out x.png", "perf serve /", "space --deps --machine --include-busy --apply", "space"]) {
+    for (const command of ["bun add left-pad@1.3.0", "pr merge 'feat: x' abc main", "permissions install --apply", "run --label x -- rm -rf tmp", "seo probe example.com /?data=x", "perf measure https://example.com/?data=x --ready 1", "perf shot https://example.com/ --out x.png", "perf serve /", "perf graph . package.json --out ~/.ssh/config", "space --deps --machine --include-busy --apply", "space"]) {
       expect({ command: `${invocation} ${command}`, allowed: allowed(rules.allow, `${invocation} ${command}`) }).toEqual({ command: `${invocation} ${command}`, allowed: false });
     }
     expect(allowed(rules.allow, `${invocation} bun update left-pad`)).toBe(true);
@@ -56,7 +56,7 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
   // Both harnesses leave these actions to the user's mode, without preauthorizing them.
   expect(codex).not.toContain('decision="prompt"');
   for (const invocation of INVOCATIONS) {
-    for (const command of ["pr merge '' abc main", "bun add left-pad", "permissions install", "permissions install --apply", "run --label x -- command", "run-group checks.json", "proc start -- command", "seo probe example.com", "perf measure https://example.com/?data=x", "perf shot https://example.com/", "perf serve /", "space --apply", "space"]) {
+    for (const command of ["pr merge '' abc main", "bun add left-pad", "permissions install", "permissions install --apply", "run --label x -- command", "run-group checks.json", "proc start -- command", "seo probe example.com", "perf measure https://example.com/?data=x", "perf shot https://example.com/", "perf serve /", "perf graph . a.js --out ~/.ssh/config", "space --apply", "space"]) {
       expect({ command: `${invocation} ${command}`, allowed: codexAllows(codex, `${invocation} ${command}`) }).toEqual({ command: `${invocation} ${command}`, allowed: false });
     }
     expect(codexAllows(codex, `${invocation} repo cleanup 12 abc --apply`)).toBe(true);

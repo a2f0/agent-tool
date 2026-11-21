@@ -769,6 +769,13 @@ describe("space cleanup", () => {
     expect(unsafeReason(root, "dist")).toBeUndefined();
   }, 30_000);
 
+  test("treats Linux lsof's unreadable cwd placeholder as no working directory", () => {
+    const table = " 10   1  10 501 S    node";
+    const lsof = "p10\nfcwd\nn/proc/10/cwd (readlink: Permission denied)\n";
+    expect(() => parseProcesses(table, " 10 node build", lsof, 501, () => true)).toThrow("cannot read the working directory of node 10");
+    expect(parseProcesses(table, " 10 node build", lsof, 0, () => true)[0]?.cwd).toBeUndefined();
+  });
+
   test("joins process listings field by field", () => {
     const table = [" 10   1  10 501 S    /usr/bin/node", " 11  10  10 501 S+   bun", "garbage"].join("\n");
     const args = " 10 node build\n 11 bun test --watch";

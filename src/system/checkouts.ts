@@ -30,7 +30,8 @@ const REPOSITORY_VARIABLES = [
 
 /** The environment without variables that bind Git to another repository or configuration, and without prompts. */
 export function isolatedGitEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const clean: NodeJS.ProcessEnv = { ...env, GIT_TERMINAL_PROMPT: "0" };
+  // No optional locks: a status here must never make another session's `git add` or commit fail on index.lock.
+  const clean: NodeJS.ProcessEnv = { ...env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" };
   for (const name of REPOSITORY_VARIABLES) delete clean[name];
   return clean;
 }

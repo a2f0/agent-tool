@@ -82,11 +82,19 @@ export function importsOf(source: string): string[] {
 /** Every module reachable from the entries through relative imports, as paths within `root`, entries first. */
 export function moduleGraph(root: string, entries: string[]): string[] {
   const seen = new Set<string>();
-  const walk = (rel: string) => {
+  const walk = (rel: string, from: string | undefined) => {
+    const where = from === undefined ? `entry ${rel}` : `${rel}, imported by ${from}`;
+    if (rel === ".." || rel.startsWith("../") || path.posix.isAbsolute(rel)) throw new Error(`The graph leaves ${root} at ${where}.`);
     if (seen.has(rel)) return;
     seen.add(rel);
-    for (const spec of importsOf(readFileSync(path.join(root, rel), "utf8"))) walk(path.posix.normalize(path.posix.join(path.posix.dirname(rel), spec)));
+    let source: string;
+    try {
+      source = readFileSync(path.join(root, rel), "utf8");
+    } catch (error) {
+      throw new Error(`Cannot read ${where}: ${(error as NodeJS.ErrnoException).code ?? (error as Error).message}.`);
+    }
+    for (const spec of importsOf(source)) walk(path.posix.normalize(path.posix.join(path.posix.dirname(rel), spec)), rel);
   };
-  for (const entry of entries) walk(path.posix.normalize(entry));
+  for (const entry of entries) walk(path.posix.normalize(entry), undefined);
   return [...seen];
 }
