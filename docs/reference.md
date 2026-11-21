@@ -293,9 +293,13 @@ one finding per line, as it learns each one:
   page's scheme, and relative ones resolved against the final URL after
   redirects (which may be another host), not a `<base>`.
 - **`--sitemap`**: each sitemap URL, through one level of sitemap index, whose
-  status is not 200, whose canonical differs from the URL, or that carries
-  `noindex` or `none`; the five most repeated duplicate titles and
-  descriptions; then `### <host>  sitemap URLs: N, with problems: M`.
+  status is not 200, whose canonical differs from the URL, or whose
+  `X-Robots-Tag` or robots meta has a whole `noindex` or `none` directive;
+  the five most repeated duplicate titles and descriptions; then
+  `### <host>  sitemap URLs: N, with problems: M`. Directives are separated by
+  commas or spaces; a valued directive such as `max-image-preview:none` never
+  counts, and in the header any other `name:` prefix names a crawler, as in
+  `googlebot: none`.
 
 A `<result>` is `<status> <content-type>` of the final response, prefixed with
 `<first-status> -> <location> => ` when the first answer redirected; `000`
@@ -313,13 +317,28 @@ most 50 within a 20-second limit per URL (15 seconds for the reachability
 check and the `http://` root), and only `http:` and `https:` URLs are ever
 requested, including redirect targets, since `og:image`, sitemap entries,
 links, and `Location` come from remote markup. Bodies are read up to 64 MiB.
+
+A URL the command line did not name (a link, sitemap entry, child sitemap, or
+`og:image`) and every redirect target must also resolve to public addresses
+only: a host that is, or resolves to, any loopback, private, shared (CGNAT),
+link-local, unspecified, multicast, or reserved address, IPv4 or IPv6
+(including IPv4-mapped, NAT64, and 6to4 forms), gets `000` without a request,
+and a redirect to one ends its chain there, as a redirect to another scheme
+does. When the named host itself resolves to such an address, as a local
+development server does, nothing is refused. Names resolve once per run with
+the system resolver (`dns.lookup`), as `fetch` resolves them, just before
+their first request; a name that does not resolve is left to `fetch` or the
+proxy, and a name that resolves differently by the time `fetch` connects (DNS
+rebinding) is not caught.
 Repeated header lines, such as two `X-Robots-Tag` headers, print joined with
 `, `, as HTTP combines them. Requests run one at a time.
 
-Markup is matched with regular expressions over the HTML with newlines and
-tabs collapsed: double-quoted attributes only, case-insensitive names, the
+Markup is matched with the shell probe's patterns over the HTML with newlines
+and tabs collapsed: double-quoted attributes only, case-insensitive names, the
 first matching tag, and no JavaScript, so confirm a surprising result in the
-raw response. `SEO_PROBE_SCHEME=http` (default `https`) exists for tests.
+raw response. The patterns are scanned in linear time rather than with
+backtracking regular expressions, so a hostile page of unterminated tags
+cannot stall the probe. `SEO_PROBE_SCHEME=http` (default `https`) exists for tests.
 The command ports the shell probe that `seo-optimization` carried in balebase,
 keeping its modes, lines, and exit statuses.
 

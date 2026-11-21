@@ -3,9 +3,11 @@
  * honors the proxy variables a sandboxed harness sets. Only `http:` and `https:`
  * URLs are ever requested, including redirect targets, because URLs come from
  * remote markup (`og:image`, sitemap entries, links, `Location`), and `fetch`
- * itself would also read `file:` and `s3:` URLs. Redirects are followed by hand
- * so each hop is checked and the first one can be reported.
+ * itself would also read `file:` and `s3:` URLs. A URL the command line did not
+ * name, and every redirect target, also passes the address guard. Redirects are
+ * followed by hand so each hop is checked and the first one can be reported.
  */
+import type { Guard } from "./address";
 
 export interface Reply {
   /** The URL requested. */
@@ -31,6 +33,10 @@ export interface RequestOptions {
   seconds: number;
   /** Read the body; false cancels it once the headers arrive. */
   body?: boolean;
+  /** Refuses non-public hosts that markup or redirects supply. */
+  guard?: Guard;
+  /** The URL is built from the command line's host and path, so the guard skips it (but not its redirects). */
+  named?: boolean;
 }
 
 /** curl's default `--max-redirs` with `-L`. */
@@ -76,9 +82,11 @@ async function readBody(response: Response): Promise<Uint8Array> {
   return body;
 }
 
-async function get(target: string, options: RequestOptions, deadline: number): Promise<Reply> {
+async function get(target: string, options: RequestOptions, deadline: number, guarded: boolean): Promise<Reply> {
   const url = webUrl(target);
   if (!url) return failed(target, `refused a URL that is not HTTP or HTTPS: ${target}`);
+  const refused = guarded ? await options.guard?.(url) : undefined;
+  if (refused) return failed(target, refused);
   const remaining = deadline - performance.now();
   if (remaining <= 0) return failed(target, `timed out after ${options.seconds} seconds`);
   try {
@@ -105,20 +113,23 @@ async function get(target: string, options: RequestOptions, deadline: number): P
 
 /** One request; redirects are reported, not followed. */
 export function request(target: string, options: RequestOptions): Promise<Reply> {
-  return get(target, options, performance.now() + options.seconds * 1000);
+  return get(target, options, performance.now() + options.seconds * 1000, !options.named);
 }
 
 /**
  * Follow redirects (not 304) up to curl's limit within one deadline. The final
- * reply is the last response received; a redirect to a refused scheme ends the
- * chain at that redirect, and a hop that gets no response ends it with "000".
+ * reply is the last response received; a redirect to a refused scheme or host
+ * ends the chain at that redirect, and a hop that gets no response ends it
+ * with "000".
  */
 export async function follow(target: string, options: RequestOptions): Promise<Followed> {
   const deadline = performance.now() + options.seconds * 1000;
-  const first = await get(target, options, deadline);
+  const first = await get(target, options, deadline, !options.named);
   let final = first;
-  for (let hops = 0; hops < MAX_REDIRECTS && final.location && final.code !== "304" && webUrl(final.location); hops++) {
-    final = await get(final.location, options, deadline);
+  for (let hops = 0; hops < MAX_REDIRECTS && final.location && final.code !== "304"; hops++) {
+    const next = webUrl(final.location);
+    if (!next || await options.guard?.(next)) break;
+    final = await get(final.location, options, deadline, false);
   }
   return { first, final };
 }
