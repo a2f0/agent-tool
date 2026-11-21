@@ -260,7 +260,8 @@ function jsonReport({ options, workspace, before, after, totals, repos, machine 
       tiers: [...options.tiers],
       free: { before, ...(after !== undefined && { after }) },
       totals,
-      repos: repos.map(repo => ({ ...repo, skipped: repo.busy && !options.includeBusy ? "busy" : undefined })),
+      // A repository that could not be scanned reports its error, as the text report does, not also a busy skip.
+      repos: repos.map(repo => ({ ...repo, skipped: repo.busy && !repo.error && !options.includeBusy ? "busy" : undefined })),
       ...(options.machine && { machine: machine.map(({ apply: _apply, ...item }) => item) }),
     },
     null,

@@ -464,6 +464,18 @@ describe("space cleanup", () => {
     expect(unsafeReason(root, "dist")).toBe("contains dist/cache.db");
   }, 30_000);
 
+  test("reports a repository it could not scan by its error alone, busy or not", () => {
+    const root = realpathSync(fixture());
+    writeFileSync(path.join(root, ".git", "index"), "not an index");
+    let output = "";
+    expect(main([root, "--json"], root, () => [{ pid: 900009, ppid: 1, name: "node", args: "vite", cwd: root }], text => {
+      output += text;
+    })).toBe(1);
+    const [repo] = JSON.parse(output).repos;
+    expect(repo.error).toBeString();
+    expect(repo.skipped).toBeUndefined();
+  }, 30_000);
+
   test("reports a repository it could not judge mid-apply as not cleaned, with what it removed before", () => {
     const first = realpathSync(fixture());
     const second = realpathSync(fixture());
