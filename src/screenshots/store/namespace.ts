@@ -26,7 +26,8 @@ function canonicalRepo(root: string, parsed?: string): Resolved | undefined {
   // Without a github.com origin there is no name to ask about, and bare `gh repo view` could answer for a fork's parent.
   if (!parsed) return undefined;
   // Bounded: a stalled network falls back to origin's URL rather than hanging `status`.
-  const result = spawnSync("gh", ["repo", "view", parsed, "--json", "nameWithOwner,id", "--jq", '.nameWithOwner + " " + .id'], {
+  // Host-qualified, so a GH_HOST pointing elsewhere never answers for a github.com origin.
+  const result = spawnSync("gh", ["repo", "view", `github.com/${parsed}`, "--json", "nameWithOwner,id", "--jq", '.nameWithOwner + " " + .id'], {
     cwd: root,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],

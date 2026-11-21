@@ -116,6 +116,8 @@ function isDirty(root: string): boolean {
 export interface Timing {
   readonly graceMs?: number;
   readonly killMs?: number;
+  /** Waits for the capture's group; tests substitute one that reports a group that would not stop. */
+  readonly drain?: (pgid: number, graceMs?: number, killMs?: number) => Promise<Awaited<ReturnType<typeof drainGroup>>>;
 }
 
 export interface CaptureOptions {
@@ -208,10 +210,15 @@ async function runCapture(target: Target, artifacts: string, plan: PlannedCaptur
       const result = await runner.capture(target.root, args, env, pgid => {
         group = pgid;
         // Record the capture's own group in the lock, so a person can find leftovers if this process is killed.
-        replaceLock(lockFile, { ...holder, pgid });
+        // This runs in the spawn listener, where a throw would end agent-tool with the capture unsupervised.
+        try {
+          replaceLock(lockFile, { ...holder, pgid });
+        } catch (error) {
+          process.stderr.write(`Could not record the capture's process group ${pgid} in ${lockFile}: ${(error as Error).message}\n`);
+        }
       });
       exitCode = result.code;
-      if (result.pgid !== undefined) drained = await drainGroup(result.pgid, timing.graceMs, timing.killMs);
+      if (result.pgid !== undefined) drained = await (timing.drain ?? drainGroup)(result.pgid, timing.graceMs, timing.killMs);
     } finally {
       finished = finishedRecord(target, artifacts, plan, running, { exitCode, signal, drained, inheritsIncomplete });
       // The capture may have replaced the shared directory's contents; the record goes back in either way.

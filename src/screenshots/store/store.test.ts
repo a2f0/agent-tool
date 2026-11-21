@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveTargets as cleanupTargets } from "../../space/targets";
@@ -8,7 +8,7 @@ import { gitIn, gitInit, tempDir, useCheckoutFixtures, write } from "../../syste
 import { drainGroup, type Runner } from "./capture";
 import { sharedStore } from "./clones";
 import { parseOptions, screenshotsStore as main } from "./command";
-import { link, linkState } from "./link";
+import { applyLink, link, linkState } from "./link";
 import { acquireLock } from "./lock";
 import { claimNamespace, existingCase, githubRepo, targetFor, updateOwner } from "./namespace";
 import { type CaptureRecord, type RecordEvent, type RecordFields, readRecord, relation, transition, validRecord } from "./record";
@@ -510,8 +510,8 @@ try {
     write(bin, {
       gh: `#!/bin/sh
 case "$*" in
-  *"repo view a2f0/app "*) echo a2f0/App R_app ;;
-  *"repo view a2f0/down "*) exit 1 ;;
+  *"repo view github.com/a2f0/app "*) echo a2f0/App R_app ;;
+  *"repo view github.com/a2f0/down "*) exit 1 ;;
   *"repo view --json"*) echo parent/app R_parent ;;
   *) exit 1 ;;
 esac
@@ -960,6 +960,81 @@ console.log(error ? "lost" : "won");
     rmSync(path.join(own, LINK), { recursive: true });
     expect(await main(["link", "--apply"], own, undefined, print)).toBe(0);
     expect(Object.keys(JSON.parse((await run(["capture", "--json"])).lines.join("\n")))).not.toContain("links");
+  }, 30_000);
+
+  test("leaves a clone's capture where it was when linking fails at any step", () => {
+    const { home, app } = workspace();
+    const artifacts = path.join(home, "matrix-artifacts");
+    const target = targetFor(app);
+    const store = storeDir(target, artifacts);
+    // The tree changed after the plan.
+    write(app, { ".screenshots/web/home.png": "own" });
+    expect(applyLink(target, artifacts, store, { state: "missing" }, "link", undefined)).toBe(".screenshots changed while planning; run link again");
+    // The link cannot be made after the capture moved into the store: it moves back.
+    expect(() =>
+      applyLink(target, artifacts, store, { state: "directory", entries: 1 }, "move-and-link", undefined, () => {
+        throw new Error("EACCES");
+      }),
+    ).toThrow("EACCES");
+    expect(readFileSync(path.join(app, ".screenshots/web/home.png"), "utf8")).toBe("own");
+    expect(existsSync(store)).toBe(false);
+    const superseded = path.join(artifacts, "app/superseded/app-now");
+    mkdirSync(store, { recursive: true });
+    writeFileSync(path.join(store, "capture.json"), "{}");
+    expect(() =>
+      applyLink(target, artifacts, store, { state: "directory", entries: 1 }, "supersede-and-link", superseded, () => {
+        throw new Error("EACCES");
+      }),
+    ).toThrow("EACCES");
+    expect(readFileSync(path.join(app, ".screenshots/web/home.png"), "utf8")).toBe("own");
+    expect(existsSync(superseded)).toBe(false);
+    // The capture cannot leave the clone: it stays, and the reason names the error.
+    rmSync(store, { recursive: true });
+    chmodSync(app, 0o555);
+    try {
+      expect(link(target, artifacts, true).blocked).toBe("could not move .screenshots into the store (EACCES); move it by hand");
+    } finally {
+      chmodSync(app, 0o755);
+    }
+    expect(readFileSync(path.join(app, ".screenshots/web/home.png"), "utf8")).toBe("own");
+  }, 30_000);
+
+  test("reports a clone whose link fails as blocked and still links the others", async () => {
+    const home = realpathSync(tempDir("take-screenshots-partial"));
+    const first = repo(path.join(home, "first"), ".screenshots\n");
+    const second = repo(path.join(home, "second"), ".screenshots\n");
+    gitIn(second, "remote", "set-url", "origin", "git@github.com:a2f0/second.git");
+    // The first clone's namespace cannot be written, so recording its owner fails.
+    mkdirSync(path.join(home, "matrix-artifacts/app"), { recursive: true });
+    chmodSync(path.join(home, "matrix-artifacts/app"), 0o555);
+    const lines: string[] = [];
+    try {
+      expect(await main(["link", "--apply", "--json", first, second], home, undefined, text => lines.push(text))).toBe(1);
+    } finally {
+      chmodSync(path.join(home, "matrix-artifacts/app"), 0o755);
+    }
+    const { results } = JSON.parse(lines.join("\n"));
+    expect(results[0]).toMatchObject({ name: "first", before: "missing", blocked: expect.stringContaining("EACCES") });
+    expect(results[1]).toMatchObject({ name: "second", action: "link", applied: true });
+    expect(linkState(targetFor(second), path.join(home, "matrix-artifacts"))).toEqual({ state: "linked" });
+  }, 30_000);
+
+  test("keeps the lock and records failure when the capture's group would not stop", async () => {
+    const { home, app } = workspace();
+    expect(await main(["link", "--apply"], app, undefined, print)).toBe(0);
+    const lock = path.join(home, "matrix-artifacts/app", LOCK);
+    // A group that is still alive, as one that would not stop is: this test's own.
+    const runner: Runner = {
+      capture: async (_root, _args, _env, started) => {
+        const pgid = processGroup(process.pid);
+        started(pgid);
+        return { code: 0, pgid };
+      },
+    };
+    await expect(main(["capture", "--apply"], app, runner, print, { drain: async () => "stuck" })).rejects.toThrow("would not stop; the lock");
+    expect(readRecord(path.join(home, "matrix-artifacts/app/screenshots"))?.status).toBe("failed");
+    expect(JSON.parse(readFileSync(lock, "utf8")).pgid).toBe(processGroup(process.pid));
+    expect(() => parseOptions(["link", "--project", "--apply"])).toThrow("--project needs a name");
   }, 30_000);
 
   test("refuses a capture into another repository's namespace before linking any clone", async () => {

@@ -129,12 +129,11 @@ function parseOwn(own: string[]): { names: string[]; switches: Switches; project
     const arg = own[index]!;
     const field = SWITCHES.get(arg);
     if (field) switches[field] = true;
-    else if (arg === "--project")
-      project =
-        own[++index] ??
-        (() => {
-          throw new Error("--project needs a name");
-        })();
+    else if (arg === "--project") {
+      project = own[++index];
+      // A flag in its place is a missing name, not a namespace called `--apply`.
+      if (project === undefined || project.startsWith("-")) throw new Error("--project needs a name");
+    }
     else if (arg.startsWith("-")) throw new Error(`unknown option ${arg}\n\n${STORE_USAGE}`);
     else names.push(arg);
   }

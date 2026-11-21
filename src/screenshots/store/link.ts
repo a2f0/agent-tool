@@ -78,7 +78,7 @@ export interface LinkResult {
   readonly blocked?: string;
 }
 
-type Action = NonNullable<LinkResult["action"]>;
+export type Action = NonNullable<LinkResult["action"]>;
 
 /** Plan, and with apply perform, the link for one repository. */
 export function link(target: Target, artifacts: string, apply: boolean, supersede = false, now = new Date()): LinkResult {
@@ -134,8 +134,19 @@ function linkAction(state: LinkState, store: string, supersede: boolean): Action
   return undefined;
 }
 
-/** Performs a planned link; returns why it stopped, or undefined once linked. */
-function applyLink(target: Target, artifacts: string, store: string, state: LinkState, action: Action, superseded: string | undefined): string | undefined {
+/**
+ * Performs a planned link; returns why it stopped, or undefined once linked.
+ * `makeLink` creates the symbolic link; tests substitute one that fails.
+ */
+export function applyLink(
+  target: Target,
+  artifacts: string,
+  store: string,
+  state: LinkState,
+  action: Action,
+  superseded: string | undefined,
+  makeLink: (target: string, file: string) => void = symlinkSync,
+): string | undefined {
   // Recheck at apply time: another process may have linked or written since the plan.
   const current = linkState(target, artifacts);
   if (current.state !== state.state || (current.state === "directory" && state.state === "directory" && current.entries !== state.entries)) {
@@ -149,7 +160,7 @@ function applyLink(target: Target, artifacts: string, store: string, state: Link
   const vacated = vacateLink(action, linkPath, store, superseded);
   if (vacated) return vacated;
   try {
-    symlinkSync(relative, linkPath);
+    makeLink(relative, linkPath);
   } catch (error) {
     if (action === "move-and-link") renameSync(store, linkPath);
     if (action === "supersede-and-link") renameSync(superseded!, linkPath);
