@@ -37,7 +37,7 @@ const OPENCODE_MODEL = DEFAULT_CONFIG.review.opencodeModel;
 const OPENCODE_REVIEW_AGENT = "agent-tool-review";
 
 /**
- * Map the shared effort vocabulary to a `--variant` deepseek-v4-pro accepts.
+ * Map the shared effort vocabulary to a variant deepseek-v4-pro accepts.
  * The skill's levels are `low | medium | high | xhigh | max`; this model's
  * variants are `low | medium | high | max`, so `xhigh` collapses onto `max`.
  */
@@ -67,6 +67,12 @@ export function resolveOpencodeVariant(
  * resolves it, because on macOS the temp dir is a symlink (`/var` →
  * `/private/var`) and the model may pass either spelling; a denied spelling
  * only costs the model a retry, but both spellings allowed costs nothing.
+ *
+ * OpenCode 2 normalizes this `permission` map into its ordered `permissions`
+ * rules, renaming `bash` to `shell` and `task` to `subagent` and keeping the
+ * order, so the default deny still precedes the allows; tools it added since,
+ * such as `browser`, fall under the default deny. `opencode debug agents
+ * --standalone` with the review's environment shows the effective rules.
  */
 export function buildOpencodeInlineConfig(snapshotRoot: string, model = OPENCODE_MODEL): string {
   const normalized = path.resolve(snapshotRoot).replaceAll("\\", "/");
@@ -105,25 +111,59 @@ export function buildOpencodeInlineConfig(snapshotRoot: string, model = OPENCODE
 }
 
 /**
- * Build the `opencode run` argv for a non-interactive review. The prompt goes
- * over stdin (opencode reads stdin when no message positional is given), so a
- * large diff never hits argv limits. `--pure` drops external plugins, and the
- * confinement itself lives in the inline config passed through the
- * environment: opencode has no per-run flag for permissions, and
- * `--dangerously-skip-permissions` would only *add* authority, never remove
- * it.
+ * Build the OpenCode 2 `opencode run` argv for a non-interactive review. The
+ * prompt goes over stdin (opencode reads stdin when no message positional is
+ * given), so a large diff never hits argv limits, and the variant rides in the
+ * model as `provider/model#variant`, OpenCode 2's replacement for `--variant`.
+ *
+ * `--standalone` is what keeps the confinement in force. By default `run`
+ * attaches to the shared background service, a server started earlier with its
+ * own environment and the user's global config, which never sees the inline
+ * config below: the reviewer agent would not exist there, or would not be
+ * confined. A standalone server is a private child that inherits this run's
+ * environment and working directory and exits with it. It also stands in for
+ * OpenCode 1's `--pure`: plugins load only from config, and the empty config
+ * directory with project config off leaves none to load. `--archived` keeps
+ * review sessions out of the user's session lists. Opencode has no per-run
+ * flag for permissions, and `--auto` would only *add* authority, never remove it.
  */
 export function buildOpencodeReviewArgs(variant: string, model = OPENCODE_MODEL): string[] {
   return [
     "run",
     "--model",
-    model,
-    "--variant",
-    variant,
+    `${model}#${variant}`,
     "--agent",
     OPENCODE_REVIEW_AGENT,
-    "--pure",
+    "--standalone",
+    "--archived",
   ];
+}
+
+/**
+ * The reviewer's environment: the caller's, with the inline config and
+ * OpenCode's outside configuration turned off. `directory` is the empty,
+ * non-repository directory the reviewer runs in. OpenCode 2 takes a session's
+ * directory from `PWD` before its working directory, and an inherited `PWD`
+ * names the checkout agent-tool runs from, so `PWD` is pinned too. The same
+ * directory is the config directory, which in OpenCode 2 replaces the global
+ * `~/.config/opencode` (its config, plugins, and MCP servers) outright.
+ * Project config and Claude Code compatibility (`~/.claude` skills, config,
+ * and CLAUDE.md instructions) are off, both spellings of the project switch
+ * are set because the newer one takes precedence, and an inherited
+ * `OPENCODE_CONFIG`, which would load one more config file, is dropped.
+ */
+export function buildOpencodeReviewEnv(env: ReviewerEnv, snapshotRoot: string, directory: string, model = OPENCODE_MODEL): ReviewerEnv {
+  const reviewEnv: ReviewerEnv = {
+    ...env,
+    PWD: directory,
+    OPENCODE_CONFIG_CONTENT: buildOpencodeInlineConfig(snapshotRoot, model),
+    OPENCODE_CONFIG_DIR: directory,
+    OPENCODE_CONFIG_PROJECT_DISABLE: "1",
+    OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+    OPENCODE_DISABLE_CLAUDE_CODE: "1",
+  };
+  delete reviewEnv.OPENCODE_CONFIG;
+  return reviewEnv;
 }
 
 /**
@@ -139,16 +179,17 @@ export function buildOpencodeReviewArgs(variant: string, model = OPENCODE_MODEL)
  * stderr tail is relayed so the error is still diagnosable (the Codex path
  * makes the same trade-off).
  *
- * The reviewer runs from a fresh, empty, non-repository cwd so nothing
- * branch-controlled loads: not the snapshot's `AGENTS.md` or `opencode.json`,
- * and not its `.opencode/` directory. `OPENCODE_CONFIG_DIR` points at that
- * same empty directory so no user-defined agents, commands, or plugins from
- * `~/.config/opencode` ride along either; `--pure` additionally disables
- * external plugins. That directory is *config* only: opencode's credentials
- * live in its data directory (`~/.local/share/opencode/auth.json` on macOS),
- * which `OPENCODE_CONFIG_DIR` does not touch, so the deepseek auth the review
- * needs still resolves. Global config still loads, but the inline config's
- * agent-scoped deny rules take precedence over whatever it sets.
+ * The reviewer runs on a private standalone server from a fresh, empty,
+ * non-repository directory (`buildOpencodeReviewEnv`), so nothing
+ * branch-controlled loads: not the snapshot's or checkout's `AGENTS.md` or
+ * `opencode.json`, and not a `.opencode/` directory. `OPENCODE_CONFIG_DIR`
+ * points at that same empty directory, so no user-defined agents, commands,
+ * plugins, or MCP servers from `~/.config/opencode` ride along either. That
+ * directory is *config* only: opencode's credentials live in its data
+ * directory (`~/.local/share/opencode/auth.json` on macOS), which
+ * `OPENCODE_CONFIG_DIR` does not touch, so the provider auth the review needs
+ * still resolves. Skills in `~/.agents/skills` are still discovered, but the
+ * inline config denies the skill tool and every read outside the snapshot.
  */
 export async function spawnOpencodeReview(
   prompt: string,
@@ -176,11 +217,7 @@ export async function spawnOpencodeReview(
           // Neutral cwd: opencode would otherwise load the snapshot's
           // branch-controlled config and instructions into the reviewer.
           cwd: outDir,
-          env: {
-            ...env,
-            OPENCODE_CONFIG_CONTENT: buildOpencodeInlineConfig(snapshotRoot, model),
-            OPENCODE_CONFIG_DIR: outDir,
-          },
+          env: buildOpencodeReviewEnv(env, snapshotRoot, outDir, model),
         },
       ));
       const exitCode = spawnExitCode("opencode", result);

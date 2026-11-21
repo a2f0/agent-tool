@@ -39,6 +39,7 @@ const cwdPath = path.join(stubDir, "cwd");
 const configPath = path.join(stubDir, "config-content");
 const configDirPath = path.join(stubDir, "config-dir");
 const argvPath = path.join(stubDir, "argv");
+const isolationPath = path.join(stubDir, "isolation");
 
 /**
  * Install a stub `opencode` that prints `stdout` and exits with `exitCode`. The
@@ -55,6 +56,7 @@ function stubOpencode(stdout: string, exitCode = 0): void {
     `printf '%s' "$OPENCODE_CONFIG_CONTENT" > ${JSON.stringify(configPath)}`,
     `printf '%s' "$OPENCODE_CONFIG_DIR" > ${JSON.stringify(configDirPath)}`,
     `printf '%s' "$*" > ${JSON.stringify(argvPath)}`,
+    `printf '%s\\n' "$PWD" "\${OPENCODE_DISABLE_CLAUDE_CODE-unset}" "\${OPENCODE_DISABLE_PROJECT_CONFIG-unset}" "\${OPENCODE_CONFIG-unset}" > ${JSON.stringify(isolationPath)}`,
     "echo 'stderr noise' >&2",
     `cat ${JSON.stringify(payloadPath)}`,
     `exit ${exitCode}`,
@@ -100,14 +102,25 @@ describe("spawnOpencodeReview", () => {
     expect(await spawnOpencodeReview("prompt", "high", stubDir, stubEnv)).toBe(0);
   });
 
-  test("wires the effort level into --variant, xhigh collapsing onto max", async () => {
+  test("wires the effort level into the model's variant, xhigh collapsing onto max", async () => {
     stubOpencode("## Review\n\nAll good.\n\nVERDICT: CLEAN\n");
 
     expect(await spawnOpencodeReview("prompt", "xhigh", stubDir, stubEnv)).toBe(0);
-    expect(readFileSync(argvPath, "utf8").trim()).toContain("--variant max");
+    expect(readFileSync(argvPath, "utf8").trim()).toContain("--model deepseek/deepseek-v4-pro#max");
 
     expect(await spawnOpencodeReview("prompt", "low", stubDir, stubEnv)).toBe(0);
-    expect(readFileSync(argvPath, "utf8").trim()).toContain("--variant low");
+    expect(readFileSync(argvPath, "utf8").trim()).toContain("--model deepseek/deepseek-v4-pro#low");
+  });
+
+  test("runs on a private server with PWD and outside config pinned", async () => {
+    stubOpencode("## Review\n\nAll good.\n\nVERDICT: CLEAN\n");
+
+    const env = { ...stubEnv, PWD: "/work/checkout", OPENCODE_CONFIG: "/work/checkout/opencode.json" };
+    expect(await spawnOpencodeReview("prompt", "high", stubDir, env)).toBe(0);
+    expect(readFileSync(argvPath, "utf8").trim().split(" ")).toContain("--standalone");
+    const [pwd, claude, project, extraConfig] = readFileSync(isolationPath, "utf8").split("\n");
+    expect(pwd?.split("/").pop()).toBe(readFileSync(cwdPath, "utf8").trim().split("/").pop());
+    expect([claude, project, extraConfig]).toEqual(["1", "1", "unset"]);
   });
 
   test("runs from a neutral cwd, not the snapshot", async () => {

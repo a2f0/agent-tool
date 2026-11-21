@@ -74,7 +74,10 @@ platform archives, a Homebrew formula, and Debian packages.
   `gh` whose `pr checks` supports `--json`; gh 2.45, still shipped by some
   distributions, fails with `unknown flag: --json`.
 - An authenticated CLI for each agent you review with: `claude`, `codex`, or
-  `opencode`.
+  `opencode`. OpenCode must be 2.0 or newer: its `run` takes the variant as
+  `--model provider/model#variant` and runs a private server with
+  `--standalone`, replacing 1.x's `--variant` and `--pure`, and `doctor`
+  reports 1.x as incompatible.
 - Bun 1.3.11 or newer to run the npm package.
 - Bun 1.4 or newer on `PATH` for `versions prepare`, with either install,
   because it refreshes workspace versions in `bun.lock`.
@@ -310,7 +313,9 @@ The policy is data only: no commitlint binary or JavaScript config runs.
 - **`review`**: Claude and Codex use their CLI defaults unless a model is set.
   Set `opencodeModel` to a model your account supports. `opencodeVariants`
   replaces the default effort-to-variant map (`xhigh` to `max`); an effort
-  level missing from the map is passed to OpenCode unchanged.
+  level missing from the map is passed to OpenCode unchanged. A review passes
+  `<opencodeModel>#<variant>` as OpenCode's `--model`, so neither may contain
+  `#`.
 - **`skills`**: `user` names the repository's user-wide skills, which
   `skills link` links into each user skill directory
   (see [user-wide skills](#user-wide-skills)).
@@ -713,8 +718,12 @@ Each harness runs with its own read-only protections:
 - **Codex**: an ephemeral session, snapshot-scoped filesystem permissions, no
   inherited environment for model commands, hosted web search disabled, and
   final-message capture.
-- **OpenCode**: a neutral directory, pure mode, and inline permissions that
-  deny every tool except specific read-only ones.
+- **OpenCode**: a private `--standalone` server rather than the shared
+  background service, which would never see the review's configuration; an
+  empty directory as its working directory, `PWD`, and config directory, so
+  neither the checkout nor the user's global config, plugins, or MCP servers
+  load; project config and Claude Code compatibility turned off; and inline
+  permissions that deny every tool except specific read-only ones.
 
 Unknown or unsupported CLI flags fail the run instead of silently dropping a
 protection. These are harness-level protections, not uniform OS isolation:

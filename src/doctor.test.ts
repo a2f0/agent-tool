@@ -23,7 +23,7 @@ beforeEach(() => {
   stub("git", "git version 2.50.0", "usage: git");
   stub("claude", "2.1.0", "--safe-mode --permission-mode --effort");
   stub("codex", "codex-cli 0.160.0", "--ignore-user-config --ignore-rules --strict-config --ephemeral --output-last-message");
-  stub("opencode", "1.17.0", "--pure --variant --agent");
+  stub("opencode", "opencode v2.3.2", "--model, -m string  Model to use in the format provider/model#variant --agent --archived --standalone");
 });
 
 afterEach(() => {
@@ -41,4 +41,15 @@ test("reports a gh whose pr checks command takes --json as compatible", () => {
 test("flags a gh too old for pr checks --json, which pr merge relies on", () => {
   stub("gh", "gh version 2.45.0", "      --watch   Watch checks until they finish");
   expect(gh(binDir)).toEqual({ name: "gh", version: "gh version 2.45.0", compatible: false, missingFlags: ["--json"] });
+});
+
+const opencode = (rootDir: string) => doctor(rootDir).tools.find((tool) => tool.name === "opencode");
+
+test("reports OpenCode 2, whose run takes provider/model#variant and --standalone, as compatible", () => {
+  expect(opencode(binDir)).toEqual({ name: "opencode", version: "opencode v2.3.2", compatible: true, missingFlags: [] });
+});
+
+test("flags OpenCode 1, whose run has --pure and --variant instead", () => {
+  stub("opencode", "1.17.0", "--model provider/model --variant --agent --pure");
+  expect(opencode(binDir)).toEqual({ name: "opencode", version: "1.17.0", compatible: false, missingFlags: ["--standalone", "--archived", "provider/model#variant"] });
 });

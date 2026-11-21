@@ -18,6 +18,9 @@ describe("portable project policy", () => {
       { schemaVersion: 1, merge: { requireChecks: "false" } },
       { schemaVersion: 1, merge: { requiredChecks: [{ name: "CI", worklfow: "CI" }] } },
       { schemaVersion: 1, review: { timeoutMs: 0 } },
+      // OpenCode 2 takes provider/model#variant, so a '#' in either part would corrupt it.
+      { schemaVersion: 1, review: { opencodeModel: "deepseek/deepseek-v4-pro#max" } },
+      { schemaVersion: 1, review: { opencodeVariants: { xhigh: "max#1" } } },
       { schemaVersion: 1, versions: { packages: ["../outside"] } },
       { schemaVersion: 1, versions: { packages: ["/etc"] } },
       { schemaVersion: 1, versions: { bundles: null } },
