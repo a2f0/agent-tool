@@ -8,6 +8,7 @@ import { checkGraph } from "./graph/check";
 import { stateMachinesCommand } from "./stateMachines/command";
 import { seoCommand } from "./seo/probe";
 import { buildScreenshots, describeScreenshots } from "./screenshots/build";
+import { screenshotsStoreCommand } from "./screenshots/store/command";
 import { spaceCommand } from "./space/command";
 import { perfCommand } from "./perf/command";
 import { review } from "./harnesses";
@@ -91,6 +92,9 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   images list [target...]               JSON files each image target writes
   images build [target...] [--out <dir>]  Render assets/brand/*.svg per agent-tool.json
   screenshots build [target...] [--out <dir>] [--json]  Stage guarded captures and a gallery manifest
+  screenshots status [repo...] [--all] [--json]  Each clone's link to the shared store and its newest capture
+  screenshots link [repo...] [--all] [--apply] [--supersede] [--json]  Point .screenshots at the shared store
+  screenshots capture [repo] [--apply] [--allow-dirty] [--json] [-- args...]  Run the screenshots script under the store lock and record it
   graph check                           Import cycles and layer violations per agent-tool.json
   state-machines [path...] [--limit N] [--min-score N] [--json]  Rank files that look like implicit state machines
   seo probe [--page|--headers|--links|--sitemap] <host> [path...]  Live search and preview metadata of a site
@@ -176,8 +180,9 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
     });
   }
   if (command === "screenshots") {
+    if (args[0] === "status" || args[0] === "link" || args[0] === "capture") return screenshotsStoreCommand(args);
     const action = args.shift();
-    usage(action === "build", "Usage: agent-tool screenshots build [target...] [--out <dir>] [--json]");
+    usage(action === "build", "Usage: agent-tool screenshots build [target...] [--out <dir>] [--json] | status|link|capture [repo...] [options]");
     const names: string[] = [];
     let out: string | undefined, json = false;
     while (args.length) {

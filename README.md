@@ -4,11 +4,11 @@ agent-tool is a command-line tool and a set of portable skills for repositories
 where Claude Code, Codex, OpenCode, or Hermes make the changes. It provides shared Git,
 GitHub, review, validation, and release workflows: independent agent reviews of
 a committed branch, guarded pushes and squash merges of the exact reviewed
-commit, package versioning, brand image rendering, screenshot staging with a
-framework-free gallery, safe disk cleanup, page-load measurement, a live SEO
-probe for websites, and compact output for noisy commands. Repository policy
-stays in `agent-tool.json`; the portable skills coordinate independently
-reviewed changes.
+commit, package versioning, brand image rendering, screenshot capture into a
+store every clone shares and staging with a framework-free gallery, safe disk
+cleanup, page-load measurement, a live SEO probe for websites, and compact
+output for noisy commands. Repository policy stays in `agent-tool.json`; the
+portable skills coordinate independently reviewed changes.
 
 ## Quick start
 
@@ -89,8 +89,9 @@ validation suite, and release procedures.
 - [Development](docs/development.md): setup, source layout, validation, and release
   procedures for this package.
 - [Images](docs/images.md): declarative brand sources and generated outputs.
-- [Screenshots](docs/screenshots.md): staging captured screenshots into a
-  website, and the gallery and carousel web components that show them.
+- [Screenshots](docs/screenshots.md): the shared capture store, staging
+  captured screenshots into a website, and the gallery and carousel web
+  components that show them.
 - [Permissions](docs/permissions.md): which commands run without approval in
   Claude Code and Codex, and the dependency commands that enforce it.
 - [Dependency maintenance](docs/dependency-upgrades.md): active compatibility

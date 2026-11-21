@@ -5,7 +5,9 @@ a website's output with a manifest, and `@a2f0/agent-tool/screenshots/gallery`
 renders them: `<screenshot-gallery>` for a `/screenshots` page and
 `<screenshot-carousel>` for a home page. The elements are framework-free custom
 elements, so Astro, plain HTML, or any framework can use them. Capturing is a
-separate step (the take-screenshots skill); this command never captures.
+separate step: `agent-tool screenshots capture` records a capture in the
+[shared store](#shared-store) every clone links to, and the take-screenshots
+skill runs it; `build` never captures.
 
 ## Configuration
 
@@ -82,9 +84,9 @@ pruning would delete it.
 
 ### Shared-capture guard
 
-`.screenshots` usually links to the shared `matrix-artifacts` store, which the
-take-screenshots skill records in `capture.json`, writing a `running` record
-before it touches any image. `build` reads the record before and after copying
+`.screenshots` usually links to the [shared store](#shared-store), whose
+`capture` command records each capture in `capture.json`, writing a `running`
+record before it touches any image. `build` reads the record before and after copying
 and refuses:
 
 - a record whose `status` is not `complete` (`running`, `failed`,
@@ -98,6 +100,134 @@ On any refusal or error it removes the outputs it owns, so a site never builds
 from a partial or unverified gallery. A missing source, or a link to a store
 that does not exist yet, writes an empty manifest so CI builds succeed; a plain
 directory without a record (CI, an unlinked clone) is copied as is.
+
+## Shared store
+
+`agent-tool screenshots status|link|capture` keep one capture per repository
+in a store outside its clones, so a capture taken in any clone is what every
+clone builds and deploys. The take-screenshots skill runs them.
+
+```sh
+agent-tool screenshots status                 # link state and newest capture
+agent-tool screenshots link --apply           # point .screenshots at the store
+agent-tool screenshots capture                # dry run: what would run and be recorded
+agent-tool screenshots capture --apply -- --project=web
+agent-tool screenshots status --all --json    # every clone on this machine
+```
+
+### Layout
+
+The store is `MATRIX_ARTIFACTS_DIR`, or `matrix-artifacts` beside the matrix
+workspace a repository is (or is a checkout of), or beside the repository
+outside one. Each repository has a namespace named after its GitHub repository:
+
+- `<store>/<project>/screenshots/`: the capture, which each clone's
+  gitignored `.screenshots` links to with a relative symbolic link, and its
+  record, `capture.json`.
+- `<store>/<project>/repository.json`: the owner file, `{ repo, aliases, id,
+  explicit }`, reserving the namespace for one GitHub repository. The first
+  clone that links or captures writes it. `aliases` are earlier names GitHub
+  confirmed, and `id` is GitHub's node id, which survives renames and
+  transfers, so clones whose remotes still use an old name share the same
+  namespace, online or offline, and another repository that reuses a name is
+  refused.
+- `<store>/<project>/.capture.lock`: held for the length of one capture.
+- `<store>/<project>/superseded/<clone>-<time>/`: a clone's own capture moved
+  aside by `link --supersede`, kept for a person to remove.
+
+A repository's namespace is GitHub's current name for origin (asked with
+`gh repo view <origin's name>`, so a fork's `upstream` is never used), else
+the name in origin's URL; `MATRIX_ARTIFACTS_NO_GH=1` skips the network. A
+repository without a GitHub origin names it with `--project <name>`. A
+namespace that differs only in case keeps its existing spelling.
+
+### Commands
+
+Repositories are checkout names (or `owner/name`) or paths. With none, the
+commands cover the repository holding the working directory, or, from a matrix
+workspace, every checkout that captures: one with a `screenshots` package
+script or a `.screenshots`. `--all` (status and link) instead selects every
+clone on this machine that captures into a namespace the store already holds:
+clones beside the store and the checkouts of matrix workspaces beside it,
+linked worktrees included. Every command takes `--json`.
+
+- `status [repo...] [--all]` reports each clone's link (`linked`, `missing`,
+  `directory`, `elsewhere`, or `other`), its newest capture relative to HEAD
+  (`current`, `behind`, `ahead`, `diverged`, or `unknown`), a running
+  capture's lock, and a namespace that belongs to another repository. It
+  exits 1 unless every selected clone is linked and its own. `--json` prints
+  `{ artifacts, entries: [{ name, foreign, project, store, link, capture,
+  sinceCapture, lock }] }`.
+- `link [repo...] [--all] [--apply] [--supersede]` plans, and with `--apply`
+  makes, each clone's link. A missing `.screenshots` is linked and an empty
+  directory replaced; a capture in a clone moves into an empty store, or with
+  `--supersede` (never with `--all`) to `superseded/`. It is `blocked`, exiting
+  1, when both the clone and the store hold captures, `.screenshots` links
+  elsewhere or is a file, the root `.gitignore` does not list `.screenshots`
+  without a trailing slash, the store is inside the repository, or the
+  namespace is another repository's. `--json` prints `{ artifacts, apply,
+  results: [{ name, project, store, before, action, superseded, applied,
+  blocked }] }`.
+- `capture [repo] [--apply] [--allow-dirty] [-- args...]` checks that the
+  repository has a `screenshots` package script, a clean tree (assume-unchanged
+  and skip-worktree entries and ignored submodule changes count), and a link,
+  then plans the capture, listing the clones of the store's namespaces it
+  would link. With `--apply` it first links every one that needs no
+  decision, itself first, then runs
+  `bun run screenshots [args...]` in its own process group under the lock,
+  with `SCREENSHOT_OUTPUT_DIR` naming `.screenshots`. A refusal links nothing.
+  It exits 1 when the applied capture is not `complete`. `--json` prints the
+  plan `{ name, project, store, command, commit, branch, dirty, merged,
+  previous }`, adding `applied` and `record` once applied and `links` for the
+  clones it linked or left blocked.
+
+Each exits 2, with the message on stderr, when it cannot run: an unknown
+option, a name that is no checkout or repository, a capture refused before it
+starts, or a held lock.
+
+### Capture record and lock
+
+`capture.json` is written `running` before the capture touches an image and
+settled `complete`, `failed`, or `incomplete` afterwards, atomically each time:
+
+```json
+{
+  "schemaVersion": 1,
+  "project": "app",
+  "repo": "a2f0/app",
+  "commit": "<40 hex>",
+  "branch": "main",
+  "dirty": false,
+  "args": [],
+  "merged": true,
+  "checkout": "/Users/me/github/app",
+  "host": "laptop",
+  "startedAt": "2026-11-01T12:00:00.000Z",
+  "status": "complete",
+  "finishedAt": "2026-11-01T12:04:00.000Z",
+  "exitCode": 0
+}
+```
+
+`merged` says whether the commit is on origin's default branch (`null` when
+unknown). A capture fails when the script exits non-zero or by a signal, when
+processes it left in its group had to be stopped after a 30-second grace
+period, or when the clone no longer shows the planned commit through the link
+afterwards. A partial capture (any `args`) records `over`, the capture whose
+other images it kept, and stays `incomplete` or `dirty` over one that was, so
+only a full, clean capture clears them.
+
+The lock is written to a private file and hard-linked into place, naming the
+holder's pid, process group, host, and checkout. A second capture of the same
+namespace is refused. A lock whose holder died is never removed automatically,
+since two recovering processes could each remove the other's fresh lock: the
+refusal says whether leftover capture processes are still running and asks a
+person to remove it. The lock is released only once the capture's whole
+process group has exited.
+
+`status` is in the `read` permission class. `link` and `capture` keep the
+harness's default decision, since with `--apply` they write outside the
+checkout and `capture` runs the repository's own package script.
 
 ## Manifest
 

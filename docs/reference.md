@@ -14,9 +14,10 @@ version management, and portable skills for Claude Code, Codex, OpenCode, and He
 - **Render brand images**: build app icons, splash screens, favicons, and store
   graphics from the SVGs in `assets/brand/`, with every size and destination
   declared in `agent-tool.json`.
-- **Stage screenshots**: copy captured screenshots into a website with a
-  manifest, guarded against unfinished or uncommitted captures, and show them
-  with framework-free gallery and carousel elements.
+- **Capture and stage screenshots**: capture once into a store every clone
+  links to, copy the captures into a website with a manifest, guarded against
+  unfinished or uncommitted captures, and show them with framework-free
+  gallery and carousel elements.
 - **Compact output**: run noisy commands with full private logs and bounded
   diagnostics, keeping routine output out of an agent's context.
 - **Free disk space**: remove only regenerable, git-ignored output from a
@@ -156,6 +157,9 @@ For repository workflow commands added alongside these interfaces, see
 | `images list [target...]` | List the files each image target writes, without rendering |
 | `images build [target...] [--out dir]` | Render image targets from `assets/brand/*.svg`; `--out` redirects one target |
 | `screenshots build [target...] [--out dir] [--json]` | Stage guarded captures and a gallery manifest per the `screenshots` section; `--out` redirects one target |
+| `screenshots status [repo...] [--all] [--json]` | Read-only: each clone's link to the shared screenshot store and its newest capture relative to HEAD; exit 1 while one is not linked ([shared store](screenshots.md#shared-store)) |
+| `screenshots link [repo...] [--all] [--apply] [--supersede] [--json]` | Preview by default; point each clone's `.screenshots` at the shared store; exit 1 when one is blocked |
+| `screenshots capture [repo] [--apply] [--allow-dirty] [--json] [-- args...]` | Preview by default; link the store's unlinked clones, then run the repository's `screenshots` script under the store's lock and record `capture.json`; exit 1 when it does not finish `complete` |
 | `graph check` | Fail on import cycles and layer violations among the TypeScript sources the `graph` section names; print a JSON report |
 | `space [checkout-or-path...] [--builds] [--deps] [--machine] [--include-busy] [--apply] [--json]` | Preview by default; remove regenerable, git-ignored output from the repository, or a matrix workspace and its checkouts, and with `--machine` developer caches ([disk space](#disk-space)) |
 | `perf serve\|measure\|shot\|diff\|graph ...` | Serve a build as a CDN would, time cold loads and screenshot them through the repository's own Playwright, count differing pixels, or list a module graph ([page performance](#page-performance)) |
@@ -638,7 +642,9 @@ which projects, themes, and screens it lists:
 
 `agent-tool screenshots build website` copies `.screenshots/<project>/<theme>/<screen>.png`
 into `<dir>/img/` and writes `<dir>/manifest.json`, refusing captures that are
-unfinished, uncommitted, or overlap the copy. The package also exports
+unfinished, uncommitted, or overlap the copy. `screenshots status`, `link`,
+and `capture` keep those captures in a store shared by every clone and need no
+configuration. The package also exports
 `@a2f0/agent-tool/screenshots/gallery` (the `<screenshot-gallery>` and
 `<screenshot-carousel>` elements), `@a2f0/agent-tool/screenshots/gallery.css`,
 and `@a2f0/agent-tool/screenshots/manifest`. See the
@@ -764,10 +770,12 @@ The bundle provides `cross-agent-review`, `open-issue`, `open-pr`,
 `explicit-state-machines`, which pairs with the `state-machines` scanner,
 `seo-optimization`, which pairs with [`seo probe`](#seo-probe),
 `app-store-readiness`, `audit-trails`, `space-cleanup`, which runs
-[`space`](#disk-space), and `performance-pass`, which runs
-[`perf`](#page-performance). A skill may ship Markdown files
-under `references/` beside its `SKILL.md`, and the `agents/openai.yaml` that
-Codex reads for its display name, description, and default prompt; they
+[`space`](#disk-space), `performance-pass`, which runs
+[`perf`](#page-performance), and `take-screenshots`, which runs the
+[screenshot store](screenshots.md#shared-store) commands. A skill may ship
+Markdown files under `references/` beside its `SKILL.md`, and the
+`agents/openai.yaml` that Codex reads for its display name, description, and
+default prompt; they
 install, update, and check like the skill itself, each with its own ownership
 record, in every harness directory. Other files in a skill's source directory,
 such as scripts, never ship, so a skill links only to files that do (a test
@@ -891,8 +899,8 @@ and Debian packaging. Artifact workflows do not create a hosted tap or APT repo.
 - [Design](design.md): component boundaries and implementation choices.
 - [Shared workflows](workflows.md): branch, hook, CI, and shipping contracts.
 - [Images](images.md): brand image sources, targets, and output settings.
-- [Screenshots](screenshots.md): screenshot staging, its capture guard, and the
-  gallery and carousel elements.
+- [Screenshots](screenshots.md): the shared capture store, screenshot
+  staging, its capture guard, and the gallery and carousel elements.
 - [Permissions](permissions.md): command classes and the harness rules
   generated from them.
 - [Development](development.md): reproducible validation and release procedures.

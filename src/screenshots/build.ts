@@ -5,9 +5,10 @@ import { pngSize } from "../images/png";
 import { assertNoLinks, replaceFile } from "../system/files";
 import type { ScreenshotsConfig, ScreenshotTarget } from "./config";
 import type { ScreenshotCapture, ScreenshotEntry, ScreenshotManifest } from "./manifest";
+import { RECORD } from "./store/record";
 
-/** The record the take-screenshots skill keeps beside a shared capture. */
-export const CAPTURE_RECORD = "capture.json";
+/** The record `screenshots capture` keeps beside a shared capture. */
+export const CAPTURE_RECORD = RECORD;
 const MANIFEST = "manifest.json";
 const IMAGES = "img";
 
