@@ -79,7 +79,7 @@ if (args[0] === "repo" && args[1] === "view") {
   } else if (args.includes("headRefOid")) {
     reply({headRefOid:scenario === "head-drift" ? "b".repeat(40) : head});
   } else if (args.includes("state")) {
-    reply({state:scenario === "unmerged" ? "OPEN" : "MERGED"});
+    reply({state:scenario === "unmerged" || scenario === "mutation-rejected" ? "OPEN" : "MERGED"});
   } else if (scenario === "missing") {
     console.error('no pull requests found for branch "feature"');
     process.exitCode = 1;
@@ -93,7 +93,11 @@ if (args[0] === "repo" && args[1] === "view") {
 } else if (args[0] === "api" && args[1] === "graphql") {
   if (args.some(arg => arg.includes("mutation("))) {
     writeFileSync("mutation.json", JSON.stringify(args));
-    reply({data:{mergePullRequest:{pullRequest:{state:"MERGED"}}}});
+    // mutation-lost merges but loses the response; mutation-rejected fails without merging.
+    if (scenario === "mutation-lost" || scenario === "mutation-rejected") {
+      console.error('Post "https://api.github.com/graphql": dial tcp 140.82.112.6:443: i/o timeout');
+      process.exitCode = 1;
+    } else reply({data:{mergePullRequest:{pullRequest:{state:"MERGED"}}}});
   } else {
     // retarget-late moves the PR to staging from the second target read on, after preflight.
     const reads = (existsSync("target-reads") ? Number(readFileSync("target-reads", "utf8")) : 0) + 1;
@@ -304,6 +308,20 @@ describe("PR CLI flows ported from a2f0.net", () => {
     const result = invoke("unmerged", ["pr", "merge", "", head, "production"]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("is not merged");
+  }, 20_000);
+
+  test.each([
+    ["mutation-lost", "GitHub now reports the PR MERGED. Do not merge again"],
+    ["mutation-rejected", "GitHub reports the PR OPEN, so it did not merge"],
+  ])("a failed merge mutation (%s) is never resent; the PR state is read again", (scenario, message) => {
+    const result = invoke(scenario, ["pr", "merge", "", head, "production"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(message);
+    const calls = readFileSync(path.join(fixture, "gh-calls.jsonl"), "utf8")
+      .trim().split("\n").map(line => JSON.parse(line) as string[]);
+    const mutation = calls.findIndex(call => call.some(arg => arg.includes("mutation(")));
+    expect(calls.filter(call => call.some(arg => arg.includes("mutation(")))).toHaveLength(1);
+    expect(calls.slice(mutation + 1)).toContainEqual(["pr", "view", "12", "--json", "state", "-R", "owner/repo"]);
   }, 20_000);
 
   test("creates a PR with literal multiline stdin and an explicit base", () => {

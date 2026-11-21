@@ -1,4 +1,4 @@
-import { run } from "../git/prContext";
+import { run, runRead } from "../git/prContext";
 
 function field(value: unknown, key: string): unknown {
   return typeof value === "object" && value !== null
@@ -26,7 +26,7 @@ function strictStatusRule(rule: unknown): boolean {
 export function assertStrictBaseFreshness(
   repo: string,
   baseRef: string,
-  read: typeof run = run,
+  read: typeof run = runRead,
 ): void {
   const where = `${repo}:${baseRef}`;
   let rulesetIds: unknown[];

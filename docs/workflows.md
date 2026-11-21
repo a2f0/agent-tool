@@ -482,7 +482,26 @@ Without `--timeout`, the wait is `merge.checksTimeoutSeconds` from
 `agent-tool.json`, or 900 seconds when that is unset. Each `gh` or `git` call
 during a wait may run for the time left before the deadline, but at least 15
 and at most 120 seconds; a call that runs longer is stopped and fails the wait,
-so a hung call ends it instead of keeping it running forever.
+so a hung call ends it instead of keeping it running forever. An observation
+whose GitHub read still fails transiently after its retries (below) is
+skipped, and the wait observes again at its next interval; only at the
+deadline does that error end the wait, so the timeout stays the bound.
+
+Every read-only `gh` call, in these commands and the rest of agent-tool, is
+retried after a transient failure: a network error (`i/o timeout`,
+`connection reset`, `broken pipe`, `EOF`, `TLS handshake timeout`, a client
+deadline), HTTP 502, 503, or 504, or GraphQL's own query timeout. It makes at
+most four attempts, pausing 1, 2, then 4 seconds, and inside a wait never
+pauses past its deadline. Authentication, rate-limit, not-found, and other 4xx
+failures are never retried. When the budget runs out the command fails with
+GitHub's last error and the number of attempts; rerun it once GitHub is
+reachable. Mutations are never repeated blindly: `pr merge` sends its
+mutation once and, when it fails, reads the PR's state again to say whether
+it merged anyway (`MERGED` means do not merge again); replies, thread
+resolution, run cancellation, and `pr open` are sent once and can be rerun.
+`repo cleanup` is the one mutation retried, as described under
+[checkout cleanup](#checkout-cleanup). Git's own transport (`ls-remote`,
+`fetch`) is not retried.
 
 Every observation also compares the head with the live tip of the PR's base
 branch through GitHub's compare API, asking again only after the base moves,
@@ -639,7 +658,11 @@ PR and exact shipped commit rather than Git's ancestry-based merged-branch test.
 If the feature branch is checked out in another worktree, cleanup fails after
 updating the default branch and preserves both feature refs. GitHub's DELETE ref
 API has no atomic expected-OID argument: the ref is rechecked before deletion,
-but a concurrent update between those calls remains a limitation.
+but a concurrent update between those calls remains a limitation. A DELETE that
+fails transiently may still have landed, so before sending it again cleanup
+rereads the PR (still `MERGED` at the shipped head and merge commit) and the
+remote ref: an absent ref counts as deleted, a moved one stops cleanup, and an
+unchanged one is deleted again, within the same retry budget as reads.
 
 The result is JSON on stdout, and so is a failure once `--apply` starts
 changing the checkout; a guard that refuses before any change reports on

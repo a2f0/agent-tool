@@ -2,7 +2,9 @@ import { spawnSync } from "node:child_process";
 import { lstatSync, realpathSync, writeSync } from "node:fs";
 import path from "node:path";
 import { gitEnvironment } from "../git/environment";
+import { runRead } from "../git/prContext";
 import { boundedExecFileSync, withCallDeadline } from "../system/boundedCalls";
+import { TransientGitHubError } from "../system/githubRetry";
 
 export function output(value: unknown): void { writeSync(1, `${JSON.stringify(value, null, 2)}\n`); }
 export function assert(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }
@@ -11,7 +13,8 @@ export function read(command: string, args: string[], cwd = process.cwd()): stri
   return boundedExecFileSync(command, args, { cwd, env: gitEnvironment(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 }).trimEnd();
 }
 export function git(args: string[], cwd = process.cwd()): string { return read("git", args, cwd); }
-export function json<T>(args: string[]): T { return JSON.parse(read("gh", args)) as T; }
+/** A read-only `gh` call's JSON output; transient failures are retried (`runRead`), so never pass a mutation. */
+export function json<T>(args: string[]): T { return JSON.parse(runRead("gh", args)) as T; }
 /**
  * Mutating Git commands deliberately retain normal hooks and their environment.
  * This one streams Git's and its hooks' output to stderr for commands people
@@ -110,13 +113,23 @@ export function timeoutOptions(args: string[], defaultSeconds = 900): { timeoutM
   assert(Number.isFinite(seconds) && seconds >= 0 && seconds <= 86400 && Number.isFinite(interval) && interval >= 1 && interval <= 60, "Timeout must be 0–86400 seconds and interval 1–60 seconds.");
   return { timeoutMs: seconds * 1000, intervalMs: interval * 1000 };
 }
+/**
+ * Inspect until done or the deadline passes. An inspection whose GitHub read
+ * still failed transiently after its retries is a missed observation rather
+ * than a failed wait while time remains; at the deadline its error is thrown.
+ */
 export async function poll<T>(inspect: () => { done: boolean; value: T } | Promise<{ done: boolean; value: T }>, options: { timeoutMs: number; intervalMs: number }): Promise<T> {
   const deadline = Date.now() + options.timeoutMs;
   while (true) {
-    // Each external call inside an inspection is bounded too, so a hung one cannot outlast the wait.
-    const result = await withCallDeadline(deadline, inspect);
-    if (result.done) return result.value;
-    assert(Date.now() < deadline, `Timed out waiting: ${JSON.stringify(result.value)} Pass --timeout <seconds> to wait longer.`);
+    let result: { done: boolean; value: T } | undefined;
+    try {
+      // Each external call inside an inspection is bounded too, so a hung one cannot outlast the wait.
+      result = await withCallDeadline(deadline, inspect);
+    } catch (error) {
+      if (!(error instanceof TransientGitHubError) || Date.now() >= deadline) throw error;
+    }
+    if (result?.done) return result.value;
+    if (result) assert(Date.now() < deadline, `Timed out waiting: ${JSON.stringify(result.value)} Pass --timeout <seconds> to wait longer.`);
     await new Promise(resolve => setTimeout(resolve, Math.min(options.intervalMs, deadline - Date.now())));
   }
 }

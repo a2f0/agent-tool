@@ -1,5 +1,6 @@
 import { loadConfig, type RequiredCheck } from "../config";
-import { assert, json, nativeBranch, option, output, read, repository } from "./core";
+import { runRead } from "../git/prContext";
+import { assert, json, nativeBranch, option, output, repository } from "./core";
 
 /** The health of a branch's tip: one of four closed states. */
 export type BaseHealthStatus = "green" | "red" | "pending" | "no-ci";
@@ -113,7 +114,7 @@ export function baseHealthCommand(args: string[]): number {
   const required = loadConfig().merge.requiredChecks;
   // Every page, one entry per line, so a failing required check is never past the first page. Required
   // checks are check runs or, for external CI, commit status contexts; the combined status keeps each context's latest.
-  const lines = (args: string[]) => read("gh", args).split("\n").filter(Boolean).map(line => JSON.parse(line) as CheckRun);
+  const lines = (args: string[]) => runRead("gh", args).split("\n").filter(Boolean).map(line => JSON.parse(line) as CheckRun);
   const checkRuns: CheckRun[] = required.length ? [
     ...lines(["api", "--paginate", `repos/${name}/commits/${tip}/check-runs?per_page=100`, "--jq", ".check_runs[] | {name, status, conclusion, url: .html_url}"]),
     ...lines(["api", "--paginate", `repos/${name}/commits/${tip}/status?per_page=100`, "--jq", '.statuses[] | {name: .context, status: (if .state == "pending" then "in_progress" else "completed" end), conclusion: (if .state == "success" then "success" elif .state == "pending" then null else .state end), url: .target_url}']),
@@ -127,7 +128,7 @@ export function baseHealthCommand(args: string[]): number {
   if (status === "no-ci") notes.push(`No push-triggered workflow ran on ${branch} within the last ${limit} runs; this repository lacks CI on pushes to it.`);
   else if (!tipHasRuns) notes.push(`No push run has started on the tip yet, or path filters skipped it; workflows show their latest run on ${branch}.`);
   const failingRuns = latest.filter(run => outcome(run.status, run.conclusion) === "failing");
-  const failingJobs: FailingJob[] = failingRuns.flatMap(run => read("gh", ["api", "--paginate", `repos/${name}/actions/runs/${run.id}/jobs?per_page=100`, "--jq", ".jobs[] | {id, name, status, conclusion, url: .html_url}"]).split("\n").filter(Boolean).map(line => JSON.parse(line) as Job)
+  const failingJobs: FailingJob[] = failingRuns.flatMap(run => runRead("gh", ["api", "--paginate", `repos/${name}/actions/runs/${run.id}/jobs?per_page=100`, "--jq", ".jobs[] | {id, name, status, conclusion, url: .html_url}"]).split("\n").filter(Boolean).map(line => JSON.parse(line) as Job)
     .filter(job => outcome(job.status, job.conclusion) === "failing")
     .map(job => ({ workflow: run.name, runId: run.id, runUrl: run.url, headOid: run.headSha, job: job.name, jobId: job.id, url: job.url, conclusion: job.conclusion })));
   // A failing required check outside those runs (another app, or a run beyond the window) is listed by its own link.

@@ -1,4 +1,4 @@
-import { run } from "../git/prContext";
+import { run, runRead } from "../git/prContext";
 import { loadConfig, type AgentToolConfig } from "../config";
 
 type CheckPolicy = Pick<AgentToolConfig["merge"], "requireChecks" | "requiredChecks">;
@@ -43,7 +43,7 @@ export function assertMergeChecks(source: string, expectedHead: string, policy: 
 export function requirePassingMergeChecks(
   pr: { readonly prNumber: string; readonly repo: string },
   expectedHead: string,
-  read: typeof run = run,
+  read: typeof run = runRead,
   policy: CheckPolicy = loadConfig().merge,
 ): void {
   // gh pr checks paginates and selects the latest run per workflow/job/event.

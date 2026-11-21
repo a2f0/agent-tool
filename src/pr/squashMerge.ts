@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 
 import { loadConfig } from "../config";
-import { prState, resolvePr, run, spawnExitCode } from "../git/prContext";
+import { prState, resolvePr, runRead, spawnExitCode } from "../git/prContext";
 import { assertStrictBaseFreshness } from "./baseFreshness";
 import { requirePassingMergeChecks } from "./mergeChecks";
 import {
@@ -120,7 +120,7 @@ export function resolvePullRequestMergeTarget(
     throw new Error(`Invalid repository slug '${pr.repo}'.`);
   }
   const [owner, name] = repoParts;
-  const source = run("gh", [
+  const source = runRead("gh", [
     "api",
     "graphql",
     "-f",
@@ -168,6 +168,32 @@ export function buildSquashMergeArgs(
 }
 
 /**
+ * After a failed merge mutation, read the PR's state once more and say whether
+ * the merge landed anyway, so nobody sends it again blindly. The mutation was
+ * bound to the reviewed head through `expectedHeadOid`; repeating `pr merge`
+ * reruns every gate first.
+ */
+function reportFailedMerge(prNumber: string, repo: string): void {
+  let state: string;
+  try {
+    state = prState(prNumber, repo);
+  } catch (error) {
+    process.stderr.write(
+      `The merge mutation for PR #${prNumber} failed, and its state could not be read again: ${(error as Error).message}\n` +
+        "Check whether it merged before running pr merge again.\n",
+    );
+    return;
+  }
+  process.stderr.write(
+    state === "MERGED"
+      ? `The merge mutation for PR #${prNumber} reported a failure, but GitHub now reports the PR MERGED. ` +
+          "Do not merge again; confirm its merge commit and head before cleanup.\n"
+      : `The merge mutation for PR #${prNumber} failed and GitHub reports the PR ${state || "in an unknown state"}, so it did not merge. ` +
+          "Read the error above; running pr merge again repeats every gate first.\n",
+  );
+}
+
+/**
  * Squash-merge the open PR for the current branch with a subject-only commit
  * message — no auto-generated body or extended message. The subject defaults to
  * the PR title when one is not supplied, and is validated against the repo's
@@ -212,6 +238,8 @@ export function squashMerge(
   );
   const exitCode = spawnExitCode("GitHub mergePullRequest mutation", result);
   if (exitCode !== 0) {
+    // Never sent twice: a mutation that failed in transit may still have merged.
+    reportFailedMerge(pr.prNumber, pr.repo);
     return exitCode;
   }
 
