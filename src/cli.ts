@@ -201,12 +201,14 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
         if (flag === "--apply") { usage(action === "link", "skills check-links is read-only; --apply is not allowed."); usage(!apply, "Duplicate --apply."); apply = true; }
         else throw new Error(`Unknown skills ${action} argument '${flag}'.`);
       }
-      const names = loadConfig().skills.user;
+      // The checkout's top level, so a subdirectory cannot read as a repository that declares nothing.
+      const root = gitRoot();
+      const names = loadConfig(root).skills.user;
       if (action === "check-links") {
-        const result = checkSkillLinks(process.cwd(), names);
+        const result = checkSkillLinks(root, names);
         output(result); return result.ok ? 0 : 1;
       }
-      const result = linkSkills(process.cwd(), names, apply);
+      const result = linkSkills(root, names, apply);
       output(result); return result.changes.some(change => change.status === "conflict" || change.error !== undefined) ? 1 : 0;
     }
     usage(action === "install" || action === "check", "Usage: agent-tool skills <list|install|check|link|check-links>");

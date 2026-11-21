@@ -327,16 +327,22 @@ describe("skills link CLI", () => {
   const cli = path.resolve(import.meta.dir, "../index.ts");
   test("previews, applies, and checks for --repo with exit codes health reports can use", () => {
     const root = repository(), directory = home(), cwd = temporary();
+    expect(spawnSync("git", ["init", "--quiet", root]).status).toBe(0);
     writeFileSync(path.join(root, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, skills: { user: NAMES } }));
-    const run = (...args: string[]) => {
-      const result = spawnSync(process.execPath, [cli, "--repo", root, "skills", ...args], { cwd, encoding: "utf8", env: { ...process.env, HOME: directory, CLAUDE_CONFIG_DIR: "", AGENT_TOOL_CONFIG: "" } });
+    const runIn = (repo: string, ...args: string[]) => {
+      const result = spawnSync(process.execPath, [cli, "--repo", repo, "skills", ...args], { cwd, encoding: "utf8", env: { ...process.env, HOME: directory, CLAUDE_CONFIG_DIR: "", AGENT_TOOL_CONFIG: "" } });
       return { status: result.status, output: result.stdout ? JSON.parse(result.stdout) : undefined, stderr: result.stderr };
     };
+    const run = (...args: string[]) => runIn(root, ...args);
     const preview = run("link");
     expect(preview.status).toBe(0);
     expect(preview.output.applied).toBe(false);
     expect(Object.keys(preview.output.changes[0])).toEqual(["skill", "directory", "path", "target", "status"]);
     expect(run("check-links").status).toBe(1);
+    // From a subdirectory, the checkout's top level still declares the skills.
+    const nested = runIn(path.join(root, "skills"), "check-links");
+    expect([nested.status, nested.output.changes.length]).toEqual([1, 6]);
+    expect(nested.output.changes[0].target).toBe(path.join(root, "skills/space-cleanup"));
     expect(run("check-links", "--apply").stderr).toContain("read-only");
     expect(run("link", "--force").stderr).toContain("Unknown skills link argument '--force'.");
     const applied = run("link", "--apply");
