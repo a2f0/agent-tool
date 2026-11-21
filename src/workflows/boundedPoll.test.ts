@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { run } from "../git/prContext";
 import { CALL_LIMITS, withCallDeadline } from "../system/boundedCalls";
+import { TransientGitHubError } from "../system/githubRetry";
 import { poll, read } from "./core";
 
 const defaults = { ...CALL_LIMITS };
@@ -51,4 +52,21 @@ test("each call may use the time left before the deadline, up to the maximum", a
 
 test("a wait that times out says how to wait longer", async () => {
   await expect(poll(() => ({ done: false, value: { reason: "pending" } }), { timeoutMs: 0, intervalMs: 1000 })).rejects.toThrow(`Timed out waiting: {"reason":"pending"} Pass --timeout <seconds> to wait longer.`);
+});
+
+test("an observation that failed transiently after its retries is missed, not fatal, until the deadline", async () => {
+  const transient = () => new TransientGitHubError(4, new Error("HTTP 502: Bad Gateway"));
+  let observations = 0;
+  // GitHub recovers before the deadline: the wait carries on and passes.
+  expect(await poll(() => { if (++observations < 3) throw transient(); return { done: true, value: observations }; }, { timeoutMs: 10_000, intervalMs: 1 })).toBe(3);
+  // It stays down: the deadline still bounds the wait, which ends with GitHub's error.
+  observations = 0;
+  const started = Date.now();
+  await expect(poll(() => { observations++; throw transient(); }, { timeoutMs: 300, intervalMs: 1 })).rejects.toThrow("HTTP 502: Bad Gateway");
+  expect(observations).toBeGreaterThan(1);
+  expect(Date.now() - started).toBeLessThan(3000);
+  // Any other failure still ends the wait at once.
+  observations = 0;
+  await expect(poll(() => { observations++; throw new Error("PR HEAD changed while waiting"); }, { timeoutMs: 10_000, intervalMs: 1 })).rejects.toThrow("PR HEAD changed");
+  expect(observations).toBe(1);
 });

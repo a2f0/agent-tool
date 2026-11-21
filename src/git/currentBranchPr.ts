@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { retryGitHubResult } from "../system/githubRetry";
 
 interface CurrentBranchPr {
   readonly baseRefName: string;
@@ -18,18 +19,21 @@ interface CommandResult {
 
 type CommandRunner = (command: string, args: string[]) => CommandResult;
 
+/** A read-only `gh` call, repeated after a transient network or server failure. */
 function runWithResult(command: string, args: string[]): CommandResult {
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+  return retryGitHubResult(() => {
+    const result = spawnSync(command, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const output = {
+      status: result.status,
+      signal: result.signal,
+      stderr: result.stderr,
+      stdout: result.stdout,
+    };
+    return result.error ? { ...output, error: result.error } : output;
   });
-  const output = {
-    status: result.status,
-    signal: result.signal,
-    stderr: result.stderr,
-    stdout: result.stdout,
-  };
-  return result.error ? { ...output, error: result.error } : output;
 }
 
 function field(source: string, key: string): unknown {

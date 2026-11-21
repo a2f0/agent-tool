@@ -119,6 +119,11 @@ import {readFileSync,appendFileSync,writeFileSync,existsSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 const a=process.argv.slice(2), s=JSON.parse(readFileSync(process.env.API_STATE,'utf8'));
 appendFileSync(process.env.API_STATE+'.calls',JSON.stringify(a)+'\\n');
+// transient maps an argument substring to how many matching calls fail with a network timeout first;
+// deleteLands makes a failing DELETE remove the ref anyway, as a response lost in transit would.
+const tf=process.env.API_STATE+'.transient', pending=existsSync(tf)?JSON.parse(readFileSync(tf,'utf8')):(s.transient??{});
+const failing=Object.keys(pending).find(key=>pending[key]>0&&a.some(value=>value.includes(key)));
+if(failing){pending[failing]--;writeFileSync(tf,JSON.stringify(pending));if(failing==='DELETE'&&s.deleteLands)execFileSync('git',['--git-dir='+s.remote,'update-ref','-d','refs/heads/chore/workflow']);console.error('Post "https://api.github.com/graphql": dial tcp 140.82.112.6:443: i/o timeout');process.exit(1);}
 const fields=a[a.indexOf('--json')+1], say=(value)=>console.log(JSON.stringify(value));
 const pr={number:1,state:s.status,title:'chore: workflow',url:'https://github.com/o/r/pull/1',headRefName:'chore/workflow',headRefOid:s.apiHead,baseRefName:s.baseRefName??'main',baseRefOid:s.liveBase,isDraft:false,mergeable:'MERGEABLE',mergeStateStatus:'CLEAN',isCrossRepository:false,mergeCommit:{oid:s.commit}};
 if(a[0]==='repo')say({nameWithOwner:'o/r',defaultBranchRef:{name:s.defaultBranch??'main'},url:'file://'+s.remote,sshUrl:'file://'+s.remote});
@@ -302,6 +307,25 @@ test("cleanup previews without changes, then deletes only exact shipped refs thr
   const again = f.run(["repo", "cleanup", "1", f.commit, "--apply"]);
   expect(again.status).toBe(0); expect(JSON.parse(again.stdout).completed).toEqual(["updated-default"]);
 }, 30_000);
+test("pr checks --wait retries a transient GitHub failure rather than ending the wait", () => {
+  const f = githubFixture(); f.save({ transient: { statusCheckRollup: 1 } });
+  const result = f.run(["pr", "checks", "--wait", "--timeout", "60"]); expect(result.status).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, waiting: false });
+  expect(readFileSync(f.stateFile + ".calls", "utf8").split("\n").filter(line => line.includes("statusCheckRollup"))).toHaveLength(2);
+}, 30_000);
+test("cleanup resends a transiently failed remote delete only after rechecking the merge and the ref", () => {
+  for (const lands of [true, false]) {
+    const f = githubFixture(); f.save({ status: "MERGED", transient: { DELETE: 1 }, deleteLands: lands });
+    const result = f.run(["repo", "cleanup", "1", f.commit, "--apply"]); expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).completed).toEqual(["updated-default", "deleted-local-branch", "deleted-remote-branch"]);
+    const calls = readFileSync(f.stateFile + ".calls", "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line) as string[]);
+    const firstDelete = calls.findIndex(call => call.includes("DELETE"));
+    // A delete that landed in transit is not sent again; one that did not is resent once.
+    expect(calls.filter(call => call.includes("DELETE"))).toHaveLength(lands ? 1 : 2);
+    expect(calls.slice(firstDelete + 1).some(call => call[0] === "pr" && call[1] === "view")).toBe(true);
+    expect(f.git(["ls-remote", "--heads", "origin", "chore/workflow"])).toBe("");
+  }
+}, 40_000);
 test("cleanup prunes a squash-merged local branch after GitHub deleted the remote", () => {
   const f = githubFixture();
   writeFileSync(path.join(f.root, "tracked"), "shipped change\n"); f.git(["commit", "-am", "feat: shipped change"]);

@@ -18,6 +18,11 @@ export async function withCallDeadline<T>(until: number, inspect: () => T | Prom
   return await deadlines.run(until, inspect);
 }
 
+/** The deadline of the wait running the current call, or undefined outside every wait. */
+export function callDeadline(): number | undefined {
+  return deadlines.getStore();
+}
+
 function currentLimit(): number | undefined {
   const deadline = deadlines.getStore();
   if (deadline === undefined) return undefined;

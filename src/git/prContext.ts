@@ -1,6 +1,7 @@
 import { gitEnvironment } from "./environment";
 import { spawnSync } from "node:child_process";
 import { boundedExecFileSync } from "../system/boundedCalls";
+import { retryGitHubRead } from "../system/githubRetry";
 import { randomUUID } from "node:crypto";
 
 import { viewCurrentBranchPr } from "./currentBranchPr";
@@ -39,9 +40,17 @@ export function run(command: string, args: string[]): string {
   }).trim();
 }
 
+/**
+ * `run` for a read-only GitHub call: a transient network or server failure is
+ * repeated within `retryGitHubRead`'s budget. Never use it for a mutation.
+ */
+export function runRead(command: string, args: string[]): string {
+  return retryGitHubRead(() => run(command, args));
+}
+
 function tryRun(command: string, args: string[]): string | null {
   try {
-    return run(command, args);
+    return runRead(command, args);
   } catch {
     return null;
   }
@@ -134,7 +143,7 @@ export function selectRepositoryGitUrl(
 }
 
 export function resolveRepositoryGitUrl(repo: string): string {
-  const repoRaw = run("gh", ["repo", "view", repo, "--json", "url,sshUrl"]);
+  const repoRaw = runRead("gh", ["repo", "view", repo, "--json", "url,sshUrl"]);
   const httpsUrl = stringField(repoRaw, "url");
   const sshUrl = stringField(repoRaw, "sshUrl");
   let host = "";
@@ -334,7 +343,7 @@ export function findOpenPrNumber(branch: string, repo: string): string {
 
 /** Read a known-open PR's title and base identity from GitHub. */
 function viewPr(branch: string, repo: string, prNumber: string): PrView {
-  const viewRaw = run("gh", [
+  const viewRaw = runRead("gh", [
     "pr",
     "view",
     prNumber,
@@ -406,7 +415,7 @@ function fetchPrView(): PrView {
 /** Current GitHub state of a PR (e.g. "OPEN", "MERGED", "CLOSED"). */
 export function prState(prNumber: string, repo: string): string {
   return stringField(
-    run("gh", ["pr", "view", prNumber, "--json", "state", "-R", repo]),
+    runRead("gh", ["pr", "view", prNumber, "--json", "state", "-R", repo]),
     "state",
   );
 }

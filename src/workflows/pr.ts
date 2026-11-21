@@ -10,7 +10,7 @@ import { assertStrictBaseFreshness } from "../pr/baseFreshness";
 import { baseFreshness, behindReason, cancelRuns } from "./prFreshness";
 import { resolvePullRequestMergeTarget, squashMerge } from "../pr/squashMerge";
 import { planVersions } from "../version/bumpVersions";
-import { assert, clean, currentBranch, git, head, json, oid, option, flag, output, poll, timeoutOptions } from "./core";
+import { assert, clean, currentBranch, git, head, json, oid, option, flag, output, poll, read, timeoutOptions } from "./core";
 
 export interface PullRequest {
   number: number; url: string; state: string; title: string; headRefName: string; headRefOid: string;
@@ -157,8 +157,10 @@ export function mergeReviewedHead(rootDir: string, subject: string | undefined, 
 interface Comment { id: string; databaseId: number; body: string; url: string; author: { login: string } | null }
 interface Page<T> { nodes: T[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } }
 interface Thread { id: string; isResolved: boolean; isOutdated: boolean; path: string; line: number | null; comments: Page<Comment> }
-function graphql<T>(query: string, variables: Record<string, string | number>): T {
-  const response = json<{ data?: T; errors?: unknown[] }>(["api", "graphql", "-f", `query=${query}`, ...Object.entries(variables).flatMap(([key, value]) => [typeof value === "number" ? "-F" : "-f", `${key}=${value}`])]);
+/** A GraphQL query, retried after a transient failure, or a mutation, which is sent once. */
+function graphql<T>(query: string, variables: Record<string, string | number>, mutation = false): T {
+  const args = ["api", "graphql", "-f", `query=${query}`, ...Object.entries(variables).flatMap(([key, value]) => [typeof value === "number" ? "-F" : "-f", `${key}=${value}`])];
+  const response = (mutation ? JSON.parse(read("gh", args)) : json(args)) as { data?: T; errors?: unknown[] };
   assert(response.data && !response.errors?.length, "GitHub GraphQL response was incomplete.");
   return response.data;
 }
@@ -207,7 +209,7 @@ function threadsCommand(args: string[]): number {
   const thread = reviewThreads(identity).find(thread => thread.id === args[0]);
   assert(thread, "Thread does not belong to this PR.");
   if (thread.isResolved) { output({ id: thread.id, isResolved: true, changed: false }); return 0; }
-  output(graphql("mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}", { id: thread.id })); return 0;
+  output(graphql("mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}", { id: thread.id }, true)); return 0;
 }
 
 export async function prWorkflowCommand(args: string[]): Promise<number> {

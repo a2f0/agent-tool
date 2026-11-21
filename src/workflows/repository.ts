@@ -2,7 +2,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config";
-import { remoteBranchHead, resolveFreshBaseRef, resolveRepositoryGitUrl } from "../git/prContext";
+import { remoteBranchHead, resolveFreshBaseRef, resolveRepositoryGitUrl, runRead } from "../git/prContext";
+import { retryCheckedGitHubMutation, retryGitHubResult } from "../system/githubRetry";
 import { viewCurrentBranchPr } from "../git/currentBranchPr";
 import { assert, clean, currentBranch, flag, git, head, mutateGitCaptured, oid, output, read, repository } from "./core";
 import { pullRequest } from "./pr";
@@ -46,12 +47,13 @@ export function repoCommand(args: string[]): number {
   const url = resolveRepositoryGitUrl(repo.nameWithOwner);
   const remoteFeature = remoteBranchHead(url, pr.headRefName);
   assert(!remoteFeature || remoteFeature === shipped, "Remote feature branch moved beyond the shipped HEAD.");
-  const plan = { repo: repo.nameWithOwner, pr: pr.number, mergeOid: pr.mergeCommit.oid, shippedHead: shipped, defaultBranch, featureBranch: pr.headRefName, keepBranch: keep };
+  const mergeOid = pr.mergeCommit.oid;
+  const plan = { repo: repo.nameWithOwner, pr: pr.number, mergeOid, shippedHead: shipped, defaultBranch, featureBranch: pr.headRefName, keepBranch: keep };
   if (!apply) { output({ ...plan, applied: false }); return 0; }
   const completed: string[] = [];
   try {
     const defaultOid = resolveFreshBaseRef(repo.nameWithOwner, defaultBranch);
-    assert(git(["merge-base", defaultOid, pr.mergeCommit.oid]) === pr.mergeCommit.oid, "Default branch does not contain the confirmed merge commit.");
+    assert(git(["merge-base", defaultOid, mergeOid]) === mergeOid, "Default branch does not contain the confirmed merge commit.");
     const localDefault = spawnSync("git", ["rev-parse", "--verify", `refs/heads/${defaultBranch}`], { encoding: "utf8" });
     if (localDefault.status === 0) {
       assert(git(["merge-base", localDefault.stdout.trim(), defaultOid]) === localDefault.stdout.trim(), "Local default branch diverged; preserve it for inspection.");
@@ -69,7 +71,14 @@ export function repoCommand(args: string[]): number {
       assert(!live || live === shipped, "Remote feature branch changed before deletion.");
       if (live) {
         // REST avoids pre-push hooks. GitHub has no expected-OID delete guard.
-        read("gh", ["api", "--method", "DELETE", `repos/${repo.nameWithOwner}/git/refs/heads/${encodeURIComponent(pr.headRefName)}`]);
+        retryCheckedGitHubMutation(() => { read("gh", ["api", "--method", "DELETE", `repos/${repo.nameWithOwner}/git/refs/heads/${encodeURIComponent(pr.headRefName)}`]); }, () => {
+          // A delete that failed in transit may have landed: confirm the merge and the ref again before resending it.
+          const current = pullRequest(args[0], repo.nameWithOwner);
+          assert(current.state === "MERGED" && current.headRefOid === shipped && current.mergeCommit?.oid === mergeOid, "PR is no longer confirmed MERGED at the shipped HEAD; not retrying the remote branch deletion.");
+          const remote = remoteBranchHead(url, pr.headRefName);
+          assert(!remote || remote === shipped, "Remote feature branch changed before deletion.");
+          return !remote;
+        });
         completed.push("deleted-remote-branch");
       }
     }
@@ -81,8 +90,8 @@ export function policyCommand(args: string[]): number {
   assert(args.length === 1 && args[0] === "check", "Usage: policy check");
   const repo = repository();
   const branch = repo.defaultBranchRef.name;
-  const rules = read("gh", ["api", "--paginate", `repos/${repo.nameWithOwner}/rules/branches/${encodeURIComponent(branch)}`, "--jq", ".[]"]).split("\n").filter(Boolean).map((line): unknown => JSON.parse(line));
-  const protection = spawnSync("gh", ["api", `repos/${repo.nameWithOwner}/branches/${encodeURIComponent(branch)}/protection`], { encoding: "utf8" });
+  const rules = runRead("gh", ["api", "--paginate", `repos/${repo.nameWithOwner}/rules/branches/${encodeURIComponent(branch)}`, "--jq", ".[]"]).split("\n").filter(Boolean).map((line): unknown => JSON.parse(line));
+  const protection = retryGitHubResult(() => spawnSync("gh", ["api", `repos/${repo.nameWithOwner}/branches/${encodeURIComponent(branch)}/protection`], { encoding: "utf8" }));
   assert(protection.status === 0 || /HTTP 404/.test(protection.stderr), "Could not read classic branch protection.");
   const classic = protection.status === 0 ? JSON.parse(protection.stdout) as { required_status_checks?: { contexts?: string[]; checks?: { context: string }[]; strict?: boolean } } : null;
   const required = new Set<string>(classic?.required_status_checks?.contexts ?? []);
