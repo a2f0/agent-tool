@@ -1,8 +1,9 @@
 /**
  * `agent-tool seo probe`: a host's live search and preview metadata, for the
  * seo-optimization skill. It reports what the deployed site serves before
- * JavaScript runs; it changes nothing, but it requests whatever URLs its
- * arguments and the fetched pages name.
+ * JavaScript runs; it changes nothing, but it requests the URLs its arguments
+ * name and those the fetched pages name, the latter only on public addresses
+ * unless the named host is itself local.
  */
 import { writeSync } from "node:fs";
 import { addressGuard, type Guard } from "./address";
@@ -42,7 +43,7 @@ export interface ProbeOptions {
   paths: string[];
   scheme: "http" | "https";
   userAgent: string;
-  /** Refuses non-public hosts from markup; computed from the named host when absent. */
+  /** Refuses non-public hosts from markup; computed from the named host when absent, never switched off by omission. */
   guard?: Guard;
 }
 
@@ -91,7 +92,7 @@ export async function probe(options: ProbeOptions, print: (line: string) => void
   const withBust = (url: string) => `${url}${url.includes("?") ? "&" : "?"}${bust}`;
   const unbust = (url: string) => url.replace(new RegExp(`[?&]${bust}`), "");
   // URLs built from the command line are "named"; those from markup and redirects pass the guard.
-  const guard = "guard" in options ? options.guard : await addressGuard(host);
+  const guard = options.guard ?? await addressGuard(host);
   const web = (seconds: number, source: Source, body = true): RequestOptions => ({ userAgent: options.userAgent, seconds, body, guard, named: source === "named" });
 
   const reachable = await request(`${origin}/`, web(15, "named", false));

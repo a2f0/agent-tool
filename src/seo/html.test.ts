@@ -94,6 +94,10 @@ test("only a whole noindex or none directive blocks indexing", () => {
     ["googlebot: unavailable_after: 25 Jun 2030 15:00:00 PST", true, false],
     ["foo:none", false, false],
     ["noindexed, nonexistent, nones", false, false],
+    ["noindex max-image-preview:large", false, true],
+    ["max-snippet:-1 noindex", true, true],
+    ["max-snippet:-1, noindex", false, true],
+    ["googlebot:max-image-preview:none nofollow", true, false],
     ["", true, false],
   ] as [string, boolean, boolean][]) expect({ value, header, blocks: blocksIndexing(value, header) }).toEqual({ value, header, blocks: expected });
 });

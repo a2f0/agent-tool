@@ -85,7 +85,7 @@ async function readBody(response: Response): Promise<Uint8Array> {
 async function get(target: string, options: RequestOptions, deadline: number, guarded: boolean): Promise<Reply> {
   const url = webUrl(target);
   if (!url) return failed(target, `refused a URL that is not HTTP or HTTPS: ${target}`);
-  const refused = guarded ? await options.guard?.(url) : undefined;
+  const refused = guarded ? await options.guard?.(url, deadline - performance.now()) : undefined;
   if (refused) return failed(target, refused);
   const remaining = deadline - performance.now();
   if (remaining <= 0) return failed(target, `timed out after ${options.seconds} seconds`);
@@ -128,7 +128,7 @@ export async function follow(target: string, options: RequestOptions): Promise<F
   let final = first;
   for (let hops = 0; hops < MAX_REDIRECTS && final.location && final.code !== "304"; hops++) {
     const next = webUrl(final.location);
-    if (!next || await options.guard?.(next)) break;
+    if (!next || await options.guard?.(next, deadline - performance.now())) break;
     final = await get(final.location, options, deadline, false);
   }
   return { first, final };

@@ -321,15 +321,18 @@ links, and `Location` come from remote markup. Bodies are read up to 64 MiB.
 A URL the command line did not name (a link, sitemap entry, child sitemap, or
 `og:image`) and every redirect target must also resolve to public addresses
 only: a host that is, or resolves to, any loopback, private, shared (CGNAT),
-link-local, unspecified, multicast, or reserved address, IPv4 or IPv6
-(including IPv4-mapped, NAT64, and 6to4 forms), gets `000` without a request,
-and a redirect to one ends its chain there, as a redirect to another scheme
-does. When the named host itself resolves to such an address, as a local
-development server does, nothing is refused. Names resolve once per run with
-the system resolver (`dns.lookup`), as `fetch` resolves them, just before
-their first request; a name that does not resolve is left to `fetch` or the
-proxy, and a name that resolves differently by the time `fetch` connects (DNS
-rebinding) is not caught.
+link-local, unspecified, documentation, benchmarking, multicast, or reserved
+address, IPv4 or IPv6 (including IPv4-mapped, NAT64, 6to4, and Teredo forms),
+gets `000` without a request, and a redirect to one ends its chain there, as a
+redirect to another scheme does. The named host's own name is always allowed.
+When every address of the named host is non-public, as for a local development
+server, nothing is refused. Names resolve once per run with the system
+resolver (`dns.lookup`), as `fetch` resolves them, just before their first
+request. A name that does not resolve is left to `fetch` or the proxy; one
+still resolving when the request's time limit runs out is refused, and the
+named host gets 15 seconds before it is treated as public. A name that
+resolves differently by the time `fetch` connects (DNS rebinding) is not
+caught.
 Repeated header lines, such as two `X-Robots-Tag` headers, print joined with
 `, `, as HTTP combines them. Requests run one at a time.
 

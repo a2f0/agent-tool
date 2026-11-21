@@ -5,11 +5,12 @@ test("non-public addresses cover loopback, private, link-local, and their IPv6 f
   for (const address of [
     "127.0.0.1", "127.255.255.254", "10.0.0.1", "172.16.0.1", "172.31.255.255", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0",
     "224.0.0.1", "255.255.255.255", "::", "::1", "fe80::1", "fe80::1%en0", "fc00::1", "fd12:3456::1", "fec0::1", "ff02::1",
-    "::ffff:127.0.0.1", "::ffff:7f00:1", "::ffff:169.254.169.254", "::10.0.0.1", "64:ff9b::10.0.0.1", "64:ff9b:1::1", "2002:a00:1::1", "not-an-address",
+    "::ffff:127.0.0.1", "::ffff:7f00:1", "::ffff:169.254.169.254", "::ffff:0:10.0.0.1", "::10.0.0.1", "64:ff9b::10.0.0.1", "64:ff9b:1::1", "2002:a00:1::1",
+    "192.0.0.8", "192.0.2.1", "198.18.0.1", "198.19.255.255", "198.51.100.7", "203.0.113.9", "100::1", "2001::1", "2001:db8::1", "not-an-address",
   ]) expect({ address, nonPublic: isNonPublicAddress(address) }).toEqual({ address, nonPublic: true });
   for (const address of [
     "8.8.8.8", "93.184.216.34", "172.15.255.255", "172.32.0.1", "100.128.0.1", "169.255.0.1", "192.169.0.1", "223.255.255.255",
-    "2606:4700::6810:84e5", "2001:4860:4860::8888", "::ffff:8.8.8.8", "64:ff9b::8.8.8.8", "2002:808:808::1",
+    "2606:4700::6810:84e5", "2001:4860:4860::8888", "::ffff:8.8.8.8", "::ffff:0:8.8.8.8", "64:ff9b::8.8.8.8", "2002:808:808::1", "198.20.0.1", "203.0.114.1",
   ]) expect({ address, nonPublic: isNonPublicAddress(address) }).toEqual({ address, nonPublic: false });
 });
 
@@ -29,7 +30,7 @@ test("a public named host refuses markup URLs that reach a non-public address", 
   const { lookup, asked } = fakeLookup();
   const guard = await addressGuard("public.example", lookup);
   expect(guard).toBeDefined();
-  const check = (url: string) => guard!(new URL(url));
+  const check = (url: string) => guard!(new URL(url), 5_000);
   expect(await check("https://public.example/about/")).toBeUndefined();
   expect(await check("https://cdn.example/og.png")).toBeUndefined();
   expect(await check("http://internal.example/")).toContain("refused internal.example (10.0.0.5)");
@@ -54,3 +55,28 @@ test("a non-public named host, such as a local server, refuses nothing", async (
   // An unresolvable named host still gets the guard; the probe then reports it does not respond.
   expect(await addressGuard("missing.example", fakeLookup().lookup)).toBeDefined();
 });
+
+test("a private record beside a public one keeps the guard on, allowing only the named host", async () => {
+  const guard = await addressGuard("mixed.example:8443", fakeLookup().lookup);
+  expect(guard).toBeDefined();
+  expect(await guard!(new URL("https://mixed.example/about/"), 5_000)).toBeUndefined();
+  expect(await guard!(new URL("https://MIXED.example:9000/x"), 5_000)).toBeUndefined();
+  expect(await guard!(new URL("http://internal.example/"), 5_000)).toContain("refused internal.example");
+  expect(await guard!(new URL("http://127.0.0.1/"), 5_000)).toContain("refused 127.0.0.1");
+});
+
+test("a slow resolver refuses within the request's limit, and a slow named host keeps the guard", async () => {
+  const hang: Lookup = hostname => hostname === "public.example" ? Promise.resolve(["93.184.216.34"]) : new Promise(() => {});
+  const guard = await addressGuard("public.example", hang);
+  const started = performance.now();
+  expect(await guard!(new URL("http://slow.example/"), 50)).toContain("did not resolve within");
+  expect(performance.now() - started).toBeLessThan(2_000);
+  expect(await addressGuard("slow.example", hang, 50)).toBeDefined();
+});
+
+test("the system resolver backs the default lookup", async () => {
+  // localhost resolves from the hosts file, without the network.
+  const guard = await addressGuard("93.184.216.34");
+  expect(await guard!(new URL("http://localhost:8080/"), 5_000)).toContain("refused localhost");
+  expect(await addressGuard("localhost:3000")).toBeUndefined();
+}, 30_000);
