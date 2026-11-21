@@ -61,7 +61,8 @@ function unique<T>(items: T[], key: (item: T) => string): T[] {
 /**
  * The real path of a directory that may not exist yet: its nearest existing ancestor's, then the
  * rest, following a dangling link to where it points, so a link to a directory not created yet
- * names that directory. A link loop stops at the link's own path.
+ * names that directory. A link loop stops after 40 links, at whichever name it reached, which
+ * planning then refuses as a link that does not resolve to a directory.
  */
 function realDirectory(directory: string, hops = 0): string {
   try { return realpathSync(directory); }
@@ -181,8 +182,9 @@ function directoryExists(directory: string): boolean {
     if (errorCode(error) === "ENOENT") return false;
     if (errorCode(error) !== "ENOTDIR") throw error;
   }
-  if (!isDirectory(directory)) throw new Error(`User skill directory is not a directory: ${directory}`);
-  return true;
+  if (isDirectory(directory)) return true;
+  if (isLink(directory)) throw new Error(`User skill directory is a link that does not resolve to a directory: ${directory} -> ${readlinkSync(directory)}`);
+  throw new Error(`User skill directory is not a directory: ${directory}`);
 }
 
 /**
@@ -258,7 +260,8 @@ export function applySkillLinks(changes: SkillLink[]): SkillLink[] {
  * naming a Git directory that, or one of whose ancestors up to the enclosing `.git` directory,
  * holds `commondir`, which Git writes only into a linked worktree's Git directory. The ancestors
  * cover a submodule checked out inside a linked worktree, whose Git directory sits under that
- * worktree's; stopping at the enclosing `.git` keeps a stray file above the repository from counting.
+ * worktree's `modules/`. The walk stops at the outermost Git directory, so a stray `commondir`
+ * above the repository never counts.
  */
 function linkedWorktree(root: string): boolean {
   const read = readRegularFile(path.join(root, ".git"));
@@ -266,7 +269,10 @@ function linkedWorktree(root: string): boolean {
   if (gitdir === undefined) return false;
   for (let directory = path.resolve(root, gitdir); ; directory = path.dirname(directory)) {
     if (existsSync(path.join(directory, "commondir"))) return true;
-    if (path.basename(directory) === ".git" || path.dirname(directory) === directory) return false;
+    const parent = path.dirname(directory);
+    if (parent === directory || path.basename(directory) === ".git") return false;
+    // A Git directory with no `modules` directory above it is the outermost, as with `--separate-git-dir`.
+    if (existsSync(path.join(directory, "HEAD")) && !parent.split(path.sep).includes("modules")) return false;
   }
 }
 

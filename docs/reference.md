@@ -674,7 +674,8 @@ any directory inside it, and both accept the global `--repo <directory>`, so a
 workspace can link its checkouts' skills with its own pinned agent-tool. Restart a harness session if
 newly linked skills do not appear. Because `--apply` writes outside the
 checkout, into directories every session loads, it is in the `policy`
-permission class ([permissions](permissions.md#classes)).
+permission class, which covers creating the links, not later changes to the
+files they point at ([permissions](permissions.md#what-the-rules-protect)).
 
 ### Dependency upgrades
 

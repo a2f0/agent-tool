@@ -314,9 +314,17 @@ describe("skills link", () => {
       expect(() => linkSkills(root, NAMES, true, env)).toThrow("Refusing to link user-wide skills from a linked worktree");
       expect(existsSync(path.join(directory, ".agents"))).toBe(false);
     }
-    // A submodule of the main checkout links, even below a stray `commondir` above the repository.
+    // A submodule of the main checkout links, even below a stray `commondir` above the repository,
+    // and so does a checkout whose Git directory lives elsewhere (`--separate-git-dir`).
     writeFileSync(path.join(outer, "commondir"), "stray");
+    writeFileSync(path.join(main, ".git/modules/project/HEAD"), "ref: refs/heads/main\n");
+    writeFileSync(path.join(main, ".git/HEAD"), "ref: refs/heads/main\n");
     writeFileSync(path.join(root, ".git"), `gitdir: ${path.relative(root, path.join(main, ".git/modules/project"))}\n`);
+    expect(linkSkills(root, NAMES, false, env).changes.every(change => change.status === "create")).toBe(true);
+    const separate = path.join(outer, "separate/project-git");
+    mkdirSync(separate, { recursive: true });
+    writeFileSync(path.join(separate, "HEAD"), "ref: refs/heads/main\n");
+    writeFileSync(path.join(root, ".git"), `gitdir: ${separate}\n`);
     expect(linkSkills(root, NAMES, true, env).applied).toBe(true);
   });
 
@@ -359,9 +367,18 @@ describe("skills link", () => {
   });
 
   test("a skills path that is not a directory is refused", () => {
-    const root = repository(), directory = home();
+    const root = repository(), directory = home(), elsewhere = temporary();
     writeFileSync(path.join(directory, ".claude2/skills"), "not a directory");
     expect(() => linkSkills(root, NAMES, true, { HOME: directory })).toThrow(`User skill directory is not a directory: ${path.join(directory, ".claude2/skills")}`);
+    // A dangling link that names no discovered directory.
+    rmSync(path.join(directory, ".claude2/skills"));
+    symlinkSync(path.join(elsewhere, "gone"), path.join(directory, ".claude2/skills"));
+    expect(() => checkSkillLinks(root, NAMES, { HOME: directory })).toThrow(`User skill directory is a link that does not resolve to a directory: ${path.join(directory, ".claude2/skills")} -> ${path.join(elsewhere, "gone")}`);
+    // Two skills directories that link to each other.
+    unlinkSync(path.join(directory, ".claude2/skills"));
+    symlinkSync(path.join(directory, ".claude2/skills"), path.join(directory, ".claude/skills"));
+    symlinkSync(path.join(directory, ".claude/skills"), path.join(directory, ".claude2/skills"));
+    expect(() => linkSkills(root, NAMES, true, { HOME: directory })).toThrow("User skill directory is a link that does not resolve to a directory");
     expect(existsSync(path.join(directory, ".agents"))).toBe(false);
   });
 

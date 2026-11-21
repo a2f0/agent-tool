@@ -20,6 +20,16 @@ classifies; they cannot see inside the programs those run. Review
 such code like any other change, and keep credentials for consequential systems
 out of agent sessions where that matters.
 
+The same holds for user-wide skills. `skills link --apply` asks because it
+chooses what every session loads, in every repository, but it links into the
+checkout's working tree ([user-wide skills](reference.md#user-wide-skills)).
+After that, whatever changes the linked files changes every session without
+another prompt: an edit to a declared skill's source, `skills install --apply`
+replacing a managed copy with the release the checkout pins, or a branch
+switch in that checkout. Keep a linking checkout on its default branch, and
+review changes to its declared skills as you would a change to your own
+settings.
+
 ## Classes
 
 | Class | Decision | Commands |
@@ -29,7 +39,7 @@ out of agent sessions where that matters.
 | `share` | allow | `branch push`, `pr open`, `pr cancel-runs`, `pr threads reply\|resolve`, `repo cleanup --apply` |
 | `release` | ask | `pr merge` and executables classified `release` |
 | `intake` | ask | `bun add` and executables classified `intake` |
-| `policy` | ask | `permissions install --apply`, and `skills link --apply`, which links user-wide skills into the user skill directories every session loads |
+| `policy` | ask | `permissions install --apply`, and `skills link --apply`, which links user-wide skills into the user skill directories every session loads; the links follow the checkout's working tree |
 | `exec` | ask | Executables classified `exec`: ones that run whatever file or command they are given |
 
 Legacy action names, such as `openPr` and `bumpVersions`, carry the class of the
@@ -293,7 +303,7 @@ default, or the directory `CLAUDE_CONFIG_DIR` names:
       "$defaults",
       "Release: merging a pull request, publishing a package, or deleting remote state, including `agent-tool pr merge`, `gh pr merge`, `npm publish`, and `bun publish`",
       "Dependency intake: adding a third-party package with `agent-tool bun add`, `bun add`, `npm install <name>`, `pnpm add`, or `yarn add`, or running `bunx`, `bun x`, or `npx`, which can download one",
-      "Permission changes: `agent-tool permissions install --apply` or `agent-tool skills link --apply`, or edits to `.claude/settings.json`, `.codex/rules/`, or `permissions` or `skills` in `agent-tool.json`",
+      "Permission changes: `agent-tool permissions install --apply` or `agent-tool skills link --apply`, or edits to `.claude/settings.json`, `.codex/rules/`, `permissions` or `skills` in `agent-tool.json`, or a skill that `skills.user` declares",
       "Arbitrary execution: `agent-tool bun x` with an executable that runs whatever file or command it is given, such as `tsx`"
     ]
   }

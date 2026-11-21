@@ -9,7 +9,7 @@ export const CLASSES = {
   share: { decision: "allow", description: "Publishes work for review without changing a shared branch: pushes a feature branch, opens a PR, answers review threads, or prunes a merged PR's feature branch." },
   release: { decision: "ask", description: "Merges into a shared branch, publishes a package, or deletes remote state." },
   intake: { decision: "ask", description: "Brings new third-party code into the repository." },
-  policy: { decision: "ask", description: "Changes the permissions or user-wide skills agents run with." },
+  policy: { decision: "ask", description: "Changes the permissions agents run with, or links user-wide skills every session loads." },
   exec: { decision: "ask", description: "Runs whatever command or file its arguments name." },
 } as const;
 export type PermissionClass = keyof typeof CLASSES;
