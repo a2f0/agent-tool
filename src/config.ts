@@ -26,8 +26,6 @@ export interface AgentToolConfig extends WorkflowConfig {
   screenshots: ScreenshotsConfig;
   graph: GraphConfig;
   permissions: { executables: Record<string, PermissionClass> };
-  /** `user`: skills `skills link` links into each user skill directory, by skill directory name. */
-  skills: { user: string[] };
   /** Null when the repository declares no push gate. */
   pushGate: PushGateConfig | null;
 }
@@ -51,7 +49,6 @@ export const DEFAULT_CONFIG: AgentToolConfig = {
   screenshots: structuredClone(SCREENSHOTS_DEFAULTS),
   graph: structuredClone(GRAPH_DEFAULTS),
   permissions: { executables: {} },
-  skills: { user: [] },
   pushGate: null,
 };
 
@@ -104,7 +101,7 @@ export function parseConfig(source: string): AgentToolConfig {
   keys(input, Object.keys(DEFAULT_CONFIG), "config");
   if (input.schemaVersion !== 1) throw new Error("Unsupported config schemaVersion; expected 1.");
   const result = structuredClone(DEFAULT_CONFIG);
-  for (const section of ["subject", "merge", "review", "versions", "pr", "branch", "commits", "hooks", "binaries", "permissions", "skills"] as const) {
+  for (const section of ["subject", "merge", "review", "versions", "pr", "branch", "commits", "hooks", "binaries", "permissions"] as const) {
     if (input[section] === undefined) continue;
     const settings = object(input[section], section);
     keys(settings, Object.keys(result[section]), section);
@@ -150,10 +147,6 @@ export function parseConfig(source: string): AgentToolConfig {
   // Names become literal tokens in harness rules, so keep them free of rule syntax.
   const executables = object(result.permissions.executables, "permissions.executables");
   for (const [name, value] of Object.entries(executables)) if (!/^[\w.+-]+$/.test(name) || !(typeof value === "string" && Object.hasOwn(CLASSES, value))) invalid(`permissions.executables.${name}`);
-  // Names become entries in user skill directories, so each is a plain skill directory name, once.
-  // `synced` is Claude Code's own account-synced skill store.
-  const user = result.skills.user;
-  if (!Array.isArray(user) || user.some(name => typeof name !== "string" || name.length > 64 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name) || name === "synced") || new Set(user).size !== user.length) invalid("skills.user");
   validateWorkflowConfig(result);
   return result;
 }
