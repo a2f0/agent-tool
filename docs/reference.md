@@ -671,9 +671,10 @@ run, and the command exits 1.
 prints `{ "ok": <bool>, "changes": [...] }` with the same entries and exits 1
 while any is `create`, `repair`, or `conflict`; `kept` is not a failure. With
 no declared user skills, both commands print an empty `changes` list and exit
-0. Both run in a Git checkout and read its top level's `agent-tool.json`, from
-any directory inside it, and both accept the global `--repo <directory>`, so a
-workspace can link its checkouts' skills with its own pinned agent-tool.
+0. Both run in a Git checkout and read its top level's `agent-tool.json`, or
+the file `--config` or `AGENT_TOOL_CONFIG` names, from any directory inside it,
+and both accept the global `--repo <directory>`, so a workspace can link its
+checkouts' skills with its own pinned agent-tool.
 Restart a harness session if newly linked skills do not appear. Because
 `--apply` writes outside the checkout, into directories every session loads,
 it is in the `policy` permission class, which covers creating the links, not

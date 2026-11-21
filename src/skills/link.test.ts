@@ -411,6 +411,10 @@ describe("skills link", () => {
     symlinkSync(path.join(directory, ".claude/skills"), path.join(directory, ".claude2/skills"));
     expect(() => linkSkills(root, NAMES, true, { HOME: directory })).toThrow("User skill directory is a link that does not resolve to a directory");
     expect(existsSync(path.join(directory, ".agents"))).toBe(false);
+    // A parent that is a link loop.
+    for (const name of [".claude/skills", ".claude2/skills"]) unlinkSync(path.join(directory, name));
+    symlinkSync(path.join(directory, ".agents"), path.join(directory, ".agents"));
+    expect(() => checkSkillLinks(root, NAMES, { HOME: directory })).toThrow(`User skill directory is not a directory: ${path.join(directory, ".agents/skills")}`);
   });
 
   test("links through CLAUDE_CONFIG_DIR and a linked skills directory once", () => {

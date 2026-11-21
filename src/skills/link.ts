@@ -38,7 +38,7 @@ function statOrNull(file: string) {
   try { return statSync(file); } catch (error) { if (ABSENT.includes(errorCode(error))) return null; throw error; }
 }
 function isLink(file: string): boolean {
-  try { return lstatSync(file).isSymbolicLink(); } catch (error) { if (["ENOENT", "ENOTDIR"].includes(errorCode(error))) return false; throw error; }
+  try { return lstatSync(file).isSymbolicLink(); } catch (error) { if (ABSENT.includes(errorCode(error))) return false; throw error; }
 }
 const isDirectory = (file: string) => statOrNull(file)?.isDirectory() ?? false;
 /** A directory holding a regular `SKILL.md`, following links as the harnesses do. */
@@ -186,7 +186,8 @@ function directoryExists(directory: string): boolean {
   try { lstatSync(directory); }
   catch (error) {
     if (errorCode(error) === "ENOENT") return false;
-    if (errorCode(error) !== "ENOTDIR") throw error;
+    // A parent that is a file or a link loop: refused below as not a directory.
+    if (errorCode(error) !== "ENOTDIR" && errorCode(error) !== "ELOOP") throw error;
   }
   if (isDirectory(directory)) return true;
   if (isLink(directory)) throw new Error(`User skill directory is a link that does not resolve to a directory: ${directory} -> ${readlinkSync(directory)}`);
