@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { applySkillLinks, checkSkillLinks, claudeConfigDirectories, linkSkills, planSkillLinks, skillSource, userSkillDirectories } from "./link";
@@ -10,6 +10,7 @@ const roots: string[] = [];
 function temporary(): string { const root = realpathSync(mkdtempSync(path.join(tmpdir(), "agent-tool-link-"))); roots.push(root); return root; }
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
+/** A skill directory; `name` is the front matter's raw value, quoted or not. */
 function skill(directory: string, name = path.basename(directory)): string {
   mkdirSync(directory, { recursive: true });
   writeFileSync(path.join(directory, "SKILL.md"), `---\nname: ${name}\ndescription: A test skill.\n---\n\n# ${name}\n`);
@@ -215,7 +216,7 @@ describe("skills link", () => {
     const skills = path.join(directory, ".claude/skills");
     for (const name of NAMES) unlinkSync(path.join(skills, name));
     symlinkSync(skill(path.join(clone, "skills/space-cleanup")), path.join(skills, "space-cleanup"));
-    symlinkSync(skill(path.join(clone, "renamed"), "explicit-state-machines"), path.join(skills, "explicit-state-machines"));
+    symlinkSync(skill(path.join(clone, "renamed"), '"explicit-state-machines"'), path.join(skills, "explicit-state-machines"));
     const check = checkSkillLinks(root, NAMES, env);
     expect(summary(check.changes, directory)).toEqual([
       ".agents/skills space-cleanup unchanged", ".agents/skills explicit-state-machines unchanged",
@@ -260,6 +261,19 @@ describe("skills link", () => {
     expect(applied.filter(change => change.error === undefined).every(change => readlinkSync(change.path) === change.target)).toBe(true);
   });
 
+  test.skipIf(process.getuid?.() === 0)("applied is false when any write fails, and each failed entry says why", () => {
+    const root = repository(), directory = home(), env = { HOME: directory };
+    const locked = path.join(directory, ".claude2/skills");
+    mkdirSync(locked);
+    chmodSync(locked, 0o500);
+    try {
+      const result = linkSkills(root, NAMES, true, env);
+      expect(result.applied).toBe(false);
+      expect(result.changes.filter(change => change.error !== undefined).map(change => [change.path, change.error!.includes("EACCES")])).toEqual(NAMES.map(name => [path.join(locked, name), true]));
+      expect(result.changes.filter(change => change.error === undefined).every(change => readlinkSync(change.path) === change.target)).toBe(true);
+    } finally { chmodSync(locked, 0o700); }
+  });
+
   test("a repair replaces only the link it classified, never one retargeted since the plan", () => {
     const root = repository(), directory = home(), elsewhere = temporary(), env = { HOME: directory };
     const skills = path.join(directory, ".claude/skills"), file = path.join(skills, "space-cleanup");
@@ -278,15 +292,22 @@ describe("skills link", () => {
     }
   });
 
-  test("a linked worktree may preview and check but not write links", () => {
-    const root = repository(), directory = home(), env = { HOME: directory };
-    writeFileSync(path.join(root, ".git"), "gitdir: /src/project/.git/worktrees/feature\n");
-    expect(linkSkills(root, NAMES, false, env).changes.every(change => change.status === "create")).toBe(true);
-    expect(checkSkillLinks(root, NAMES, env).ok).toBe(false);
-    expect(() => linkSkills(root, NAMES, true, env)).toThrow("Refusing to link user-wide skills from a linked worktree");
-    expect(existsSync(path.join(directory, ".agents"))).toBe(false);
-    // A submodule's .git file names a modules directory, so it links.
-    writeFileSync(path.join(root, ".git"), "gitdir: ../.git/modules/project\n");
+  test("a linked worktree, or a submodule inside one, may preview and check but not write links", () => {
+    const root = repository(), directory = home(), main = temporary(), env = { HOME: directory };
+    // Git writes `commondir` into each linked worktree's Git directory.
+    const worktree = path.join(main, ".git/worktrees/feature");
+    mkdirSync(path.join(worktree, "modules/project"), { recursive: true });
+    writeFileSync(path.join(worktree, "commondir"), "../..\n");
+    mkdirSync(path.join(main, ".git/modules/project"), { recursive: true });
+    for (const gitdir of [worktree, path.join(worktree, "modules/project")]) {
+      writeFileSync(path.join(root, ".git"), `gitdir: ${gitdir}\n`);
+      expect(linkSkills(root, NAMES, false, env).changes.every(change => change.status === "create")).toBe(true);
+      expect(checkSkillLinks(root, NAMES, env).ok).toBe(false);
+      expect(() => linkSkills(root, NAMES, true, env)).toThrow("Refusing to link user-wide skills from a linked worktree");
+      expect(existsSync(path.join(directory, ".agents"))).toBe(false);
+    }
+    // A submodule of the main checkout links.
+    writeFileSync(path.join(root, ".git"), `gitdir: ${path.relative(root, path.join(main, ".git/modules/project"))}\n`);
     expect(linkSkills(root, NAMES, true, env).applied).toBe(true);
   });
 
@@ -371,6 +392,14 @@ describe("skills link CLI", () => {
     expect([applied.status, applied.output.applied]).toEqual([0, true]);
     const check = run("check-links");
     expect([check.status, check.output.ok]).toEqual([0, true]);
+    // A failed write fails the command and names the entry.
+    for (const name of NAMES) unlinkSync(path.join(directory, ".claude2/skills", name));
+    chmodSync(path.join(directory, ".claude2/skills"), 0o500);
+    try {
+      const failed = run("link", "--apply");
+      expect([failed.status, failed.output.applied, failed.output.changes.filter((change: { error?: string }) => change.error).length]).toEqual([1, false, 2]);
+    } finally { chmodSync(path.join(directory, ".claude2/skills"), 0o700); }
+    expect(run("link", "--apply").status).toBe(0);
     // A conflict fails both forms and is left alone.
     unlinkSync(path.join(directory, ".claude2/skills/space-cleanup"));
     mkdirSync(path.join(directory, ".claude2/skills/space-cleanup"));

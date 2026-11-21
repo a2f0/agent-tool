@@ -606,8 +606,9 @@ directory, and so is a source that resolves outside the repository.
 
 The links point into the checkout's working tree, so every session loads
 whatever it has checked out: run `--apply` from a durable checkout that stays
-on its default branch. `--apply` refuses a linked worktree, whose removal
-would break the links; previews and `check-links` still work there.
+on its default branch. `--apply` refuses a linked worktree, or a submodule
+inside one, whose removal would break the links; previews and `check-links`
+still work there.
 
 Claude Code reads user skills from `skills` in its config directory, and a
 second account can use another one through `CLAUDE_CONFIG_DIR`. The config
@@ -634,7 +635,8 @@ directories count. `--apply` creates a missing `skills` directory inside one,
 and a missing `~/.agents/skills`, with mode 0700; any other skills path that
 is not a directory is an error.
 
-`skills link` prints `{ "applied": <bool>, "changes": [...] }`, with one entry
+`skills link` prints `{ "applied": <bool>, "changes": [...] }`, where
+`applied` is true only when `--apply` wrote every planned link, with one entry
 per skill and directory: `skill`, `directory`, `path` (the link),
 `target` (the source), `status`, and, for an existing link, `current`, the
 link's own text.

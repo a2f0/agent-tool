@@ -73,6 +73,7 @@ try {
   assert.equal(JSON.parse(hermes("install")).applied, false);
   assert.equal(existsSync(path.join(standalone, ".agents")), false);
   assert.throws(() => hermes("check"), "Hermes checks fail on missing skills");
+  assert.deepEqual(JSON.parse(run("--repo", standalone, "skills", "check-links")), { ok: true, changes: [] }, "no declared user skills pass the link check");
   hermes("install", "--apply");
   assert.equal(JSON.parse(hermes("check")).ok, true);
   const owned = readFileSync(path.join(standalone, ".agent-tool-skills.json"), "utf8");

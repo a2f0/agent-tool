@@ -248,17 +248,27 @@ export function applySkillLinks(changes: SkillLink[]): SkillLink[] {
   });
 }
 
-/** A linked worktree's `.git` is a file naming a directory in the main repository's `worktrees/`. */
+/**
+ * Whether the checkout lives in a linked worktree: its `.git` is a file naming a Git directory
+ * that, or one of whose ancestors, holds `commondir`, which Git writes only into a linked
+ * worktree's Git directory. The ancestors cover a submodule checked out inside a linked worktree,
+ * whose Git directory sits under that worktree's.
+ */
 function linkedWorktree(root: string): boolean {
   const read = readRegularFile(path.join(root, ".git"));
   const gitdir = read.status === "file" ? /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(read.contents)?.[1] : undefined;
-  return gitdir !== undefined && path.basename(path.dirname(path.resolve(root, gitdir))) === "worktrees";
+  if (gitdir === undefined) return false;
+  for (let directory = path.resolve(root, gitdir); ; directory = path.dirname(directory)) {
+    if (existsSync(path.join(directory, "commondir"))) return true;
+    if (path.dirname(directory) === directory) return false;
+  }
 }
 
 /**
  * Previews by default. With `apply`, creates missing links, creating a missing skills directory
  * (mode 0700), and repairs broken ones. A conflict anywhere blocks every write. Links follow the
  * checked-out working tree, so a linked worktree, which is removed when its work is done, is refused.
+ * `applied` is true only when every write succeeded; a failed one carries `error`.
  */
 export function linkSkills(rootDir: string, names: string[], apply = false, env: Environment = process.env): { applied: boolean; changes: SkillLink[] } {
   const changes = planSkillLinks(rootDir, names, env);
@@ -266,7 +276,8 @@ export function linkSkills(rootDir: string, names: string[], apply = false, env:
   if (changes.some(change => change.status === "create" || change.status === "repair") && linkedWorktree(realpathSync(rootDir))) {
     throw new Error("Refusing to link user-wide skills from a linked worktree, whose removal would break them; run skills link from the main checkout.");
   }
-  return { applied: true, changes: applySkillLinks(changes) };
+  const applied = applySkillLinks(changes);
+  return { applied: applied.every(change => change.error === undefined), changes: applied };
 }
 
 /** Read-only: ok while every declared link is unchanged or kept, so health reports can gate on it. */
