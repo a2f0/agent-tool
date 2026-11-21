@@ -127,6 +127,9 @@ export function skillSource(root: string, harness: UserSkillHarness, name: strin
   if (!found) throw new Error(`Declared user skill '${name}' has no SKILL.md in ${installed}/${name} or skills/${name}.`);
   const source = realpathSync(path.join(root, found));
   if (!within(root, source)) throw new Error(`Declared user skill '${name}' resolves outside the repository: ${found}.`);
+  // Links are matched to skills by name, so a source must be the skill it is declared as.
+  const named = skillName(source);
+  if (named !== name) throw new Error(`Declared user skill '${name}' is named '${named}' in ${found}/SKILL.md.`);
   return source;
 }
 
@@ -250,7 +253,8 @@ export function applySkillLinks(changes: SkillLink[]): SkillLink[] {
 }
 
 /**
- * Whether the checkout lives in a linked worktree: its `.git` is a file naming a Git directory
+ * Whether the checkout lives in a linked worktree. `git rev-parse --git-common-dir` would miss a
+ * submodule inside a linked worktree, so this reads the layout: its `.git` is a file naming a Git directory
  * that, or one of whose ancestors up to the enclosing `.git` directory, holds `commondir`, which
  * Git writes only into a linked worktree's Git directory. The ancestors cover a submodule checked
  * out inside a linked worktree, whose Git directory sits under that worktree's; stopping at the

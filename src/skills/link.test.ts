@@ -125,6 +125,9 @@ describe("skill sources", () => {
     expect(() => linkSkills(root, ["codex-only"], true, { HOME: directory })).toThrow("has no SKILL.md in .claude/skills/codex-only or skills/codex-only");
     symlinkSync(skill(path.join(outside, "escaped")), path.join(root, "skills/escaped"));
     expect(() => linkSkills(root, ["escaped"], true, { HOME: directory })).toThrow("resolves outside the repository");
+    // A source whose SKILL.md names another skill is not the declared skill.
+    skill(path.join(root, "skills/misnamed"), "other-name");
+    expect(() => linkSkills(root, ["misnamed"], true, { HOME: directory })).toThrow("Declared user skill 'misnamed' is named 'other-name' in .agents/skills/misnamed/SKILL.md.".replace(".agents/skills", "skills"));
     expect(existsSync(path.join(directory, ".agents"))).toBe(false);
     expect(existsSync(path.join(directory, ".claude/skills"))).toBe(false);
   });
@@ -399,17 +402,32 @@ describe("skills link CLI", () => {
     expect([applied.status, applied.output.applied]).toEqual([0, true]);
     const check = run("check-links");
     expect([check.status, check.output.ok]).toEqual([0, true]);
-    // A failed write fails the command and names the entry.
-    for (const name of NAMES) unlinkSync(path.join(directory, ".claude2/skills", name));
-    chmodSync(path.join(directory, ".claude2/skills"), 0o500);
-    try {
-      const failed = run("link", "--apply");
-      expect([failed.status, failed.output.applied, failed.output.changes.filter((change: { error?: string }) => change.error).length]).toEqual([1, false, 2]);
-    } finally { chmodSync(path.join(directory, ".claude2/skills"), 0o700); }
+    // A failed write fails the command and names the entry; root could write anyway.
+    if (process.getuid?.() !== 0) {
+      for (const name of NAMES) unlinkSync(path.join(directory, ".claude2/skills", name));
+      chmodSync(path.join(directory, ".claude2/skills"), 0o500);
+      try {
+        const failed = run("link", "--apply");
+        expect([failed.status, failed.output.applied, failed.output.changes.filter((change: { result?: string }) => change.result === "failed").length]).toEqual([1, false, 2]);
+      } finally { chmodSync(path.join(directory, ".claude2/skills"), 0o700); }
+      expect(run("link", "--apply").status).toBe(0);
+    }
+    // A linked worktree may not write links.
+    unlinkSync(path.join(directory, ".claude2/skills/explicit-state-machines"));
+    const git = (...args: string[]) => expect(spawnSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "-C", root, ...args]).status).toBe(0);
+    git("add", "-A");
+    git("commit", "--quiet", "--no-verify", "-m", "skills");
+    const worktree = path.join(cwd, "worktree");
+    git("worktree", "add", "--quiet", worktree);
+    const refused = runIn(worktree, "link", "--apply");
+    expect([refused.status, refused.output, refused.stderr.includes("Refusing to link user-wide skills from a linked worktree")]).toEqual([1, undefined, true]);
+    expect(runIn(worktree, "link").status).toBe(0);
+    git("worktree", "remove", "--force", worktree);
     expect(run("link", "--apply").status).toBe(0);
-    // A conflict fails both forms and is left alone.
+    // A conflict fails both forms, previews included, and is left alone.
     unlinkSync(path.join(directory, ".claude2/skills/space-cleanup"));
     mkdirSync(path.join(directory, ".claude2/skills/space-cleanup"));
+    expect(run("link")).toMatchObject({ status: 1, output: { applied: false } });
     expect(run("link", "--apply")).toMatchObject({ status: 1, output: { applied: false } });
     expect(run("check-links").status).toBe(1);
     expect(lstatSync(path.join(directory, ".claude2/skills/space-cleanup")).isDirectory()).toBe(true);

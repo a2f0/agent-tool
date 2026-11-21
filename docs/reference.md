@@ -602,7 +602,8 @@ So a managed skill installed in the repository links to that harness's
 installed copy, and a repository-owned skill links to `skills/<name>`. Each
 link names the source's absolute real path. A declared name with neither
 source for either harness is an error before anything is read from the home
-directory, and so is a source that resolves outside the repository.
+directory, and so is a source that resolves outside the repository or whose
+`SKILL.md` front matter names another skill.
 
 The links point into the checkout's working tree, so every session loads
 whatever it has checked out: run `--apply` from a durable checkout that stays
