@@ -66,9 +66,12 @@ lists the page's internal links that do not answer 200 directly; and
 `--sitemap` checks every sitemap URL's status, canonical, and robots, and
 reports duplicate titles and descriptions. The mode flag comes first, the
 host is a hostname with an optional port, and each path starts with `/`. The
-probe matches with regular expressions, so confirm anything surprising in the
-raw response before acting on it. Set `SEO_PROBE_USER_AGENT` to a browser user
-agent to see what a zone injects only for browsers.
+probe matches text patterns rather than parsing HTML, so confirm anything
+surprising in the raw response before acting on it. A `000` status means no
+response, including a URL it refused to request: one that is not HTTP or
+HTTPS, or one on a private or local address that a page or redirect, not the
+command line, named. Set `SEO_PROBE_USER_AGENT` to a browser user agent to see
+what a zone injects only for browsers.
 
 Check whether the default branch already has merged work that has not been
 deployed, because a deploy ships it too. Deployment listings often do not

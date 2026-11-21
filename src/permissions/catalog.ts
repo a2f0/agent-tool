@@ -39,7 +39,7 @@ export const CATALOG: CatalogEntry[] = [
   { command: "openPr", class: "share" },
 ];
 // `run`, `run-group`, `push-gate run` and `proc start` execute arbitrary commands, so they stay unclassified and keep the harness default.
-// `seo probe` requests whatever hosts its arguments and fetched pages name, like curl, so it keeps the harness default too.
+// `seo probe` requests whatever host its arguments name, and public hosts its fetched pages name, like curl, so it keeps the harness default too.
 // So do `perf measure` and `perf shot`, which open any URL in Chrome and evaluate the JavaScript their arguments give,
 // `perf serve`, which serves a directory to every local user, `perf graph`, whose --out overwrites any file, and `space`, whose --apply removes output in other
 // checkouts and developer caches across the machine, with --include-busy even where other sessions work.
