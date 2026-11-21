@@ -235,6 +235,28 @@ describe("skills link", () => {
     expect(readlinkSync(path.join(skills, "explicit-state-machines"))).toBe(path.join(clone, "renamed"));
   });
 
+  test("a SKILL.md without a front matter name is the skill its directory names", () => {
+    const root = repository(), directory = home(), clone = temporary(), env = { HOME: directory };
+    const skills = path.join(directory, ".claude/skills");
+    mkdirSync(skills);
+    const status = () => planSkillLinks(root, ["space-cleanup"], env).find(change => change.path === path.join(skills, "space-cleanup"))?.status;
+    for (const [folder, contents, expected] of [
+      ["space-cleanup", "# No front matter\n", "kept"],
+      ["space-cleanup", "---\ndescription: no name\n---\n", "kept"],
+      ["space-cleanup", "---\nname:\n---\n", "kept"],
+      ["other-skill", "# No front matter\n", "conflict"],
+      ["other-folder", "---\nname: 'space-cleanup'\n---\n", "kept"],
+    ] as const) {
+      const target = path.join(clone, folder);
+      rmSync(target, { recursive: true, force: true });
+      mkdirSync(target, { recursive: true });
+      writeFileSync(path.join(target, "SKILL.md"), contents);
+      rmSync(path.join(skills, "space-cleanup"), { force: true });
+      symlinkSync(target, path.join(skills, "space-cleanup"));
+      expect({ folder, contents, status: status() }).toEqual({ folder, contents, status: expected });
+    }
+  });
+
   test("a repository nested in this one, such as a workspace checkout, is another clone", () => {
     const root = repository(), directory = home(), env = { HOME: directory };
     const nested = path.join(root, "checkouts/other");

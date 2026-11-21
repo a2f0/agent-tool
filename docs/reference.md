@@ -623,7 +623,9 @@ directories are, in order:
    `~/.claude2` that a `CLAUDE_CONFIG_DIR="$HOME/.claude2" claude` wrapper
    uses. Claude Code writes `.claude.json` into a directory it runs with, and
    provisioning can link `settings.json` into one before its first run. Files
-   such as `~/.claude.json` never count.
+   such as `~/.claude.json` never count, but a copy such as `~/.claude.bak`
+   does, so keep backups of a config directory outside the home directory or
+   under a name without the `.claude` prefix.
 
 A directory reached twice counts once, by real path, as when
 `~/.claude2/skills` links to `~/.claude/skills` or `CLAUDE_CONFIG_DIR` names
@@ -673,10 +675,10 @@ no declared user skills, both commands print an empty `changes` list and exit
 any directory inside it, and both accept the global `--repo <directory>`, so a
 workspace can link its checkouts' skills with its own pinned agent-tool.
 Restart a harness session if newly linked skills do not appear. Because
-`--apply` writes outside the
-checkout, into directories every session loads, it is in the `policy`
-permission class, which covers creating the links, not later changes to the
-files they point at ([permissions](permissions.md#what-the-rules-protect)).
+`--apply` writes outside the checkout, into directories every session loads,
+it is in the `policy` permission class, which covers creating the links, not
+later changes to the files they point at
+([permissions](permissions.md#what-the-rules-protect)).
 
 ### Dependency upgrades
 
