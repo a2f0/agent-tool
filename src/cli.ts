@@ -7,6 +7,8 @@ import { dependencyDiff } from "./dependencies/diff";
 import { checkGraph } from "./graph/check";
 import { stateMachinesCommand } from "./stateMachines/command";
 import { buildScreenshots, describeScreenshots } from "./screenshots/build";
+import { spaceCommand } from "./space/command";
+import { perfCommand } from "./perf/command";
 import { review } from "./harnesses";
 import { carryReviewCommand } from "./review/carry";
 import { runAgentToolAction } from "./runAgentToolAction";
@@ -93,6 +95,10 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   screenshots build [target...] [--out <dir>] [--json]  Stage guarded captures and a gallery manifest
   graph check                           Import cycles and layer violations per agent-tool.json
   state-machines [path...] [--limit N] [--min-score N] [--json]  Rank files that look like implicit state machines
+  space [checkout-or-path...] [--builds] [--deps] [--machine] [--include-busy] [--apply] [--json]
+                                        Regenerable, git-ignored output and developer caches; dry run until --apply
+  perf serve <dir> | measure <url> | shot <url> --out <png> | diff <a.png> <b.png> | graph <dir> <entry...>
+                                        Page load timing, seeded screenshots, and pixel diffs; perf --help lists options
   init                                  Create agent-tool.json without overwriting
   config show
   doctor                                JSON versions and supported review flags
@@ -191,6 +197,8 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
     output(report); return report.ok ? 0 : 1;
   }
   if (command === "state-machines") return stateMachinesCommand(args, process.cwd(), undefined, invoked);
+  if (command === "space") return spaceCommand(args);
+  if (command === "perf") return perfCommand(args);
   if (command === "skills") {
     const action = args.shift();
     if (action === "list") { usage(args.length === 0, "Usage: agent-tool skills list"); output(Object.keys(BUNDLED_SKILLS)); return 0; }

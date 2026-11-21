@@ -80,6 +80,11 @@ apply the exact approved saved plan. Keep state and plans out of Git.
   because they exist. Revisit after an owning happy-dom upgrade permits them,
   with the DOM/gallery tests and final advisory audit
   ([upstream metadata](https://registry.npmjs.org/happy-dom/latest)).
+- `playwright` is a development dependency only: the `perf` tests drive the
+  installed Google Chrome through it, while the shipped `perf` command uses the
+  measured repository's own `playwright` and never this one. Upgrade it with
+  those tests passing on both CI runners, which provide Chrome; it has no
+  install script, so it downloads no browsers.
 
 ## Maintenance records
 

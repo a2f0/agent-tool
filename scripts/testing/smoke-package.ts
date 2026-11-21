@@ -39,7 +39,7 @@ try {
     assert.match(run("logs", compact.log), /installed harness output/);
   } finally { rmSync(path.dirname(compact.log), { recursive: true, force: true }); }
   const skills = JSON.parse(run("skills", "list"));
-  assert.ok(skills.includes("ship-pr") && skills.includes("update-dependencies") && skills.includes("open-issue"));
+  for (const name of ["ship-pr", "update-dependencies", "open-issue", "space-cleanup", "performance-pass"]) assert.ok(skills.includes(name), `the package bundles ${name}`);
   assert.equal(JSON.parse(run("config", "show")).schemaVersion, 1);
   assert.equal(JSON.parse(run("skills", "install")).applied, false);
   assert.equal(existsSync(path.join(consumer, ".agents")), false);
@@ -153,9 +153,31 @@ try {
   const browserConfig = JSON.parse(readFileSync(path.join(root, "tsconfig.browser.json"), "utf8"));
   writeFileSync(path.join(consumer, "tsconfig.json"), JSON.stringify({ compilerOptions: browserConfig.compilerOptions, files: ["browser.ts"] }));
   execFileSync(path.join(root, "node_modules/.bin/tsc"), ["-p", consumer], { cwd: consumer, env, stdio: "pipe" });
+  // Disk cleanup lists a regenerable cache and removes nothing without --apply.
+  const cleaned = path.join(temporary, "space");
+  mkdirSync(path.join(cleaned, ".turbo"), { recursive: true });
+  execFileSync("git", ["init", "--quiet", cleaned], { env, stdio: "pipe" });
+  writeFileSync(path.join(cleaned, ".gitignore"), ".turbo\n");
+  writeFileSync(path.join(cleaned, ".turbo/cache"), "x");
+  const space = JSON.parse(run("--repo", cleaned, "space", "--json", "--include-busy"));
+  assert.deepEqual([space.applied, space.repos[0].candidates.map((candidate: { path: string }) => candidate.path)], [false, [".turbo"]], "the installed CLI previews disk cleanup");
+  assert.ok(existsSync(path.join(cleaned, ".turbo/cache")));
+  // Pixel diffs need no browser; measuring needs the consumer's own playwright and never fetches one.
+  const shot = (name: string, shade: number) => {
+    const file = path.join(consumer, `${name}.png`);
+    writeFileSync(file, encodePng({ width: 2, height: 2, channels: 3, data: new Uint8Array(12).fill(shade) }));
+    return file;
+  };
+  assert.equal(JSON.parse(run("perf", "diff", shot("before", 0), shot("after", 0))).differing, 0, "the installed CLI diffs screenshots");
+  assert.throws(() => execFileSync(executable, ["perf", "measure", "http://127.0.0.1:9/"], { cwd: consumer, env, encoding: "utf8", stdio: "pipe" }), error => {
+    const failure = error as { status?: number; stderr?: string };
+    assert.equal(failure.status, 1);
+    assert.match(String(failure.stderr), /does not install; run it there or pass --from <repository>/);
+    return true;
+  }, "perf measure uses only an installed playwright");
   assert.match(execFileSync(process.execPath, ["run", "agent-tool", "--help"], { cwd: consumer, env, encoding: "utf8" }), /agent-tool/);
   if (manager === "npm") assert.equal(execFileSync("npm", ["exec", "--no", "--", "agent-tool", "--version"], { cwd: consumer, env, encoding: "utf8" }).trim(), metadata.version);
-  console.log(`Installed ${manager} source package passed executable, script, policy, real dependency modes, image rendering, screenshot staging, browser entry point, and four-harness embedded-skills checks without install scripts or a build.`);
+  console.log(`Installed ${manager} source package passed executable, script, policy, real dependency modes, image rendering, screenshot staging, disk cleanup and pixel-diff, browser entry point, and four-harness embedded-skills checks without install scripts or a build.`);
 } finally {
   rmSync(temporary, { recursive: true, force: true });
 }
