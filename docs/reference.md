@@ -130,6 +130,8 @@ For repository workflow commands added alongside these interfaces, see
 | `skills list` | List embedded portable skills |
 | `skills install [--harness all\|claude\|codex\|opencode\|hermes] [--apply]` | Preview by default; install or update managed skills |
 | `skills check [--harness all\|claude\|codex\|opencode\|hermes]` | Read-only CI check for current managed skills and the agent-tool version their manifest records |
+| `skills link [--apply]` | Preview by default; link each [user-wide skill](#user-wide-skills) that `skills.user` declares into `~/.agents/skills` and each Claude Code config directory's `skills`; exit 1 on a conflict or a failed write |
+| `skills check-links` | Read-only: the same entries, exiting 1 while any link is missing, broken, or conflicts |
 | `bun install [--cwd dir]` | Frozen-lockfile install with the Bun that `.mise.toml` pins; requires an existing lockfile |
 | `bun update <name[@version]>... [--cwd dir]` | Change versions of declared registry dependencies only, keeping each one's section |
 | `bun update --catalog <default\|name> <name@version>... [--cwd dir]` | Change only existing root catalog entries to explicit registry specs; preserve references and catalog layout |
@@ -282,7 +284,8 @@ feature checkout with policy from a trusted source.
     "validate": [["bun", "run", "lint", "--", "--staged"]],
     "commitMessage": "chore: bump package versions"
   },
-  "pr": { "rejectClaudeBranding": true }
+  "pr": { "rejectClaudeBranding": true },
+  "skills": { "user": ["space-cleanup"] }
 }
 ```
 
@@ -308,6 +311,9 @@ The policy is data only: no commitlint binary or JavaScript config runs.
   Set `opencodeModel` to a model your account supports. `opencodeVariants`
   replaces the default effort-to-variant map (`xhigh` to `max`); an effort
   level missing from the map is passed to OpenCode unchanged.
+- **`skills`**: `user` names the repository's user-wide skills, which
+  `skills link` links into each user skill directory
+  (see [user-wide skills](#user-wide-skills)).
 
 ### Versions
 
@@ -567,6 +573,113 @@ retires keeps its files and ownership record, which neither install nor check
 visits, so remove both by hand.
 `.agent-tool-permissions.json` records and checks the version the same way
 ([permissions](permissions.md#generated-rules)).
+
+### User-wide skills
+
+Some skills belong to the user rather than to one project: a disk cleanup
+skill, say, that every session should find wherever it starts. A repository
+declares the ones it owns by skill directory name:
+
+```json
+{ "schemaVersion": 1, "skills": { "user": ["space-cleanup", "explicit-state-machines"] } }
+```
+
+Each name is a plain skill directory name, listed once: lowercase letters,
+digits, and single hyphens, at most 64 characters. `synced` is refused, since
+Claude Code keeps its account-synced skills in `~/.claude/skills/synced`.
+
+`agent-tool skills link` previews, and `skills link --apply` writes, one
+symbolic link per declared skill in each user skill directory:
+
+- `~/.agents/skills`, the user-level counterpart of a project's
+  `.agents/skills`, links to the repository's `.agents/skills/<name>` when it
+  holds `SKILL.md`, otherwise to `skills/<name>`.
+- `<config dir>/skills`, for every Claude Code config directory, links to
+  `.claude/skills/<name>` when it holds `SKILL.md`, otherwise to
+  `skills/<name>`.
+
+So a managed skill installed in the repository links to that harness's
+installed copy, and a repository-owned skill links to `skills/<name>`. Each
+link names the source's absolute real path. A declared name with neither
+source for either harness is an error before anything is read from the home
+directory, and so is a source that resolves outside the repository or whose
+`SKILL.md` front matter names another skill.
+
+The links point into the checkout's working tree, so every session loads
+whatever it has checked out: run `--apply` from a durable checkout that stays
+on its default branch. `--apply` refuses a linked worktree, or a submodule
+inside one, whose removal would break the links; previews and `check-links`
+still work there.
+
+Claude Code reads user skills from `skills` in its config directory, and a
+second account can use another one through `CLAUDE_CONFIG_DIR`. The config
+directories are, in order:
+
+1. the directory `CLAUDE_CONFIG_DIR` names, when it is set to an absolute
+   path (a relative one depends on where Claude Code started);
+2. `~/.claude`, when it exists;
+3. every other directory directly in the home directory whose name starts with
+   `.claude` and that holds `settings.json` or `.claude.json`, such as a
+   `~/.claude2` that a `CLAUDE_CONFIG_DIR="$HOME/.claude2" claude` wrapper
+   uses. Claude Code writes `.claude.json` into a directory it runs with, and
+   provisioning can link `settings.json` into one before its first run. Files
+   such as `~/.claude.json` never count, but a copy such as `~/.claude.bak`
+   does, so keep backups of a config directory outside the home directory or
+   under a name without the `.claude` prefix.
+
+A directory reached twice counts once, by real path, as when
+`~/.claude2/skills` links to `~/.claude/skills` or `CLAUDE_CONFIG_DIR` names
+`~/.claude2`; the same holds between `~/.agents/skills` and a Claude Code
+skills directory. It keeps the first name that is not itself a link, so a
+skills directory that links to one not created yet, such as `~/.claude/skills`
+to a missing `~/.agents/skills`, counts as that directory, which `--apply`
+then creates. `HOME` names the home directory, and only existing config
+directories count. `--apply` creates a missing `skills` directory inside one,
+and a missing `~/.agents/skills`, with mode 0700; any other skills path that
+is not a directory is an error.
+
+`skills link` prints `{ "applied": <bool>, "changes": [...] }`, where
+`applied` is true only when `--apply` wrote every planned link, with one entry
+per skill and directory: `skill`, `directory`, `path` (the link),
+`target` (the source), `status`, the plan's classification, and, for an
+existing link, `current`, the link's own text. An entry that `--apply` tried
+to write adds `result`: `written`, or `failed` with `error`. An entry without
+`result` was not written: a preview, a link already in place, or every entry
+when a conflict blocked the writes.
+
+| Status | At the link path | With `--apply` |
+| --- | --- | --- |
+| `create` | Nothing | Creates the link |
+| `repair` | A link that is dangling, loops, does not resolve to a directory holding `SKILL.md`, or resolves to another copy of the skill in this repository | Replaces the link atomically, through a temporary link and a rename |
+| `unchanged` | A link that resolves to this repository's source | Nothing |
+| `kept` | A link to the same skill somewhere else, such as another clone of the repository, or a repository nested in this one | Nothing |
+| `conflict` | A file or directory, or a link to a different skill | Nothing anywhere: one conflict blocks every write |
+
+A linked directory holds the same skill when its `SKILL.md` front matter
+`name`, or the directory's own name when there is none, is the declared name.
+`skills link` exits 1 when any entry conflicts, in a preview too, and leaves
+the occupant for you to move. Only the declared names are examined, so
+undeclared entries, `synced/` among them, are never touched, and nothing is
+ever deleted. A write is checked again as it happens: a create fails rather
+than overwrite something that appeared since the plan, and a repair refuses a
+path that no longer holds the link it classified, checked just before its
+rename (another process writing the same directory in that instant is outside
+the guard). Such a failure marks its entry `failed`, the other writes still
+run, and the command exits 1.
+
+`agent-tool skills check-links` is the read-only form for health reports. It
+prints `{ "ok": <bool>, "changes": [...] }` with the same entries and exits 1
+while any is `create`, `repair`, or `conflict`; `kept` is not a failure. With
+no declared user skills, both commands print an empty `changes` list and exit
+0. Both run in a Git checkout and read its top level's `agent-tool.json`, or
+the file `--config` or `AGENT_TOOL_CONFIG` names, from any directory inside it,
+and both accept the global `--repo <directory>`, so a workspace can link its
+checkouts' skills with its own pinned agent-tool.
+Restart a harness session if newly linked skills do not appear. Because
+`--apply` writes outside the checkout, into directories every session loads,
+it is in the `policy` permission class, which covers creating the links, not
+later changes to the files they point at
+([permissions](permissions.md#what-the-rules-protect)).
 
 ### Dependency upgrades
 
