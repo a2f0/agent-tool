@@ -108,14 +108,14 @@ test("Gemini rules allow exactly what Codex's do, outside plan and YOLO modes", 
   // One rule per routine command, each naming every invocation.
   expect(rules.length).toBe([...CATALOG, ...project].filter(entry => CLASSES[strictest(entry)].decision === "allow").length);
   for (const { commandRegex, ...rule } of rules) {
-    expect(rule).toEqual({ toolName: "run_shell_command", decision: "allow", priority: 0, modes: ["default", "autoEdit"] });
+    expect(rule).toEqual({ toolName: "run_shell_command", decision: "allow", priority: 0, modes: ["default"] });
     expect(commandRegex.endsWith(GEMINI_NAME_END)).toBe(true);
     // Gemini CLI 0.71.1 refuses a pattern with a quantified group (its NESTED_QUANTIFIER check)
     // or longer than 2048 characters once wrapped as `\x00"command":"(?:…)`.
     expect(/\([^)]*[*+?{][^\n\r]*\)[*+?{]/.test(commandRegex)).toBe(false);
     expect(`\\x00"command":"(?:${commandRegex})`.length).toBeLessThan(2048);
   }
-  expect(GEMINI_MODES).toEqual(["default", "autoEdit"]);
+  expect(GEMINI_MODES).toEqual(["default"]);
   const expand = (tokens: (string | string[])[]): string[] => tokens.reduce<string[][]>((rows, token) => rows.flatMap(row => (Array.isArray(token) ? token : [token]).map(value => [...row, value])), [[]]).map(words => words.join(" "));
   const codex = codexRules(project).split("\n").flatMap(line => { const rule = /^prefix_rule\(pattern=(\[.*\]), decision="allow"/.exec(line); return rule ? expand(JSON.parse(rule[1]!)) : []; });
   const policy = geminiPolicy(project), codexSource = codexRules(project);
@@ -266,13 +266,16 @@ test("the scope moves only through its transition: `all` absorbs, single install
   expect(scopeState({ scope: ["gemini", "claude", "gemini"] })).toEqual({ status: "listed", harnesses: ["claude", "gemini"] });
   expect(scopeState({ codex: entry, claude: { allow: [], ask: [] } })).toEqual({ status: "inferred", harnesses: ["claude", "codex"] });
   const states: ScopeState[] = [{ status: "none" }, { status: "all" }, { status: "listed", harnesses: ["codex"] }, { status: "inferred", harnesses: ["claude", "codex"] }];
-  const table = states.map(state => [state.status, ...(["all", "claude", "gemini"] as const).map(target => scopeTransition(state, target))]);
+  const table = states.map(state => [state.status, ...(["all", "claude", "gemini"] as const).map(target => scopeTransition(state, { type: "install", target }))]);
   expect(table).toEqual([
     ["none", { status: "all" }, { status: "listed", harnesses: ["claude"] }, { status: "listed", harnesses: ["gemini"] }],
     ["all", { status: "all" }, { status: "all" }, { status: "all" }],
     ["listed", { status: "all" }, { status: "listed", harnesses: ["claude", "codex"] }, { status: "listed", harnesses: ["codex", "gemini"] }],
     ["inferred", { status: "all" }, { status: "listed", harnesses: ["claude", "codex"] }, { status: "listed", harnesses: ["claude", "codex", "gemini"] }],
   ]);
+  // An event that changes nothing returns the same state.
+  const all: ScopeState = { status: "all" };
+  expect(scopeTransition(all, { type: "install", target: "codex" })).toBe(all);
 });
 
 test("the push gate checks the recorded scope, or an earlier manifest's harnesses", () => {

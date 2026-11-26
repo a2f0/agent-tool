@@ -250,8 +250,10 @@ agent-tool permissions check              # CI
   word (`agent-tool bun x vite"-node"` runs `vite-node`), so the rules do not use
   it. A command whose `--apply` form asks gets no rule here either, since a
   rule also matches the command with arguments. The rules apply only in the
-  `default` and `autoEdit` approval modes: a workspace allow outranks plan
-  mode's read-only deny, and YOLO allows every command already. Only allow
+  `default` approval mode: a workspace allow would outrank plan mode's
+  read-only deny, YOLO allows every command already, and `autoEdit` keeps the
+  user's own rules, since Gemini CLI before 0.63.0 lets an allowed command
+  redirect there unprompted (google-gemini/gemini-cli#26542). Only allow
   rules are written, and user and admin policies outrank workspace ones. The
   rules take priority 0, the lowest Gemini accepts, so a project's own rule in
   `.gemini/policies/` outranks them at any higher priority; at 0 as well,
@@ -302,19 +304,17 @@ Each harness also has limits that the rules cannot change:
   changed policy file in each such directory (headless runs accept it with a
   warning). A chain joined by `&&`, `||`, `;`, `|`, `&`, or a newline is
   allowed only when every command in it is; redirection, command substitution
-  (`$(…)` or backticks), and process substitution fall back to asking, in
-  `autoEdit` as in `default`, because a rule that matches the whole command
-  carries an argument pattern, which Gemini never lets redirect. That is why
-  the arguments stay unrestricted: a rule that missed a redirected command
-  would let Gemini approve its parts one by one, and in `autoEdit` it then skips
-  the redirection check. The rules need Gemini CLI 0.63.0 or later. Releases
-  before project policies (google-gemini/gemini-cli#18682) ignore the file, so
-  everything asks; later ones before 0.63.0 load it and split chains, but in
-  `autoEdit` they let any allowed command redirect, for every allow rule, as
-  Gemini then chose for that mode (google-gemini/gemini-cli#26542), so the
-  rules keep `autoEdit` there too. `agent-tool doctor` reports an older Gemini
-  CLI as incompatible.
-  [Dependency upgrades](dependency-upgrades.md#current-compatibility-constraints)
+  (`$(…)` or backticks), and process substitution fall back to asking in
+  `default` mode. The arguments stay unrestricted because a rule that matches
+  the whole command is the stricter one: a rule that missed a redirected
+  command would let Gemini approve its parts one by one, and outside `default`
+  skip the redirection check. Every release that loads project policies
+  (google-gemini/gemini-cli#18682 onward) splits chains and asks for
+  redirection in `default`; earlier releases ignore the file, so everything
+  asks. Gemini's
+  [policy engine](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/docs/reference/policy-engine.md)
+  documents the discovery, trust, and tiers above;
+  [dependency upgrades](dependency-upgrades.md#current-compatibility-constraints)
   lists what to recheck for a newer release.
 
 After upgrading agent-tool, regenerate the managed permissions and start a new

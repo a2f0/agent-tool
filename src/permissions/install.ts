@@ -158,14 +158,19 @@ export function scopeState(manifest: Pick<Manifest, "scope" | Harness>): ScopeSt
   return installed.length ? { status: "inferred", harnesses: installed } : { status: "none" };
 }
 
+/** What moves a scope: an install of `all` or of one harness. */
+export type ScopeEvent = { type: "install"; target: Harness | "all" };
+
 /**
- * One install's transition: installing `all`, or any harness under `all`, gives `all`; a single
- * install adds its harness to the list or inferred harnesses, so a later push gate checks each.
+ * One install's transition: an `all` scope stays the same state; installing `all` gives `all`;
+ * a single install adds its harness to the list or inferred harnesses, so a later push gate
+ * checks each.
  */
-export function scopeTransition(state: ScopeState, target: Harness | "all"): Extract<ScopeState, { status: "all" | "listed" }> {
-  if (target === "all" || state.status === "all") return { status: "all" };
+export function scopeTransition(state: ScopeState, event: ScopeEvent): Extract<ScopeState, { status: "all" | "listed" }> {
+  if (state.status === "all") return state;
+  if (event.target === "all") return { status: "all" };
   const previous = state.status === "none" ? [] : state.harnesses;
-  return { status: "listed", harnesses: HARNESSES.filter(harness => harness === target || previous.includes(harness)) };
+  return { status: "listed", harnesses: HARNESSES.filter(harness => harness === event.target || previous.includes(harness)) };
 }
 
 /** The harnesses a push gate checks for a scope state: every current one for `all` or none. */
@@ -182,7 +187,7 @@ export function installPermissions(rootDir: string, target: string, apply = fals
   const changes = pending(root, targets, manifest, project);
   // Recording the version makes every upgrade change the manifest, so a committed sync is visible.
   const { schemaVersion: _schema, agentToolVersion: _version, scope: _scope, ...owned } = manifest;
-  const scope = scopeTransition(scopeState(manifest), target === "all" ? "all" : targets[0]!);
+  const scope = scopeTransition(scopeState(manifest), { type: "install", target: target === "all" ? "all" : targets[0]! });
   const next: Manifest = { schemaVersion: 1, agentToolVersion: AGENT_TOOL_VERSION, scope: scope.status === "all" ? "all" : scope.harnesses, ...owned };
   for (const change of changes) {
     if (change.harness === "claude") next.claude = claudePermissions(project);

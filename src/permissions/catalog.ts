@@ -117,8 +117,13 @@ export function codexRules(project: CatalogEntry[] = []): string {
   return `${lines.join("\n")}\n`;
 }
 
-/** Gemini CLI's approval modes the rules apply in; see geminiPolicy. */
-export const GEMINI_MODES = ["default", "autoEdit"] as const;
+/**
+ * Gemini CLI's approval modes the rules apply in: `default` alone. A workspace allow would
+ * outrank plan mode's read-only deny, YOLO allows every command already, and Gemini CLI before
+ * 0.63.0 lets an allowed command redirect anywhere unprompted in `autoEdit`, so `autoEdit` keeps
+ * the user's own rules; `default` asks for redirection in every release that loads the file.
+ */
+export const GEMINI_MODES = ["default"] as const;
 /**
  * Gemini CLI accepts priorities 0 to 999 within a tier and lets the first matching rule of a
  * stable sort by priority decide. Every priority stays inside the workspace tier, below user and
@@ -131,10 +136,10 @@ const regex = (text: string) => text.replace(/[.^$|?*+()[\]{}\\]/g, "\\$&");
  * What ends a command name in its JSON encoding: a space or the closing quote, never an escaped
  * quote. The arguments after it are not restricted, as Claude's and Codex's rules leave them to
  * their harness: Gemini splits chains and asks for redirection and substitution itself. Matching
- * the whole command is also the stricter choice there: Gemini asks for a redirection that a rule
- * with an argument pattern matched in every mode, but approves a command no rule matched part by
- * part and, in `autoEdit`, skips that check (Gemini CLI 0.71.1). Its ReDoS guard refuses any
- * quantified group as well, so no pattern could allow an escaped quote while refusing shell syntax.
+ * the whole command is also the stricter choice there: Gemini 0.71.1 asks for a redirection that
+ * a rule with an argument pattern matched in every mode, but approves a command no rule matched
+ * part by part and, outside `default`, skips that check. Its ReDoS guard refuses any quantified
+ * group as well, so no pattern could allow an escaped quote while refusing shell syntax.
  */
 export const GEMINI_NAME_END = '(?: |")';
 
@@ -145,11 +150,10 @@ export const GEMINI_NAME_END = '(?: |")';
  * word (`agent-tool bun x vite"-node"` runs `vite-node`), so each regex ends the command
  * name at a space or at the closing quote of the encoding, as Codex's token prefixes do; a
  * command whose `--apply` form asks gets no rule. Gemini splits chains and asks for
- * redirection and substitution before rules apply (see GEMINI_NAME_END). Only allow rules are generated, as for
- * Claude and Codex, so other commands keep the user's approval mode and policies, which
- * outrank workspace rules. The rules name their modes: a workspace allow outranks plan
- * mode's default read-only deny, and YOLO already allows every command. One rule per
- * command keeps each pattern far below Gemini's pattern size limits.
+ * redirection and substitution before rules apply (see GEMINI_NAME_END). Only allow rules are
+ * generated, as for Claude and Codex, so other commands keep the user's approval mode and
+ * policies, which outrank workspace rules. The rules name their one mode (GEMINI_MODES). One
+ * rule per command keeps each pattern far below Gemini's pattern size limits.
  */
 export function geminiPolicy(project: CatalogEntry[] = []): string {
   const lines = [
@@ -158,10 +162,9 @@ export function geminiPolicy(project: CatalogEntry[] = []): string {
     "# Only routine commands receive allow rules. Other commands keep the user's",
     "# approval mode and policies, which outrank these workspace rules.",
     "# Each command ends at a space or the end of the command, never a quote, and a",
-    "# command whose --apply form asks gets no rule. Plan mode stays read-only, and",
-    "# YOLO already allows every command. Requires Gemini CLI 0.63.0 or later, which",
-    "# asks for redirection these rules matched in autoEdit too; `agent-tool doctor`",
-    "# reports an older one, which nothing here prevents from loading this file.",
+    "# command whose --apply form asks gets no rule. The rules apply in the default",
+    "# approval mode only: plan mode stays read-only, autoEdit keeps the user's rules,",
+    "# and YOLO already allows every command.",
   ];
   const invocations = `(?:${INVOCATIONS.map(regex).join("|")})`;
   for (const value of Object.keys(CLASSES) as PermissionClass[]) {

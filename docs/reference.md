@@ -96,8 +96,6 @@ platform archives, a Homebrew formula, and Debian packages.
 
 Run `agent-tool doctor` to report installed versions and the flags the tool needs
 from each CLI, such as `gh pr checks --json` for merging, without calling a model.
-It reports Gemini CLI before 0.63.0 as incompatible, since the generated Gemini
-policy needs it ([generated rules](permissions.md#generated-rules)).
 
 ## Quick start
 
@@ -765,8 +763,7 @@ changing a command's directory does not change the session's skill scope.
 
 Skill consumers and review providers are distinct. Hermes can coordinate every
 bundled workflow, but `review` and `doctor` still support Claude Code, Codex, and
-OpenCode as independent review providers; `doctor` also reports Gemini CLI, a
-permissions target rather than a review provider. There is no `review hermes` adapter
+OpenCode as independent review providers. There is no `review hermes` adapter
 or Hermes permission installer. Existing read-only review and exact-commit
 guards apply regardless of which harness coordinates the work.
 

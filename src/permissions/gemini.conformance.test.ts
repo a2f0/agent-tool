@@ -10,7 +10,8 @@ import { CATALOG, CLASSES, geminiPolicy, strictest } from "./catalog";
  * `$(brew --prefix gemini-cli)/libexec/lib/node_modules/@google/gemini-cli/bundle`; run it when a
  * Gemini release changes what docs/dependency-upgrades.md lists. The unit tests model one
  * command's match; this checks the chain splitting and redirection and substitution prompts that
- * the unrestricted arguments rely on, in the real loader and engine.
+ * the unrestricted arguments rely on, in the real loader and engine. It assigns the tiers Gemini
+ * documents (defaults 1, workspace 3) rather than testing Gemini's discovery and trust gating.
  */
 const bundle = process.env.AGENT_TOOL_GEMINI_BUNDLE;
 const directories: string[] = [];
@@ -23,7 +24,7 @@ interface Gemini {
   PolicyEngine: new (config: { rules: unknown[]; checkers: unknown[]; approvalMode: string; nonInteractive: boolean }) => Engine;
 }
 
-test.skipIf(!bundle)("Gemini CLI's engine allows routine commands and asks for chained, redirected, or substituted ones", async () => {
+test.skipIf(!bundle)("Gemini CLI's engine allows routine commands in default mode and asks for chained, redirected, or substituted ones", async () => {
   // The bundle splits into hashed chunks; the policy loader and engine live in one of them.
   const chunk = readdirSync(bundle!).filter(name => name.endsWith(".js")).sort().map(name => path.join(bundle!, name)).find(file => readFileSync(file, "utf8").includes("function loadPoliciesFromToml"));
   expect(chunk).toBeDefined();
@@ -46,7 +47,8 @@ test.skipIf(!bundle)("Gemini CLI's engine allows routine commands and asks for c
   const decisions: Record<string, Record<string, string>> = {}, expected: Record<string, Record<string, string>> = {};
   for (const command of [...allowed, ...asked]) {
     const allow = allowed.includes(command);
-    expected[command] = { default: allow ? "allow" : "ask_user", autoEdit: allow ? "allow" : "ask_user", plan: "deny" };
+    // The rules apply in `default` alone, so `autoEdit` asks for every shell command and plan mode denies them.
+    expected[command] = { default: allow ? "allow" : "ask_user", autoEdit: "ask_user", plan: "deny" };
     decisions[command] = { default: await decide("default", command), autoEdit: await decide("autoEdit", command), plan: await decide("plan", command) };
   }
   expect(decisions).toEqual(expected);
