@@ -264,7 +264,9 @@ push gate checks that scope, so `all` covers each harness a newer release adds
 and fails until `install --apply` writes its rules. Manifests written before
 the scope field record none; their harness entries stand in, and Claude Code
 and Codex alone, which is what `all` wrote then, count as `all`, so update such
-a manifest with `--harness all`.
+a manifest with `--harness all`. A single-harness install never narrows `all`:
+to keep a harness out, set `scope` to the list of harnesses to keep, then
+install each of them.
 
 The manifest also records, as `agentToolVersion`, the agent-tool release that
 wrote it, so every upgrade changes it even when no rule changed, and the
