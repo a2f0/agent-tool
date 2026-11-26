@@ -262,9 +262,10 @@ The manifest also records the `scope` installs asked for: `all`, which a later
 single-harness install keeps, or the harnesses single installs added up. The
 push gate checks that scope, so `all` covers each harness a newer release adds
 and fails until `install --apply` writes its rules. Manifests written before
-the scope field record none; their harness entries stand in, and Claude Code
-and Codex alone, which is what `all` wrote then, count as `all`, so update such
-a manifest with `--harness all`. A single-harness install never narrows `all`:
+the scope field record none; their harness entries stand in, so such a
+manifest gains a harness `all` added only through an `all` install, which is
+the default, and `check`, also `all` by default, reports it `missing` until
+then. A single-harness install never narrows `all`:
 to keep a harness out, remove its generated rules and its manifest entry, set
 `scope` to the list of harnesses to keep, then install each of them. A scope
 list must name every harness the manifest records, or every command that reads

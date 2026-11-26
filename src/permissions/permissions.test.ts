@@ -94,9 +94,9 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
     for (const command of ["repo cleanup 12 abc --apply", "pr checks --wait", "--version", "skills install --apply", 'pr checks "a b"', "pr checks 'a b'", "pr open 'feat: x' --body-file f.md"]) expect(geminiAllows(gemini, `${invocation} ${command}`)).toBe(true);
   }
   // Escaped names match only themselves: `.` in an invocation or executable is literal.
-  const dotted = geminiPolicy([{ command: "bun x a.b", class: "local" }]);
-  expect(geminiAllows(dotted, "agent-tool bun x a.b -- c")).toBe(true);
-  for (const command of ["agent-tool bun x aXb -- c", "node_modules/xbin/agent-tool pr checks", "bun run agent-toolX pr checks"]) expect({ command, allowed: geminiAllows(dotted, command) }).toEqual({ command, allowed: false });
+  const dotted = geminiPolicy([{ command: "bun x a.b", class: "local" }, { command: "bun x c+d", class: "local" }]);
+  for (const command of ["agent-tool bun x a.b -- c", "agent-tool bun x c+d -- e"]) expect(geminiAllows(dotted, command)).toBe(true);
+  for (const command of ["agent-tool bun x aXb -- c", "agent-tool bun x ccd -- e", "agent-tool bun x cd -- e", "node_modules/xbin/agent-tool pr checks", "bun run agent-toolX pr checks"]) expect({ command, allowed: geminiAllows(dotted, command) }).toEqual({ command, allowed: false });
   for (const command of ["gh pr merge 1", "npm publish", "bun add left-pad", "bunx cowsay", "npx cowsay"]) expect(geminiAllows(gemini, command)).toBe(false);
 });
 
@@ -255,7 +255,7 @@ test("edited or unmanaged Gemini policies are preserved, and other policy files 
   expect(readFileSync(user, "utf8")).toContain('commandPrefix = "make"');
 });
 
-test("the push gate checks the recorded scope, and an earlier all's pair as all", () => {
+test("the push gate checks the recorded scope, or an earlier manifest's harnesses", () => {
   const root = project();
   installPermissions(root, "claude", true);
   installPermissions(root, "codex", true);
@@ -264,16 +264,17 @@ test("the push gate checks the recorded scope, and an earlier all's pair as all"
   expect(manifest.scope).toEqual(["claude", "codex"]);
   expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex"] });
   expect(checkInstalledPermissions(root)!.changes.every(item => item.status === "unchanged")).toBe(true);
-  // A manifest from a release before the scope field records Claude and Codex alone after `all`,
-  // so the pair is checked against every harness `all` covers now, whatever version it names.
+  // A manifest from a release before the scope field is checked for the harnesses it records,
+  // whatever version it names; its version entry stays outdated until a reinstall.
   const { scope: _scope, ...earlier } = manifest;
   for (const agentToolVersion of ["0.0.1", "99.0.0", undefined]) {
     writeFileSync(manifestFile, JSON.stringify({ ...earlier, agentToolVersion }));
-    expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex", "gemini"], changes: [{ status: "unchanged" }, { status: "unchanged" }, { path: ".gemini/policies/agent-tool.toml", status: "missing" }, { status: "outdated" }] });
+    expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex"], changes: [{ status: "unchanged" }, { status: "unchanged" }, { status: "outdated" }] });
   }
-  // Reinstalling one harness there keeps that meaning: the scope becomes `all`.
+  // Reinstalling one harness keeps those harnesses; `all`, the default install, adds Gemini.
   installPermissions(root, "claude", true);
-  expect(JSON.parse(readFileSync(manifestFile, "utf8")).scope).toBe("all");
+  expect(JSON.parse(readFileSync(manifestFile, "utf8")).scope).toEqual(["claude", "codex"]);
+  expect(checkPermissions(root, "all").find(item => item.path === ".gemini/policies/agent-tool.toml")?.status).toBe("missing");
   installPermissions(root, "all", true);
   expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex", "gemini"] });
   expect(checkInstalledPermissions(root)?.changes.every(item => item.status === "unchanged")).toBe(true);

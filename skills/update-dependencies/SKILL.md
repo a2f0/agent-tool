@@ -58,7 +58,8 @@ than `all`, and commit the
 ownership manifests with any generated files. When `all` gains a harness, the
 install adds that harness's rules file, such as `.gemini/policies/agent-tool.toml`;
 name it in the PR so the reviewer sees the new allow rules. A permissions
-manifest with no `scope` that records Claude and Codex alone counts as `all`.
+manifest with no `scope` was written by a release before scopes; when it was
+an `all` install, install `all` again so it gains the new harness.
 The manifests record the agent-tool version, so every upgrade changes them, even
 when no skill or rule changed, and `skills check` and `permissions check` fail
 until the sync records the new version. Hermes reads the shared `.agents/skills`

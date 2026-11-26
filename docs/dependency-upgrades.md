@@ -91,7 +91,9 @@ apply the exact approved saved plan. Keep state and plans out of Git.
   approval modes, and plan mode's read-only deny in the default tier. Gemini is
   not a dependency here, so nothing upgrades it; when a Gemini release changes
   any of these, recheck `geminiPolicy` and the `geminiAllows` test model against
-  its engine (its bundle exports `loadPoliciesFromToml` and `PolicyEngine`).
+  its engine (its bundle exports `loadPoliciesFromToml` and `PolicyEngine`;
+  [policy engine](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/docs/reference/policy-engine.md),
+  [TOML loader](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/packages/core/src/policy/toml-loader.ts)).
 
 ## Maintenance records
 

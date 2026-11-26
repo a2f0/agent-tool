@@ -91,7 +91,7 @@ const element = (values: string[]) => values.length === 1 ? quote(values[0]!) : 
 export function codexRules(project: CatalogEntry[] = []): string {
   const lines = [
     "# Managed by agent-tool; regenerate with `agent-tool permissions install --apply`,",
-    "# adding `--harness <name>` for each harness a scope list in its manifest names.",
+    "# or, when the manifest's `scope` lists harnesses, once per harness with `--harness <name>`.",
     "# Only routine commands receive allow rules. Other commands keep the user's",
     "# approval and sandbox policies; explicit prompts would reject them in never mode.",
     "# A command whose --apply form asks gets no rule, since prefixes also match --apply.",
@@ -152,7 +152,7 @@ export const GEMINI_NAME_END = '(?: |")';
 export function geminiPolicy(project: CatalogEntry[] = []): string {
   const lines = [
     "# Managed by agent-tool; regenerate with `agent-tool permissions install --apply`,",
-    "# adding `--harness <name>` for each harness a scope list in its manifest names.",
+    "# or, when the manifest's `scope` lists harnesses, once per harness with `--harness <name>`.",
     "# Only routine commands receive allow rules. Other commands keep the user's",
     "# approval mode and policies, which outrank these workspace rules.",
     "# Each command ends at a space or the end of the command, never a quote, and a",

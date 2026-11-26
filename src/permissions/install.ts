@@ -129,21 +129,17 @@ function pending(root: string, targets: Harness[], manifest: Manifest, project: 
   });
 }
 
-/** What `--harness all` wrote before manifests recorded their scope and `all` covered Gemini. */
-const LEGACY_ALL: readonly Harness[] = ["claude", "codex"];
-
 /**
  * The scope a manifest's installs asked for, in harness order without repeats, or none when it
  * records no harness. Manifests from releases before the scope field stand in their harness
- * entries, and Claude and Codex alone are what `all` wrote then, so that pair means `all`,
- * which now covers more.
+ * entries, so an upgrade adds a harness `all` gained only when it installs `all`, as the
+ * default install and `check` do.
  */
 function recordedScope(manifest: Manifest): Scope | undefined {
   const { scope } = manifest;
   if (scope !== undefined) return scope === "all" ? scope : HARNESSES.filter(harness => scope.includes(harness));
   const installed = HARNESSES.filter(harness => manifest[harness] !== undefined);
-  if (!installed.length) return undefined;
-  return installed.length === LEGACY_ALL.length && LEGACY_ALL.every(harness => installed.includes(harness)) ? "all" : installed;
+  return installed.length ? installed : undefined;
 }
 
 /** Each generated file's change, then the manifest's, which every new agent-tool release updates. */
@@ -192,9 +188,8 @@ export function checkPermissions(rootDir: string, target: string): PermissionChe
 
 /**
  * The push gate's check, or null without a manifest: the harnesses the manifest's scope covers
- * and their check, from one reading of the manifest. `all`, including the Claude and Codex pair
- * an earlier `all` wrote, and a manifest recording no harness are checked against every harness
- * `all` covers now, so they fail until the install adds a new one.
+ * and their check, from one reading of the manifest. `all`, and a manifest recording no harness,
+ * are checked against every harness `all` covers now, so they fail until the install adds a new one.
  */
 export function checkInstalledPermissions(rootDir: string): { harnesses: Harness[]; changes: PermissionCheck[] } | null {
   const root = realpathSync(rootDir);
