@@ -39,8 +39,9 @@ try {
     assert.match(run("logs", compact.log), /installed harness output/);
   } finally { rmSync(path.dirname(compact.log), { recursive: true, force: true }); }
   const skills = JSON.parse(run("skills", "list"));
-  for (const name of ["ship-pr", "update-dependencies", "open-issue", "seo-optimization", "space-cleanup", "performance-pass", "take-screenshots"]) assert.ok(skills.includes(name), `the package bundles ${name}`);
+  for (const name of ["ship-pr", "update-dependencies", "open-issue", "seo-optimization", "space-cleanup", "performance-pass", "take-screenshots", "optimize-ci"]) assert.ok(skills.includes(name), `the package bundles ${name}`);
   assert.match(run("seo", "probe", "--help"), /seo probe --sitemap <host>/);
+  assert.match(run("ci", "timings", "--help"), /ci timings --job <job-id>/);
   assert.equal(JSON.parse(run("config", "show")).schemaVersion, 1);
   assert.equal(JSON.parse(run("skills", "install")).applied, false);
   assert.equal(existsSync(path.join(consumer, ".agents")), false);

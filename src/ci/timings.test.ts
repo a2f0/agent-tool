@@ -46,7 +46,7 @@ test("the summary ends wall clock at the gate and names the lane that finished l
   ];
   const summary = summarizeRuns(runs, { gate: "CI gate", thresholdMinutes: 5 });
   expect(summary.runs).toBe(3);
-  expect(summary.excluded).toEqual({ reruns: 1, missingGate: 1 });
+  expect(summary.excluded).toEqual({ reruns: 1, noJobs: 0, missingGate: 1 });
   expect(summary.wallMinutes).toEqual({ median: 10, p90: 13, min: 9, max: 13 });
   expect(summary.firstStartLagSeconds).toEqual({ median: 0, p90: 60, min: 0, max: 60 });
   expect(summary.lastToFinish).toEqual([{ lane: "Test (api)", runs: 2 }, { lane: "Lint", runs: 1 }]);
@@ -57,6 +57,18 @@ test("the summary ends wall clock at the gate and names the lane that finished l
   expect(shard.overThresholdShare).toBe(0);
   expect(summary.jobs.map(item => item.name)).toEqual(["Test (api 1/2)", "Lint", "Test (api 2/2)"]);
   expect(summary.jobs.some(item => item.name === "CI gate")).toBe(false);
+});
+
+test("with a gate, jobs that end after it starts do not count as finishing last", () => {
+  const summary = summarizeRuns([
+    run(1, [job(1, "Lint", 0, 4), job(2, "Test", 0, 6), job(3, "CI gate", 6, 7), job(4, "Optional", 0, 15), job(5, "Deploy", 7, 12)]),
+    run(2, [job(1, "Lint", 0, 3), job(3, "CI gate", 3, 4), job(5, "Deploy", 4, 9)]),
+    run(3, [job(1, "Lint", 0, 0, "skipped")]),
+  ], { gate: "CI gate", thresholdMinutes: 2 });
+  expect(summary.lastToFinish).toEqual([{ lane: "Lint", runs: 1 }, { lane: "Test", runs: 1 }]);
+  expect(summary.wallMinutes.max).toBe(7);
+  expect(summary.excluded).toEqual({ reruns: 0, noJobs: 1, missingGate: 0 });
+  expect(summary.jobs.find(item => item.name === "Optional")?.runs).toBe(1);
 });
 
 test("without a gate the wall clock ends with the last job", () => {
@@ -166,9 +178,17 @@ test("the summary measures successful runs of the workflow and never reads a re-
   const result = f.timings(["--workflow", "ci.yml", "--limit", "3", "--gate", "CI gate", "--event", "pull_request"]);
   expect(result.stderr).toBe("");
   expect(result.status).toBe(0);
-  expect(JSON.parse(result.stdout)).toMatchObject({ repo: "o/r", workflow: "ci.yml", event: "pull_request", gate: "CI gate", runs: 2, excluded: { reruns: 1, missingGate: 0 }, wallMinutes: { median: 5, max: 7 } });
+  expect(JSON.parse(result.stdout)).toMatchObject({ repo: "o/r", workflow: "ci.yml", event: "pull_request", gate: "CI gate", runs: 2, excluded: { reruns: 1, noJobs: 0, missingGate: 0 }, wallMinutes: { median: 5, max: 7 } });
   const jobReads = f.calls().flat().filter(arg => /runs\/\d+\/jobs/.test(arg));
   expect(jobReads).toEqual(["repos/o/r/actions/runs/11/jobs?per_page=100", "repos/o/r/actions/runs/13/jobs?per_page=100"]);
+});
+
+test("a --gate that names no job in any run fails with a hint instead of an empty report", () => {
+  const f = githubFixture({ pages: { 1: [{ id: 11, event: "push", attempt: 1, createdAt: at(0) }] }, jobs: { 11: [job(1, "Lint", 0, 4), job(2, "CI gate", 4, 5)] } });
+  const result = f.timings(["--limit", "1", "--gate", "CI Gate"]);
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("No run had a job named 'CI Gate'");
+  expect(result.stdout).toBe("");
 });
 
 test("--run lists one run's steps and --job ranks one log's test files", () => {
