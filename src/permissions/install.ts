@@ -162,13 +162,14 @@ export function scopeState(manifest: Pick<Manifest, "scope" | Harness>): ScopeSt
 export type ScopeEvent = { type: "install"; target: Harness | "all" };
 
 /**
- * One install's transition: an `all` scope stays the same state; installing `all` gives `all`;
- * a single install adds its harness to the list or inferred harnesses, so a later push gate
- * checks each.
+ * One install's transition: an `all` scope, or a list already naming the harness, stays the same
+ * state; installing `all` gives `all`; a single install adds its harness to the list or inferred
+ * harnesses, so a later push gate checks each.
  */
 export function scopeTransition(state: ScopeState, event: ScopeEvent): Extract<ScopeState, { status: "all" | "listed" }> {
   if (state.status === "all") return state;
   if (event.target === "all") return { status: "all" };
+  if (state.status === "listed" && state.harnesses.includes(event.target)) return state;
   const previous = state.status === "none" ? [] : state.harnesses;
   return { status: "listed", harnesses: HARNESSES.filter(harness => harness === event.target || previous.includes(harness)) };
 }

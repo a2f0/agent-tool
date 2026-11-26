@@ -100,11 +100,12 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
   for (const command of ["gh pr merge 1", "npm publish", "bun add left-pad", "bunx cowsay", "npx cowsay"]) expect(geminiAllows(gemini, command)).toBe(false);
 });
 
-test("Gemini rules allow exactly what Codex's do, outside plan and YOLO modes", () => {
+test("Gemini rules allow exactly what Codex's do, in the default approval mode only", () => {
   const project = [{ command: "bun x biome", class: "local" as const }, { command: "bun x tsx", class: "exec" as const }];
   const rules = geminiRules(geminiPolicy(project));
-  // Every rule is an allow for the shell tool, limited to the modes where a workspace allow is safe:
-  // in plan mode it would outrank the read-only deny, and YOLO allows every command already.
+  // Every rule is an allow for the shell tool, limited to `default`: in plan mode it would outrank
+  // the read-only deny, autoEdit before Gemini CLI 0.63.0 lets an allowed command redirect, and
+  // YOLO allows every command already.
   // One rule per routine command, each naming every invocation.
   expect(rules.length).toBe([...CATALOG, ...project].filter(entry => CLASSES[strictest(entry)].decision === "allow").length);
   for (const { commandRegex, ...rule } of rules) {
@@ -274,8 +275,9 @@ test("the scope moves only through its transition: `all` absorbs, single install
     ["inferred", { status: "all" }, { status: "listed", harnesses: ["claude", "codex"] }, { status: "listed", harnesses: ["claude", "codex", "gemini"] }],
   ]);
   // An event that changes nothing returns the same state.
-  const all: ScopeState = { status: "all" };
+  const all: ScopeState = { status: "all" }, listed: ScopeState = { status: "listed", harnesses: ["codex"] };
   expect(scopeTransition(all, { type: "install", target: "codex" })).toBe(all);
+  expect(scopeTransition(listed, { type: "install", target: "codex" })).toBe(listed);
 });
 
 test("the push gate checks the recorded scope, or an earlier manifest's harnesses", () => {
