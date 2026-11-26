@@ -162,19 +162,25 @@ export function checkPermissions(rootDir: string, target: string): PermissionChe
   return checks(root, harnesses(target), readManifest(root));
 }
 
+/** What `--harness all` wrote before Gemini rules existed. */
+const LEGACY_ALL: readonly Harness[] = ["claude", "codex"];
+
 /**
- * The push gate's check, or null without a manifest: the `--harness` the rules were installed
- * for, from the manifest, and its check, from one reading of the manifest. Only `all` records
- * more than one harness, so a manifest an earlier `all` wrote (Claude and Codex) is checked
- * against every harness `all` now covers, and fails until the install adds the new ones.
+ * The push gate's check, or null without a manifest: the harnesses the manifest records, as
+ * `all`, one name, or a comma-separated list when single-harness installs added up, and their
+ * check, from one reading of the manifest. Claude and Codex alone are what `all` wrote before
+ * Gemini, so that pair is checked against every harness `all` covers now, and fails until the
+ * install adds the new ones; a manifest recording none is checked as `all`, as before.
  */
 export function checkInstalledPermissions(rootDir: string): { harness: string; changes: PermissionCheck[] } | null {
   const root = realpathSync(rootDir);
   const recorded = readManifest(root);
   if (recorded.raw === undefined) return null;
   const installed = HARNESSES.filter(harness => recorded.manifest[harness] !== undefined);
-  const harness = installed.length === 1 ? installed[0]! : "all";
-  return { harness, changes: checks(root, harnesses(harness), recorded) };
+  const legacy = installed.length === LEGACY_ALL.length && LEGACY_ALL.every(harness => installed.includes(harness));
+  const targets = !installed.length || legacy ? [...HARNESSES] : installed;
+  const harness = targets.length === HARNESSES.length ? "all" : targets.join(",");
+  return { harness, changes: checks(root, targets, recorded) };
 }
 
 /**

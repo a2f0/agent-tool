@@ -34,25 +34,15 @@ function codexAllows(source: string, command: string): boolean {
   return codexPrefixes(source).some(prefix => prefix.every((word, index) => words[index] === word));
 }
 
-interface GeminiRule { fields: Record<string, string>; prefixes: string[] }
-/** The generated policy's rules: each `[[rule]]` table's scalar fields and its `commandPrefix` array. */
+interface GeminiRule { toolName: string; commandPrefix: string[]; decision: string; priority: number; modes: string[] }
+/** The generated policy's `[[rule]]` tables, parsed as TOML so a malformed policy fails here, not in Gemini. */
 function geminiRules(source: string): GeminiRule[] {
-  return source.split("[[rule]]").slice(1).map(table => {
-    const fields: Record<string, string> = {}, prefixes: string[] = [];
-    let inPrefixes = false;
-    for (const line of table.split("\n")) {
-      if (line === "commandPrefix = [") inPrefixes = true;
-      else if (inPrefixes && line === "]") inPrefixes = false;
-      else if (inPrefixes) prefixes.push(JSON.parse(line.trim().replace(/,$/, "")) as string);
-      else if (/^\w+ = /.test(line)) { const [key, value] = line.split(" = ") as [string, string]; fields[key] = value; }
-    }
-    return { fields, prefixes };
-  });
+  return (Bun.TOML.parse(source) as { rule: GeminiRule[] }).rule;
 }
 
 /** Gemini CLI's commandPrefix match: the prefix, then whitespace, a quote, or the end of the command. */
 function geminiAllows(source: string, command: string): boolean {
-  return geminiRules(source).some(rule => rule.prefixes.some(prefix => command === prefix || (command.startsWith(prefix) && /^[\s"]/.test(command.slice(prefix.length)))));
+  return geminiRules(source).some(rule => rule.decision === "allow" && rule.commandPrefix.some(prefix => command === prefix || (command.startsWith(prefix) && /^[\s"]/.test(command.slice(prefix.length)))));
 }
 
 test("dependency verbs split by class: add asks, update and remove run", () => {
@@ -101,15 +91,18 @@ test("Gemini rules allow exactly what Codex's do, outside plan and YOLO modes", 
   const rules = geminiRules(geminiPolicy(project));
   // Every rule is an allow for the shell tool, limited to the modes where a workspace allow is safe:
   // in plan mode it would outrank the read-only deny, and YOLO allows every command already.
-  for (const rule of rules) {
-    expect(rule.fields).toEqual({ toolName: '"run_shell_command"', decision: '"allow"', priority: "100", modes: `[${GEMINI_MODES.map(mode => JSON.stringify(mode)).join(", ")}]` });
+  expect(rules.length).toBeGreaterThan(0);
+  for (const { commandPrefix, ...rule } of rules) {
+    expect(rule).toEqual({ toolName: "run_shell_command", decision: "allow", priority: 100, modes: ["default", "autoEdit"] });
+    expect(commandPrefix.length).toBeGreaterThan(0);
   }
   expect(GEMINI_MODES).toEqual(["default", "autoEdit"]);
   const expand = (tokens: (string | string[])[]): string[] => tokens.reduce<string[][]>((rows, token) => rows.flatMap(row => (Array.isArray(token) ? token : [token]).map(value => [...row, value])), [[]]).map(words => words.join(" "));
   const codex = codexRules(project).split("\n").flatMap(line => { const rule = /^prefix_rule\(pattern=(\[.*\]), decision="allow"/.exec(line); return rule ? expand(JSON.parse(rule[1]!)) : []; });
-  expect(rules.flatMap(rule => rule.prefixes).sort()).toEqual(codex.sort());
-  expect(rules.flatMap(rule => rule.prefixes)).toContain("agent-tool bun x biome");
-  expect(rules.flatMap(rule => rule.prefixes).some(prefix => prefix.includes("tsx"))).toBe(false);
+  const prefixes = rules.flatMap(rule => rule.commandPrefix);
+  expect([...prefixes].sort()).toEqual(codex.sort());
+  expect(prefixes).toContain("agent-tool bun x biome");
+  expect(prefixes.some(prefix => prefix.includes("tsx"))).toBe(false);
 });
 
 test("apply semantics label routine groups while preserving every allow prefix", () => {
@@ -251,6 +244,15 @@ test("a manifest an earlier all wrote is checked for every harness all covers no
   const only = project();
   installPermissions(only, "gemini", true);
   expect(checkInstalledPermissions(only)).toMatchObject({ harness: "gemini", changes: [{ path: ".gemini/policies/agent-tool.toml", status: "unchanged" }, { status: "unchanged" }] });
+  // Any other pair added up from single-harness installs is checked as recorded, never asking for the third.
+  for (const pair of [["claude", "gemini"], ["codex", "gemini"]] as const) {
+    const root = project();
+    for (const harness of pair) installPermissions(root, harness, true);
+    const check = checkInstalledPermissions(root)!;
+    expect(check.harness).toBe(pair.join(","));
+    expect(check.changes.map(item => item.path)).not.toContain(pair[0] === "claude" ? ".codex/rules/agent-tool.rules" : ".claude/settings.json");
+    expect(check.changes.every(item => item.status === "unchanged")).toBe(true);
+  }
 });
 
 test("Codex migration removes managed prompts while preserving separate user rules", () => {
@@ -329,6 +331,7 @@ test("the CLI previews by default and rejects unknown harnesses", () => {
   expect(JSON.parse(preview.stdout)).toMatchObject({ applied: false });
   expect(spawnSync(process.execPath, [cli, "permissions", "check"], { cwd: root, encoding: "utf8" }).status).toBe(1);
   expect(spawnSync(process.execPath, [cli, "permissions", "show", "--harness", "opencode"], { cwd: root, encoding: "utf8" }).stderr).toMatch(/Unknown permissions harness/);
+  expect(spawnSync(process.execPath, [cli, "permissions", "show", "--harness", "gemini"], { cwd: root, encoding: "utf8" }).stdout).toBe(geminiPolicy());
   // A stale recorded version fails the CLI check until the install records the running one.
   expect(spawnSync(process.execPath, [cli, "permissions", "install", "--apply"], { cwd: root, encoding: "utf8" }).status).toBe(0);
   const manifestFile = path.join(root, ".agent-tool-permissions.json");

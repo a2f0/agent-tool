@@ -53,7 +53,9 @@ For each ownership manifest they do not refresh, run its installer directly:
 `.agent-tool-skills.json`, and
 `agent-tool permissions install --harness <existing-scope> --apply` for
 `.agent-tool-permissions.json`. Preserve each harness scope, and commit the
-ownership manifests with any generated files.
+ownership manifests with any generated files. When `all` gains a harness, the
+install adds that harness's rules file, such as `.gemini/policies/agent-tool.toml`
+from 0.1.76; name it in the PR so the reviewer sees the new allow rules.
 The manifests record the agent-tool version, so every upgrade changes them, even
 when no skill or rule changed, and `skills check` and `permissions check` fail
 until the sync records the new version. Hermes reads the shared `.agents/skills`
