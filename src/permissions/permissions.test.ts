@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { CATALOG, CLASSES, GEMINI_MODES, INVOCATIONS, claudePermissions, codexRules, geminiPolicy, strictest, type PermissionClass } from "./catalog";
+import { CATALOG, CLASSES, GEMINI_NAME_END, GEMINI_MODES, INVOCATIONS, claudePermissions, codexRules, geminiPolicy, strictest, type PermissionClass } from "./catalog";
 import { checkInstalledPermissions, checkPermissions, installPermissions } from "./install";
 import metadata from "../../package.json";
 import { HELP } from "../cli";
@@ -91,8 +91,12 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
     for (const command of ["pr merge '' abc main", "bun add left-pad", "permissions install", "permissions install --apply", "run --label x -- command", "run-group checks.json", "proc start -- command", "seo probe example.com", "space --apply", "screenshots capture", "pr checksX", 'pr checks"X"', 'review"carry" a b', "pr checks\tX"]) {
       expect({ command: `${invocation} ${command}`, allowed: geminiAllows(gemini, `${invocation} ${command}`) }).toEqual({ command: `${invocation} ${command}`, allowed: false });
     }
-    for (const command of ["repo cleanup 12 abc --apply", "pr checks --wait", "--version", "skills install --apply"]) expect(geminiAllows(gemini, `${invocation} ${command}`)).toBe(true);
+    for (const command of ["repo cleanup 12 abc --apply", "pr checks --wait", "--version", "skills install --apply", 'pr checks "a b"', "pr checks 'a b'", "pr open 'feat: x' --body-file f.md"]) expect(geminiAllows(gemini, `${invocation} ${command}`)).toBe(true);
   }
+  // Escaped names match only themselves: `.` in an invocation or executable is literal.
+  const dotted = geminiPolicy([{ command: "bun x a.b", class: "local" }]);
+  expect(geminiAllows(dotted, "agent-tool bun x a.b -- c")).toBe(true);
+  for (const command of ["agent-tool bun x aXb -- c", "node_modules/xbin/agent-tool pr checks", "bun run agent-toolX pr checks"]) expect({ command, allowed: geminiAllows(dotted, command) }).toEqual({ command, allowed: false });
   for (const command of ["gh pr merge 1", "npm publish", "bun add left-pad", "bunx cowsay", "npx cowsay"]) expect(geminiAllows(gemini, command)).toBe(false);
 });
 
@@ -105,7 +109,7 @@ test("Gemini rules allow exactly what Codex's do, outside plan and YOLO modes", 
   expect(rules.length).toBe([...CATALOG, ...project].filter(entry => CLASSES[strictest(entry)].decision === "allow").length);
   for (const { commandRegex, ...rule } of rules) {
     expect(rule).toEqual({ toolName: "run_shell_command", decision: "allow", priority: 0, modes: ["default", "autoEdit"] });
-    expect(commandRegex.endsWith('(?: |")')).toBe(true);
+    expect(commandRegex.endsWith(GEMINI_NAME_END)).toBe(true);
   }
   expect(GEMINI_MODES).toEqual(["default", "autoEdit"]);
   const expand = (tokens: (string | string[])[]): string[] => tokens.reduce<string[][]>((rows, token) => rows.flatMap(row => (Array.isArray(token) ? token : [token]).map(value => [...row, value])), [[]]).map(words => words.join(" "));

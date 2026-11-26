@@ -127,14 +127,23 @@ export const GEMINI_MODES = ["default", "autoEdit"] as const;
 const GEMINI_PRIORITY = 0;
 
 const regex = (text: string) => text.replace(/[.^$|?*+()[\]{}\\]/g, "\\$&");
+/**
+ * What ends a command name in its JSON encoding: a space or the closing quote, never an escaped
+ * quote. The arguments after it are not restricted, as Claude's and Codex's rules leave them to
+ * their harness: Gemini splits chains and asks for redirection and substitution itself. Its ReDoS
+ * guard also refuses any quantified group, so no pattern can allow an escaped quote while refusing
+ * shell syntax, and a quote-free class would make every double-quoted argument ask.
+ */
+export const GEMINI_NAME_END = '(?: |")';
 
 /**
  * Gemini CLI policy rules for `.gemini/policies/`: one allow rule per routine command,
  * as a `commandRegex` matched against the start of the command's JSON encoding. Gemini's
  * own `commandPrefix` also ends at an escaped quote, which the shell joins into the same
  * word (`agent-tool bun x vite"-node"` runs `vite-node`), so each regex ends the command
- * at a space or at the closing quote of the encoding, as Codex's token prefixes do; a
- * command whose `--apply` form asks gets no rule. Only allow rules are generated, as for
+ * name at a space or at the closing quote of the encoding, as Codex's token prefixes do; a
+ * command whose `--apply` form asks gets no rule. Gemini splits chains and asks for
+ * redirection and substitution before rules apply (see GEMINI_NAME_END). Only allow rules are generated, as for
  * Claude and Codex, so other commands keep the user's approval mode and policies, which
  * outrank workspace rules. The rules name their modes: a workspace allow outranks plan
  * mode's default read-only deny, and YOLO already allows every command. One rule per
@@ -158,7 +167,7 @@ export function geminiPolicy(project: CatalogEntry[] = []): string {
     lines.push("", `# ${value}: ${CLASSES[value].description}`);
     for (const entry of entries) {
       // A TOML literal string keeps the pattern readable; command names never hold its quote.
-      const pattern = `${invocations} ${regex(entry.command)}(?: |")`;
+      const pattern = `${invocations} ${regex(entry.command)}${GEMINI_NAME_END}`;
       if (pattern.includes("'")) throw new Error(`Cannot write a Gemini rule for '${entry.command}'.`);
       lines.push("[[rule]]", 'toolName = "run_shell_command"', `commandRegex = '${pattern}'`, 'decision = "allow"', `priority = ${GEMINI_PRIORITY}`, `modes = [${GEMINI_MODES.map(quote).join(", ")}]`);
     }
