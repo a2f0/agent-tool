@@ -332,7 +332,9 @@ take a revision range or a diff base can use it directly. Deleted refs keep
 
 The command prints one JSON report: `ok`, `remote`, `refs` (as above with
 `commits` reduced to a count), `guards` (each with `name`, an optional `ref`,
-`ok`, `durationMs`, and `details` or `error` when it failed), `steps` (null
+`ok`, `durationMs`, and `details` or `error` when it failed; the skills and
+permissions guards' `details` list the checked `harnesses`, an array since
+0.1.76 for permissions, which earlier reported one `harness` string), `steps` (null
 when none ran, else the run-group `report` path, `status`, `durationMs`,
 `error`, and each step's `label`, `status`, `durationMs`, and `log`),
 `worktree`, `budget` (`seconds`, `elapsedMs`, `exceeded`, and the `slowest`

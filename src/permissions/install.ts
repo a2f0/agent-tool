@@ -162,7 +162,12 @@ export function checkPermissions(rootDir: string, target: string): PermissionChe
   return checks(root, harnesses(target), readManifest(root));
 }
 
-/** What `--harness all` wrote before Gemini rules existed, and the first release whose `all` adds them. */
+/**
+ * What `--harness all` wrote before Gemini rules existed, and the first release whose `all` adds
+ * them. If the version bump that ships Gemini rules changes, change this release with it, and its
+ * mentions in docs/permissions.md, docs/workflows.md, and skills/update-dependencies/SKILL.md
+ * (then rebuild src/skills/bundled.ts).
+ */
 const LEGACY_ALL: readonly Harness[] = ["claude", "codex"];
 const GEMINI_RELEASE = "0.1.76";
 

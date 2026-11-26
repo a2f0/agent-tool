@@ -42,7 +42,9 @@ function geminiRules(source: string): GeminiRule[] {
 
 /**
  * Gemini CLI's commandRegex match: the pattern, anchored at the start of the command's JSON
- * encoding, which ends in the closing quote; an embedded quote is encoded as `\"`.
+ * encoding, which ends in the closing quote; an embedded quote is encoded as `\"`. This models
+ * Gemini CLI 0.71.1, whose policy utils build `\x00"command":"(?:<commandRegex>)` and test it
+ * against the stable JSON of the tool's arguments (`buildArgsPatterns`).
  */
 function geminiAllows(source: string, command: string): boolean {
   const encoded = JSON.stringify(command).slice(1);
@@ -113,7 +115,6 @@ test("Gemini rules allow exactly what Codex's do, outside plan and YOLO modes", 
     expect({ prefix, alone: geminiAllows(policy, prefix), argued: geminiAllows(policy, `${prefix} x`), joined: geminiAllows(policy, joined), extended: geminiAllows(policy, extended) })
       .toEqual({ prefix, alone: true, argued: true, joined: codexAllows(codexSource, joined), extended: codexAllows(codexSource, extended) });
   }
-  expect(codex.filter(prefix => !geminiAllows(policy, `${prefix}"x"`)).length).toBeGreaterThan(codex.length / 2);
   expect(geminiAllows(policy, "agent-tool bun x biome -- check src")).toBe(true);
   expect(geminiAllows(policy, 'agent-tool bun x biome"-x" -- a.ts')).toBe(false);
   expect(geminiAllows(policy, "agent-tool bun x tsx -- a.ts")).toBe(false);

@@ -296,7 +296,8 @@ Each harness also has limits that the rules cannot change:
   command in it is; redirection and command substitution fall back to asking.
 
 After upgrading agent-tool, regenerate the managed permissions and start a new
-Codex session so it loads the updated rules. Removing a generated prompt does
+Codex or Gemini CLI session so it loads the updated rules; Gemini then asks
+once to accept the changed policy file. Removing a generated prompt does
 not change the active session's approval policy, sandbox, or user/managed rules.
 With `never` plus a restrictive sandbox, commands that need an escalation can
 still fail; with `danger-full-access`, they can run within the user's authorized
