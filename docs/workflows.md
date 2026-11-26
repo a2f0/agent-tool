@@ -230,7 +230,10 @@ do not act on this one. It then runs, in order:
 1. The built-in guards, from the same implementations as the standalone
    commands: `hooks check`; `skills check` and `permissions check` when
    `.agent-tool-skills.json` or `.agent-tool-permissions.json` exists, for
-   every harness their manifests record; `branch check --pre-push`; and, for
+   every harness their manifests record (a permissions manifest recording none,
+   or only the Claude and Codex rules an `all` install before 0.1.76 wrote, is
+   checked for every harness, as [generated rules](permissions.md#generated-rules)
+   describes); `branch check --pre-push`; and, for
    every pushed ref that is not a deletion, `commits check` and `checks
    binaries` over the commits that push adds. Every guard runs and reports;
    any failure refuses the push before a declared step starts. A manifest

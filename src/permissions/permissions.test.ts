@@ -34,15 +34,19 @@ function codexAllows(source: string, command: string): boolean {
   return codexPrefixes(source).some(prefix => prefix.every((word, index) => words[index] === word));
 }
 
-interface GeminiRule { toolName: string; commandPrefix: string[]; decision: string; priority: number; modes: string[] }
+interface GeminiRule { toolName: string; commandRegex: string; decision: string; priority: number; modes: string[] }
 /** The generated policy's `[[rule]]` tables, parsed as TOML so a malformed policy fails here, not in Gemini. */
 function geminiRules(source: string): GeminiRule[] {
   return (Bun.TOML.parse(source) as { rule: GeminiRule[] }).rule;
 }
 
-/** Gemini CLI's commandPrefix match: the prefix, then whitespace, a quote, or the end of the command. */
+/**
+ * Gemini CLI's commandRegex match: the pattern, anchored at the start of the command's JSON
+ * encoding, which ends in the closing quote; an embedded quote is encoded as `\"`.
+ */
 function geminiAllows(source: string, command: string): boolean {
-  return geminiRules(source).some(rule => rule.decision === "allow" && rule.commandPrefix.some(prefix => command === prefix || (command.startsWith(prefix) && /^[\s"]/.test(command.slice(prefix.length)))));
+  const encoded = JSON.stringify(command).slice(1);
+  return geminiRules(source).some(rule => rule.decision === "allow" && new RegExp(`^(?:${rule.commandRegex})`).test(encoded));
 }
 
 test("dependency verbs split by class: add asks, update and remove run", () => {
@@ -78,7 +82,8 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
   // Gemini's prefixes match like Codex's, so the same commands stay with the user's mode.
   const gemini = geminiPolicy();
   for (const invocation of INVOCATIONS) {
-    for (const command of ["pr merge '' abc main", "bun add left-pad", "permissions install", "permissions install --apply", "run --label x -- command", "run-group checks.json", "proc start -- command", "seo probe example.com", "space --apply", "screenshots capture", "pr checksX"]) {
+    // A quote joins the next text into the same shell word, so it never ends a command name.
+    for (const command of ["pr merge '' abc main", "bun add left-pad", "permissions install", "permissions install --apply", "run --label x -- command", "run-group checks.json", "proc start -- command", "seo probe example.com", "space --apply", "screenshots capture", "pr checksX", 'pr checks"X"', 'review"carry" a b', "pr checks\tX"]) {
       expect({ command: `${invocation} ${command}`, allowed: geminiAllows(gemini, `${invocation} ${command}`) }).toEqual({ command: `${invocation} ${command}`, allowed: false });
     }
     for (const command of ["repo cleanup 12 abc --apply", "pr checks --wait", "--version", "skills install --apply"]) expect(geminiAllows(gemini, `${invocation} ${command}`)).toBe(true);
@@ -91,18 +96,27 @@ test("Gemini rules allow exactly what Codex's do, outside plan and YOLO modes", 
   const rules = geminiRules(geminiPolicy(project));
   // Every rule is an allow for the shell tool, limited to the modes where a workspace allow is safe:
   // in plan mode it would outrank the read-only deny, and YOLO allows every command already.
-  expect(rules.length).toBeGreaterThan(0);
-  for (const { commandPrefix, ...rule } of rules) {
+  // One rule per routine command, each naming every invocation.
+  expect(rules.length).toBe([...CATALOG, ...project].filter(entry => CLASSES[strictest(entry)].decision === "allow").length);
+  for (const { commandRegex, ...rule } of rules) {
     expect(rule).toEqual({ toolName: "run_shell_command", decision: "allow", priority: 100, modes: ["default", "autoEdit"] });
-    expect(commandPrefix.length).toBeGreaterThan(0);
+    expect(commandRegex.endsWith('(?: |")')).toBe(true);
   }
   expect(GEMINI_MODES).toEqual(["default", "autoEdit"]);
   const expand = (tokens: (string | string[])[]): string[] => tokens.reduce<string[][]>((rows, token) => rows.flatMap(row => (Array.isArray(token) ? token : [token]).map(value => [...row, value])), [[]]).map(words => words.join(" "));
   const codex = codexRules(project).split("\n").flatMap(line => { const rule = /^prefix_rule\(pattern=(\[.*\]), decision="allow"/.exec(line); return rule ? expand(JSON.parse(rule[1]!)) : []; });
-  const prefixes = rules.flatMap(rule => rule.commandPrefix);
-  expect([...prefixes].sort()).toEqual(codex.sort());
-  expect(prefixes).toContain("agent-tool bun x biome");
-  expect(prefixes.some(prefix => prefix.includes("tsx"))).toBe(false);
+  const policy = geminiPolicy(project), codexSource = codexRules(project);
+  // Every Codex prefix is allowed alone or with arguments. Text a quote or letter adds to its last
+  // word makes another command, allowed only when Codex allows it too, as `review carry"x"` is by `review`.
+  for (const prefix of codex) {
+    const joined = `${prefix}"x"`, extended = `${prefix}x`;
+    expect({ prefix, alone: geminiAllows(policy, prefix), argued: geminiAllows(policy, `${prefix} x`), joined: geminiAllows(policy, joined), extended: geminiAllows(policy, extended) })
+      .toEqual({ prefix, alone: true, argued: true, joined: codexAllows(codexSource, joined), extended: codexAllows(codexSource, extended) });
+  }
+  expect(codex.filter(prefix => !geminiAllows(policy, `${prefix}"x"`)).length).toBeGreaterThan(codex.length / 2);
+  expect(geminiAllows(policy, "agent-tool bun x biome -- check src")).toBe(true);
+  expect(geminiAllows(policy, 'agent-tool bun x biome"-x" -- a.ts')).toBe(false);
+  expect(geminiAllows(policy, "agent-tool bun x tsx -- a.ts")).toBe(false);
 });
 
 test("apply semantics label routine groups while preserving every allow prefix", () => {

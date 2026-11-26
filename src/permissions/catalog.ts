@@ -121,33 +121,41 @@ export const GEMINI_MODES = ["default", "autoEdit"] as const;
 /** Any priority stays inside the workspace tier, below every user and admin policy. */
 const GEMINI_PRIORITY = 100;
 
+const regex = (text: string) => text.replace(/[.^$|?*+()[\]{}\\]/g, "\\$&");
+
 /**
- * Gemini CLI policy rules for `.gemini/policies/`. Its `commandPrefix` matches a whole
- * word prefix, like Codex's prefix rules, so a command whose `--apply` form asks gets
- * no rule. Only allow rules are generated, as for Claude and Codex, so other commands
- * keep the user's approval mode and policies, which outrank workspace rules. The rules
- * name their modes: a workspace allow outranks plan mode's default read-only deny, and
- * YOLO already allows every command.
+ * Gemini CLI policy rules for `.gemini/policies/`: one allow rule per routine command,
+ * as a `commandRegex` matched against the start of the command's JSON encoding. Gemini's
+ * own `commandPrefix` also ends at an escaped quote, which the shell joins into the same
+ * word (`agent-tool bun x vite"-node"` runs `vite-node`), so each regex ends the command
+ * at a space or at the closing quote of the encoding, as Codex's token prefixes do; a
+ * command whose `--apply` form asks gets no rule. Only allow rules are generated, as for
+ * Claude and Codex, so other commands keep the user's approval mode and policies, which
+ * outrank workspace rules. The rules name their modes: a workspace allow outranks plan
+ * mode's default read-only deny, and YOLO already allows every command. One rule per
+ * command keeps each pattern far below Gemini's pattern size limits.
  */
 export function geminiPolicy(project: CatalogEntry[] = []): string {
   const lines = [
     "# Managed by agent-tool; regenerate with `agent-tool permissions install --apply`.",
     "# Only routine commands receive allow rules. Other commands keep the user's",
     "# approval mode and policies, which outrank these workspace rules.",
-    "# A command whose --apply form asks gets no rule, since prefixes also match --apply.",
-    "# Plan mode stays read-only, and YOLO already allows every command.",
+    "# Each command ends at a space or the end of the command, never a quote, and a",
+    "# command whose --apply form asks gets no rule. Plan mode stays read-only, and",
+    "# YOLO already allows every command.",
   ];
-  const prefixes = new Map<PermissionClass, string[]>();
-  for (const invocation of INVOCATIONS) for (const entry of [...CATALOG, ...project]) {
-    const value = strictest(entry);
-    if (CLASSES[value].decision === "allow") prefixes.set(value, [...(prefixes.get(value) ?? []), `${invocation} ${entry.command}`]);
-  }
+  const invocations = `(?:${INVOCATIONS.map(regex).join("|")})`;
   for (const value of Object.keys(CLASSES) as PermissionClass[]) {
-    const commands = prefixes.get(value);
-    if (!commands) continue;
-    lines.push("", `# ${value}: ${CLASSES[value].description}`, "[[rule]]", 'toolName = "run_shell_command"', "commandPrefix = [");
-    for (const command of commands) lines.push(`  ${quote(command)},`);
-    lines.push("]", 'decision = "allow"', `priority = ${GEMINI_PRIORITY}`, `modes = [${GEMINI_MODES.map(quote).join(", ")}]`);
+    if (CLASSES[value].decision !== "allow") continue;
+    const entries = [...CATALOG, ...project].filter(entry => strictest(entry) === value);
+    if (!entries.length) continue;
+    lines.push("", `# ${value}: ${CLASSES[value].description}`);
+    for (const entry of entries) {
+      // A TOML literal string keeps the pattern readable; command names never hold its quote.
+      const pattern = `${invocations} ${regex(entry.command)}(?: |")`;
+      if (pattern.includes("'")) throw new Error(`Cannot write a Gemini rule for '${entry.command}'.`);
+      lines.push("[[rule]]", 'toolName = "run_shell_command"', `commandRegex = '${pattern}'`, 'decision = "allow"', `priority = ${GEMINI_PRIORITY}`, `modes = [${GEMINI_MODES.map(quote).join(", ")}]`);
+    }
   }
   return `${lines.join("\n")}\n`;
 }

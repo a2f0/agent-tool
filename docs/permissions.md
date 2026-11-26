@@ -243,10 +243,14 @@ agent-tool permissions check              # CI
   forced prompts written by older versions. A locally edited rules file is
   refused rather than overwritten; other `.rules` files are left alone.
 - `.gemini/policies/agent-tool.toml` holds one Gemini CLI `allow` rule per
-  class for the `run_shell_command` tool, listing the same command prefixes as
-  the Codex rules. Gemini matches a `commandPrefix` up to whitespace or the end
-  of the command, so a command whose `--apply` form asks gets no rule here
-  either. The rules apply only in the `default` and `autoEdit` approval modes:
+  routine command for the `run_shell_command` tool, allowing the same commands
+  as the Codex rules. Each is a `commandRegex` naming the three invocations and
+  ending the command at a space or the end of the command. Gemini's own
+  `commandPrefix` also ends at a quote, which the shell joins into the same
+  word (`agent-tool bun x vite"-node"` runs `vite-node`), so the rules do not use
+  it. A command whose `--apply` form asks gets no rule here either, since a
+  rule also matches the command with arguments. The rules apply only in the
+  `default` and `autoEdit` approval modes:
   a workspace allow outranks plan mode's read-only deny, and YOLO allows every
   command already. Only allow rules are written, and user and admin policies
   outrank workspace ones. A locally edited policy file is refused rather than
