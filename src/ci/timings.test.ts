@@ -71,12 +71,13 @@ test("with a gate, jobs that end after it starts do not count as finishing last"
   expect(summary.jobs.find(item => item.name === "Optional")?.runs).toBe(1);
 });
 
-test("a gate that polls from the start counts the last job to end before it does", () => {
+test("a gate that polls counts the last job to end before it does, even behind a fast filter job", () => {
   const summary = summarizeRuns([
     run(1, [job(1, "CI gate", 0, 9), job(2, "Lint", 0, 4), job(3, "Test (api 1/2)", 1, 8), job(4, "Deploy", 9, 12)]),
+    run(2, [job(5, "changes", 0, 0.2), job(1, "CI gate", 0.5, 10), job(2, "Lint", 1, 4), job(3, "Test (api 2/2)", 1, 9), job(6, "Web E2E", 1, 7)]),
   ], { gate: "CI gate", thresholdMinutes: 2 });
-  expect(summary.lastToFinish).toEqual([{ lane: "Test (api)", runs: 1 }]);
-  expect(summary.wallMinutes.max).toBe(9);
+  expect(summary.lastToFinish).toEqual([{ lane: "Test (api)", runs: 2 }]);
+  expect(summary.wallMinutes.max).toBe(10);
 });
 
 test("without a gate the wall clock ends with the last job", () => {

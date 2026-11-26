@@ -45,8 +45,9 @@ A lane is a job name without shard counters, so `Test (api 1/3)` and
      measured time, not file count (Bun's `--shard` with `--timings`,
      Playwright's `--shard` from spec durations): a count split of uneven files
      is lopsided. Bun falls back to a count split without a word when the
-     timings file is missing, so let a policy test require it. No shard is shorter than its longest file, so split that file
-     when its cases are independent.
+     timings file is missing, so let a policy test require it. No shard is
+     shorter than its longest file, so split that file when its cases are
+     independent.
    - Use the cores the runner has. Check effective parallelism: test runners'
      CI defaults (Playwright uses half the cores), tool flags (TLC
      `-workers 1`), and pool sizes. Raise them only with measured memory
@@ -98,8 +99,9 @@ A lane is a job name without shard counters, so `Test (api 1/3)` and
   completion, not progress. Use the test runner's own case durations.
 - Turning a job into a matrix renames its check (`Web E2E` becomes
   `Web E2E (1/3)`), and so does moving it into a reusable workflow, which
-  prefixes the caller's job name (`models / Protocol models`). Update branch protection, rulesets, and the merge helper's
-  required checks together, or require an aggregate gate job instead.
+  prefixes the caller's job name (`models / Protocol models`). Update branch
+  protection, rulesets, and the merge helper's required checks together, or
+  require an aggregate gate job instead.
 - Changing a shard count reshuffles which files share a worker; with test
   isolation off, that can surface leaks between files. Run every new shard
   composition before pushing.
