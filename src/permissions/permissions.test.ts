@@ -390,7 +390,7 @@ test("install records the agent-tool version, and check requires the running one
     expect(JSON.parse(readFileSync(manifestFile, "utf8"))).toEqual(manifest);
   }
   // A harness a newer release added names that release instead of reading as corruption.
-  expect(() => { writeFileSync(manifestFile, JSON.stringify({ ...manifest, scope: ["claude", "opencode"] })); checkPermissions(root, "all"); }).toThrow(/scope names opencode, which this agent-tool release does not know; use the release that wrote it \(/);
+  expect(() => { writeFileSync(manifestFile, JSON.stringify({ ...manifest, scope: ["claude", "opencode"] })); checkPermissions(root, "all"); }).toThrow(/scope names "opencode", which this agent-tool release does not know; use the release that wrote it \(/);
   // Ownership entries that are present must be well formed, so a falsy one cannot drop its harness.
   for (const invalid of [{ ...manifest, schemaVersion: 2 }, { ...manifest, scope: "some" }, { ...manifest, scope: [] }, { ...manifest, scope: [1] }, { ...manifest, scope: null }, { ...manifest, claude: false }, { ...manifest, codex: null }, { ...manifest, gemini: null }, { ...manifest, claude: { allow: "Bash(x)", ask: [] } }, { ...manifest, codex: { file: 1, sha256: manifest.codex.sha256 } }, { ...manifest, gemini: { file: manifest.gemini.file, sha256: "x" } }, [], null]) {
     writeFileSync(manifestFile, JSON.stringify(invalid));

@@ -72,8 +72,8 @@ function readManifest(root: string): Recorded {
   // A harness a newer release added is not corruption: name it and the release that wrote it.
   if (object(parsed) && Array.isArray(parsed.scope)) {
     const unknown = parsed.scope.filter(harness => typeof harness === "string" && !(HARNESSES as readonly string[]).includes(harness));
-    const writer = typeof parsed.agentToolVersion === "string" ? ` (${parsed.agentToolVersion})` : "";
-    if (unknown.length) throw new Error(`Managed permissions manifest scope names ${unknown.join(", ")}, which this agent-tool release does not know; use the release that wrote it${writer}.`);
+    const writer = validVersion(parsed.agentToolVersion) ? ` (${parsed.agentToolVersion})` : "";
+    if (unknown.length) throw new Error(`Managed permissions manifest scope names ${unknown.map(name => JSON.stringify(name)).join(", ")}, which this agent-tool release does not know; use the release that wrote it${writer}.`);
   }
   // Present ownership and scope entries must be well formed; a falsy one must not drop a harness from the check.
   if (!object(parsed) || parsed.schemaVersion !== 1
