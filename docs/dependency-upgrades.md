@@ -85,6 +85,13 @@ apply the exact approved saved plan. Keep state and plans out of Git.
   measured repository's own `playwright` and never this one. Upgrade it with
   those tests passing on both CI runners, which provide Chrome; it has no
   install script, so it downloads no browsers.
+- The generated Gemini CLI policy follows Gemini CLI 0.71.1's policy engine:
+  workspace rules in `.gemini/policies/`, a `commandRegex` anchored after
+  `"command":"` in the arguments' JSON, the `default`/`autoEdit`/`plan`/`yolo`
+  approval modes, and plan mode's read-only deny in the default tier. Gemini is
+  not a dependency here, so nothing upgrades it; when a Gemini release changes
+  any of these, recheck `geminiPolicy` and the `geminiAllows` test model against
+  its engine (its bundle exports `loadPoliciesFromToml` and `PolicyEngine`).
 
 ## Maintenance records
 

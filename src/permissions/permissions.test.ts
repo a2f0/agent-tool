@@ -248,24 +248,40 @@ test("edited or unmanaged Gemini policies are preserved, and other policy files 
   expect(readFileSync(user, "utf8")).toContain('commandPrefix = "make"');
 });
 
-test("a manifest an earlier all wrote is checked for every harness all covers now", () => {
+test("the push gate checks the recorded scope, and an earlier all's pair as all", () => {
   const root = project();
   installPermissions(root, "claude", true);
   installPermissions(root, "codex", true);
-  // Recorded by this release, Claude and Codex alone came from single-harness installs: checked as is.
+  const manifestFile = path.join(root, ".agent-tool-permissions.json"), manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
+  // Single-harness installs add up in the scope, which the push gate checks as is.
+  expect(manifest.scope).toEqual(["claude", "codex"]);
   expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex"] });
   expect(checkInstalledPermissions(root)!.changes.every(item => item.status === "unchanged")).toBe(true);
-  // Recorded by a release before Gemini rules, or by none, the pair is what `all` wrote then.
-  const manifestFile = path.join(root, ".agent-tool-permissions.json"), manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
-  for (const agentToolVersion of ["0.1.75", "0.1.76-rc.1", undefined]) {
-    writeFileSync(manifestFile, JSON.stringify({ ...manifest, agentToolVersion }));
+  // A manifest from a release before the scope field records Claude and Codex alone after `all`,
+  // so the pair is checked against every harness `all` covers now, whatever version it names.
+  const { scope: _scope, ...earlier } = manifest;
+  for (const agentToolVersion of ["0.1.75", "0.1.77", undefined]) {
+    writeFileSync(manifestFile, JSON.stringify({ ...earlier, agentToolVersion }));
     expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex", "gemini"], changes: [{ status: "unchanged" }, { status: "unchanged" }, { path: ".gemini/policies/agent-tool.toml", status: "missing" }, { status: "outdated" }] });
   }
-  writeFileSync(manifestFile, JSON.stringify({ ...manifest, agentToolVersion: "0.1.77" }));
-  expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex"] });
+  // Reinstalling one harness there keeps that meaning: the scope becomes `all`.
+  installPermissions(root, "claude", true);
+  expect(JSON.parse(readFileSync(manifestFile, "utf8")).scope).toBe("all");
   installPermissions(root, "all", true);
   expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex", "gemini"] });
   expect(checkInstalledPermissions(root)?.changes.every(item => item.status === "unchanged")).toBe(true);
+  // `all` stays `all` when one harness is reinstalled.
+  installPermissions(root, "gemini", true);
+  expect(JSON.parse(readFileSync(manifestFile, "utf8")).scope).toBe("all");
+  // An earlier manifest's other harnesses stand in for its scope, and a new install adds to them.
+  const single = project();
+  installPermissions(single, "claude", true);
+  const singleFile = path.join(single, ".agent-tool-permissions.json");
+  const { scope: _single, ...singleEarlier } = JSON.parse(readFileSync(singleFile, "utf8"));
+  writeFileSync(singleFile, JSON.stringify(singleEarlier));
+  expect(checkInstalledPermissions(single)).toMatchObject({ harnesses: ["claude"] });
+  installPermissions(single, "gemini", true);
+  expect(JSON.parse(readFileSync(singleFile, "utf8")).scope).toEqual(["claude", "gemini"]);
   const only = project();
   installPermissions(only, "gemini", true);
   expect(checkInstalledPermissions(only)).toMatchObject({ harnesses: ["gemini"], changes: [{ path: ".gemini/policies/agent-tool.toml", status: "unchanged" }, { status: "unchanged" }] });
@@ -311,7 +327,8 @@ test("install records the agent-tool version, and check requires the running one
   const manifestFile = path.join(root, ".agent-tool-permissions.json");
   const manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
   // The version sits beside the schema, so an upgrade's manifest diff starts with it.
-  expect(Object.keys(manifest)).toEqual(["schemaVersion", "agentToolVersion", "claude", "codex", "gemini"]);
+  expect(Object.keys(manifest)).toEqual(["schemaVersion", "agentToolVersion", "scope", "claude", "codex", "gemini"]);
+  expect(manifest.scope).toBe("all");
   expect(manifest).toMatchObject({ schemaVersion: 1, agentToolVersion: metadata.version });
   expect(checkPermissions(root, "all").at(-1)).toEqual({ path: ".agent-tool-permissions.json", status: "unchanged", recordedVersion: metadata.version, currentVersion: metadata.version });
   const settings = readFileSync(path.join(root, ".claude/settings.json"), "utf8"), rules = readFileSync(path.join(root, ".codex/rules/agent-tool.rules"), "utf8");
@@ -341,7 +358,7 @@ test("install records the agent-tool version, and check requires the running one
     expect(JSON.parse(readFileSync(manifestFile, "utf8"))).toEqual(manifest);
   }
   // Ownership entries that are present must be well formed, so a falsy one cannot drop its harness.
-  for (const invalid of [{ ...manifest, schemaVersion: 2 }, { ...manifest, claude: false }, { ...manifest, codex: null }, { ...manifest, gemini: null }, { ...manifest, claude: { allow: "Bash(x)", ask: [] } }, { ...manifest, codex: { file: 1, sha256: manifest.codex.sha256 } }, { ...manifest, gemini: { file: manifest.gemini.file, sha256: "x" } }, [], null]) {
+  for (const invalid of [{ ...manifest, schemaVersion: 2 }, { ...manifest, scope: "some" }, { ...manifest, scope: [] }, { ...manifest, scope: ["opencode"] }, { ...manifest, scope: null }, { ...manifest, claude: false }, { ...manifest, codex: null }, { ...manifest, gemini: null }, { ...manifest, claude: { allow: "Bash(x)", ask: [] } }, { ...manifest, codex: { file: 1, sha256: manifest.codex.sha256 } }, { ...manifest, gemini: { file: manifest.gemini.file, sha256: "x" } }, [], null]) {
     writeFileSync(manifestFile, JSON.stringify(invalid));
     expect(() => checkPermissions(root, "all")).toThrow("Invalid managed permissions manifest.");
     expect(() => checkInstalledPermissions(root)).toThrow("Invalid managed permissions manifest.");

@@ -19,11 +19,14 @@ const GENERATED: Record<FileHarness, { relative: string; render: (project: Catal
 const hash = (source: string) => createHash("sha256").update(source).digest("hex");
 
 interface OwnedFile { file: string; sha256: string }
+/** The harnesses installs asked for: `all`, which follows every harness it covers, or those single installs added up. */
+type Scope = "all" | Harness[];
 /**
- * What an install owns and the agent-tool version that wrote it. Manifests from releases before
- * the version field lack it and stay readable; the field is additive, so `schemaVersion` stays 1.
+ * What an install owns, the scope it was asked for, and the agent-tool version that wrote it.
+ * Manifests from releases before the version or scope field lack it and stay readable; the
+ * fields are additive, so `schemaVersion` stays 1.
  */
-interface Manifest { schemaVersion: 1; agentToolVersion?: string; claude?: ClaudePermissions; codex?: OwnedFile; gemini?: OwnedFile }
+interface Manifest { schemaVersion: 1; agentToolVersion?: string; scope?: Scope; claude?: ClaudePermissions; codex?: OwnedFile; gemini?: OwnedFile }
 /** One reading of the manifest: its bytes, none without one, and its parsed contents. */
 interface Recorded { raw?: string; manifest: Manifest }
 export interface PermissionChange { path: string; status: "create" | "update" | "unchanged" }
@@ -65,8 +68,10 @@ function readManifest(root: string): Recorded {
   const object = (item: unknown): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item);
   const strings = (items: unknown) => Array.isArray(items) && items.every(item => typeof item === "string");
   const owned = (item: unknown) => object(item) && typeof item.file === "string" && typeof item.sha256 === "string" && /^[a-f0-9]{64}$/.test(item.sha256);
-  // Present ownership entries must be well formed; a falsy one must not drop its harness from the check.
+  const scope = (item: unknown) => item === "all" || (Array.isArray(item) && item.length > 0 && item.every(harness => (HARNESSES as readonly unknown[]).includes(harness)));
+  // Present ownership and scope entries must be well formed; a falsy one must not drop a harness from the check.
   if (!object(parsed) || parsed.schemaVersion !== 1
+    || (parsed.scope !== undefined && !scope(parsed.scope))
     || (parsed.claude !== undefined && !(object(parsed.claude) && strings(parsed.claude.allow) && strings(parsed.claude.ask)))
     || (Object.keys(GENERATED) as FileHarness[]).some(harness => parsed[harness] !== undefined && !owned(parsed[harness]))) throw new Error("Invalid managed permissions manifest.");
   const { agentToolVersion, ...value } = parsed as unknown as Manifest;
@@ -122,14 +127,32 @@ function pending(root: string, targets: Harness[], manifest: Manifest, project: 
 }
 
 /** Each generated file's change, then the manifest's, which every new agent-tool release updates. */
+/** What `--harness all` wrote before manifests recorded their scope and `all` covered Gemini. */
+const LEGACY_ALL: readonly Harness[] = ["claude", "codex"];
+
+/**
+ * The scope a manifest's installs asked for, or none when it records no harness. Manifests
+ * from releases before the scope field stand in their harness entries, and Claude and Codex
+ * alone are what `all` wrote then, so that pair means `all`, which now covers more.
+ */
+function recordedScope(manifest: Manifest): Scope | undefined {
+  if (manifest.scope !== undefined) return manifest.scope;
+  const installed = HARNESSES.filter(harness => manifest[harness] !== undefined);
+  if (!installed.length) return undefined;
+  return installed.length === LEGACY_ALL.length && LEGACY_ALL.every(harness => installed.includes(harness)) ? "all" : installed;
+}
+
 export function installPermissions(rootDir: string, target: string, apply = false): PermissionChange[] {
   const root = realpathSync(rootDir);
   const { raw: recorded, manifest } = readManifest(root);
   const project = projectCommands(root);
   const changes = pending(root, harnesses(target), manifest, project);
   // Recording the version makes every upgrade change the manifest, so a committed sync is visible.
-  const { schemaVersion: _schema, agentToolVersion: _version, ...owned } = manifest;
-  const next: Manifest = { schemaVersion: 1, agentToolVersion: AGENT_TOOL_VERSION, ...owned };
+  const { schemaVersion: _schema, agentToolVersion: _version, scope: _scope, ...owned } = manifest;
+  // `all` stays `all`; single installs add up, so a later push gate checks each of them.
+  const previous = recordedScope(manifest);
+  const scope: Scope = target === "all" || previous === "all" ? "all" : HARNESSES.filter(harness => harness === target || previous?.includes(harness));
+  const next: Manifest = { schemaVersion: 1, agentToolVersion: AGENT_TOOL_VERSION, scope, ...owned };
   for (const change of changes) {
     if (change.harness === "claude") next.claude = claudePermissions(project);
     else next[change.harness] = { file: change.relative, sha256: hash(change.contents) };
@@ -163,31 +186,18 @@ export function checkPermissions(rootDir: string, target: string): PermissionChe
 }
 
 /**
- * What `--harness all` wrote before Gemini rules existed, and the first release whose `all` adds
- * them. If the version bump that ships Gemini rules changes, change this release with it, and its
- * mentions in docs/permissions.md, docs/workflows.md, and skills/update-dependencies/SKILL.md
- * (then rebuild src/skills/bundled.ts).
- */
-const LEGACY_ALL: readonly Harness[] = ["claude", "codex"];
-const GEMINI_RELEASE = "0.1.76";
-
-/**
- * The push gate's check, or null without a manifest: the harnesses the manifest records and
- * their check, from one reading of the manifest. A manifest recording none is checked against
- * every harness, as before. Claude and Codex alone, recorded by a release before Gemini rules
- * (or by none), are what `all` wrote then, so that pair is checked against every harness and
- * fails until the install adds the new ones; any set a later release recorded is checked as is.
+ * The push gate's check, or null without a manifest: the harnesses the manifest's scope covers
+ * and their check, from one reading of the manifest. `all`, including the Claude and Codex pair
+ * an earlier `all` wrote, and a manifest recording no harness are checked against every harness
+ * `all` covers now, so they fail until the install adds a new one.
  */
 export function checkInstalledPermissions(rootDir: string): { harnesses: Harness[]; changes: PermissionCheck[] } | null {
   const root = realpathSync(rootDir);
   const recorded = readManifest(root);
   if (recorded.raw === undefined) return null;
-  const installed = HARNESSES.filter(harness => recorded.manifest[harness] !== undefined);
-  const version = recorded.manifest.agentToolVersion;
-  const legacy = installed.length === LEGACY_ALL.length && LEGACY_ALL.every(harness => installed.includes(harness))
-    && (version === undefined || Bun.semver.order(version, GEMINI_RELEASE) < 0);
-  const harnesses = !installed.length || legacy ? [...HARNESSES] : installed;
-  return { harnesses, changes: checks(root, harnesses, recorded) };
+  const scope = recordedScope(recorded.manifest);
+  const checked = scope === undefined || scope === "all" ? [...HARNESSES] : scope;
+  return { harnesses: checked, changes: checks(root, checked, recorded) };
 }
 
 /**

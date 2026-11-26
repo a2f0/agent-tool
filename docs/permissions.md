@@ -256,13 +256,12 @@ agent-tool permissions check              # CI
   outrank workspace ones. A locally edited policy file is refused rather than
   overwritten; other files in `.gemini/policies/` are left alone.
 
-Before 0.1.76, `--harness all` meant Claude Code and Codex. The push gate
-checks a manifest recording exactly those two, written by an earlier release or
-recording no version, against every harness `all` now covers, so it reports the
-Gemini policy `missing` until `install --harness all --apply` adds it, just as
-the recorded version already requires after an upgrade. Any other set,
-including that pair recorded by 0.1.76 or later through single-harness
-installs, is checked as recorded.
+The manifest also records the `scope` installs asked for: `all`, which a later
+single-harness install keeps, or the harnesses single installs added up. The
+push gate checks that scope, so `all` covers each harness a newer release adds
+and fails until `install --apply` writes its rules. Manifests from releases
+before 0.1.76 record no scope; their harness entries stand in, and Claude Code
+and Codex alone, which is what `all` wrote then, count as `all`.
 
 The manifest also records, as `agentToolVersion`, the agent-tool release that
 wrote it, so every upgrade changes it even when no rule changed, and the
