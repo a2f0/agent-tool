@@ -36,8 +36,9 @@ receipts belong in the PR; private logs and generated artifacts remain local.
 
 Code that moves through named phases keeps them in one `status`-tagged union
 with a single pure transition function beside it, exported for tests:
-`groupTransition` for run-group reports and `galleryTransition` for the
-gallery's manifest load. Events that do not apply return the same state, and
+`groupTransition` for run-group reports, `galleryTransition` for the
+gallery's manifest load, and `scopeTransition` for the harnesses a permissions
+manifest's installs asked for. Events that do not apply return the same state, and
 asynchronous work carries a request number so only the current request can
 finish. Persisted and printed shapes keep their field order.
 

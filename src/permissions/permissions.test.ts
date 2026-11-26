@@ -73,7 +73,7 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
   const codex = codexRules();
   expect(codex).toContain('prefix_rule(pattern=["bun", "run", "agent-tool", "bun", ["install", "update", "remove", "test"]], decision="allow"');
   // Explicit prompts reject even authorized commands when Codex's approval policy is never.
-  // Both harnesses leave these actions to the user's mode, without preauthorizing them.
+  // Every harness leaves these actions to the user's mode, without preauthorizing them.
   expect(codex).not.toContain('decision="prompt"');
   for (const invocation of INVOCATIONS) {
     for (const command of ["pr merge '' abc main", "bun add left-pad", "permissions install", "permissions install --apply", "run --label x -- command", "run-group checks.json", "proc start -- command", "seo probe example.com", "perf measure https://example.com/?data=x", "perf shot https://example.com/", "perf serve /", "perf graph . a.js --out ~/.ssh/config", "space --apply", "space", "screenshots link --apply", "screenshots capture"]) {

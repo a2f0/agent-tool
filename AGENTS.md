@@ -72,7 +72,8 @@ leads. Reviews flag new implicit machines.
 
 Here the tag is `status`, with an exported pure transition beside the union
 (`groupTransition` in `src/commands/group.ts`, `galleryTransition` in
-`src/screenshots/gallery.ts`); see
-[development guidance](docs/development.md#state-machines). Machines cluster in
-run-group reports and the screenshot gallery; most CLI flows are pure
+`src/screenshots/gallery.ts`, `scopeTransition` in `src/permissions/install.ts`);
+see [development guidance](docs/development.md#state-machines). Machines cluster
+in run-group reports, the screenshot gallery, and the permissions install
+scope; most CLI flows are pure
 classifiers whose booleans are the JSON contract.

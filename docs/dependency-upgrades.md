@@ -86,20 +86,21 @@ apply the exact approved saved plan. Keep state and plans out of Git.
   those tests passing on both CI runners, which provide Chrome; it has no
   install script, so it downloads no browsers.
 - The generated Gemini CLI policy follows Gemini CLI 0.71.1's policy engine:
-  workspace rules in `.gemini/policies/`, a `commandRegex` anchored after
-  `"command":"` in the arguments' JSON, the `default`/`autoEdit`/`plan`/`yolo`
-  approval modes, plan mode's read-only deny in the default tier, redirection
-  asking for any rule with an argument pattern since 0.63.0
-  (google-gemini/gemini-cli#29506), priorities
-  0–999 with the first match of a stable sort deciding, a ReDoS guard that
-  refuses quantified groups, chains split at `&&`, `||`, `;`, `|`, `&`, and line
-  breaks before rules apply, and redirection and substitution asking in
-  `autoEdit` as in `default`. Gemini is
-  not a dependency here, so nothing upgrades it; when a Gemini release changes
-  any of these, recheck `geminiPolicy` and the `geminiAllows` test model against
-  its engine (its bundle exports `loadPoliciesFromToml` and `PolicyEngine`;
-  [policy engine](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/docs/reference/policy-engine.md),
-  [TOML loader](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/packages/core/src/policy/toml-loader.ts)).
+  workspace rules in `.gemini/policies/`; a `commandRegex` anchored after
+  `"command":"` in the arguments' JSON; the `default`, `autoEdit`, `plan`, and
+  `yolo` approval modes, with plan mode's read-only deny in the default tier;
+  priorities 0–999, with the first match of a stable sort deciding; a ReDoS
+  guard that refuses quantified groups; chains split at `&&`, `||`, `;`, `|`,
+  `&`, and line breaks before rules apply; and redirection and substitution
+  asking in `autoEdit` as in `default` for a rule with an argument pattern,
+  which redirection does since 0.63.0 (google-gemini/gemini-cli#29506). Gemini
+  is not a dependency here, so nothing upgrades it. When a Gemini release
+  changes any of these, recheck `geminiPolicy` and the `geminiAllows` test model
+  with `AGENT_TOOL_GEMINI_BUNDLE=<bundle> bun test src/permissions/gemini.conformance.test.ts`,
+  where `<bundle>` is the installed `@google/gemini-cli/bundle` directory (for
+  Homebrew, under `$(brew --prefix gemini-cli)/libexec/lib/node_modules`). See
+  the [policy engine](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/docs/reference/policy-engine.md)
+  and [TOML loader](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/packages/core/src/policy/toml-loader.ts).
 
 ## Maintenance records
 
