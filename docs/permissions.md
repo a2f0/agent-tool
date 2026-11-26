@@ -302,9 +302,9 @@ Each harness also has limits that the rules cannot change:
   changed policy file in each such directory (headless runs accept it with a
   warning). A chain joined by `&&`, `||`, `;`, `|`, `&`, or a newline is
   allowed only when every command in it is; redirection, command substitution
-  (`$(…)` or backticks), and process substitution fall back to asking. The
-  rules rely on that splitting, which Gemini CLI 0.71.1 performs before any
-  rule applies.
+  (`$(…)` or backticks), and process substitution fall back to asking, in
+  `autoEdit` as in `default`. The rules rely on that splitting, which Gemini
+  CLI 0.71.1 performs before any rule applies.
 
 After upgrading agent-tool, regenerate the managed permissions and start a new
 Codex or Gemini CLI session so it loads the updated rules; Gemini then asks

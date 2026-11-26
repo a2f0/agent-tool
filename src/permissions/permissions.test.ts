@@ -281,6 +281,14 @@ test("the push gate checks the recorded scope, or an earlier manifest's harnesse
   // `all` stays `all` when one harness is reinstalled.
   installPermissions(root, "gemini", true);
   expect(JSON.parse(readFileSync(manifestFile, "utf8")).scope).toBe("all");
+  // `all` covers harnesses it does not record, as when a release adds one, and so does a manifest recording none.
+  const { gemini: _gemini, ...withoutGemini } = JSON.parse(readFileSync(manifestFile, "utf8"));
+  writeFileSync(manifestFile, JSON.stringify(withoutGemini));
+  rmSync(path.join(root, ".gemini"), { recursive: true });
+  expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex", "gemini"], changes: [{ status: "unchanged" }, { status: "unchanged" }, { path: ".gemini/policies/agent-tool.toml", status: "missing" }, { status: "unchanged" }] });
+  const none = project();
+  writeFileSync(path.join(none, ".agent-tool-permissions.json"), JSON.stringify({ schemaVersion: 1 }));
+  expect(checkInstalledPermissions(none)).toMatchObject({ harnesses: ["claude", "codex", "gemini"] });
   // An earlier manifest's other harnesses stand in for its scope, and a new install adds to them.
   const single = project();
   installPermissions(single, "claude", true);
