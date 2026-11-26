@@ -845,8 +845,9 @@ agent-tool ci timings --job <job-id> [--top 25]
   from a run's creation to the gate job's end, or to its last job's end without
   `--gate`. It reports wall clock and first-job start lag (median, p90, min,
   max), how often each lane finished last among the jobs that ended before the
-  gate started,
-  and per job its duration, the share of runs in which it took at least
+  gate started (or before it ended, when most jobs ended after it started,
+  which it takes to mean the gate polls them rather than `needs` them), and per
+  job its duration, the share of runs in which it took at least
   `--threshold` minutes (default 2), and its start lag. A lane is a job name
   without shard counters such as `1/3`.
 - `--run` lists one run's jobs, longest first, with their start offset and the
