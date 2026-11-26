@@ -288,6 +288,14 @@ test("the push gate checks the recorded scope, and an earlier all's pair as all"
   const only = project();
   installPermissions(only, "gemini", true);
   expect(checkInstalledPermissions(only)).toMatchObject({ harnesses: ["gemini"], changes: [{ path: ".gemini/policies/agent-tool.toml", status: "unchanged" }, { status: "unchanged" }] });
+  // A scope list that omits a recorded harness is refused, so its rules cannot fall out of the check.
+  const both = project();
+  installPermissions(both, "claude", true);
+  installPermissions(both, "gemini", true);
+  const bothFile = path.join(both, ".agent-tool-permissions.json");
+  writeFileSync(bothFile, JSON.stringify({ ...JSON.parse(readFileSync(bothFile, "utf8")), scope: ["claude"] }));
+  expect(() => checkInstalledPermissions(both)).toThrow(/records gemini outside its scope/);
+  expect(() => installPermissions(both, "claude")).toThrow(/records gemini outside its scope/);
   // A hand-edited scope is read in harness order without repeats.
   const onlyFile = path.join(only, ".agent-tool-permissions.json");
   writeFileSync(onlyFile, JSON.stringify({ ...JSON.parse(readFileSync(onlyFile, "utf8")), scope: ["gemini", "gemini"] }));

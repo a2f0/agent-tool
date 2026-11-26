@@ -81,7 +81,19 @@ test("an executable that asks is refused while the generated rules predate its c
   writeFileSync(path.join(gemini.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
   // The advice regenerates only the recorded scope, never widening it to `all`.
   expect(gemini.run(["x", "wrangler"]).stderr).toMatch(/Permission rules predate the current class of 'bun x wrangler'; regenerate them with approval \(agent-tool permissions install --harness gemini --apply\)/);
+  // A scope of several harnesses names an install for each; an earlier Claude and Codex pair means `all`.
+  const pair = fixture();
+  binary(pair.project, "wrangler");
+  writeFileSync(path.join(pair.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "local" } } }));
+  for (const harness of ["claude", "gemini"]) expect(spawnSync(process.execPath, [cli, "permissions", "install", "--harness", harness, "--apply"], { cwd: pair.project, encoding: "utf8" }).status).toBe(0);
+  writeFileSync(path.join(pair.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
+  expect(pair.run(["x", "wrangler"]).stderr).toContain("(agent-tool permissions install --harness claude --apply, then agent-tool permissions install --harness gemini --apply)");
+  writeFileSync(path.join(f.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "local" } } }));
+  const fullFile = path.join(f.project, ".agent-tool-permissions.json"), { scope: _scope, gemini: _gemini, ...legacy } = JSON.parse(readFileSync(fullFile, "utf8"));
+  writeFileSync(fullFile, JSON.stringify(legacy));
+  rmSync(path.join(f.project, ".gemini"), { recursive: true });
   writeFileSync(path.join(f.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
+  expect(f.run(["x", "wrangler"]).stderr).toContain("(agent-tool permissions install --apply)");
   expect(spawnSync(process.execPath, [cli, "permissions", "install", "--apply"], { cwd: f.project, encoding: "utf8" }).status).toBe(0);
   expect(JSON.parse(f.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
   // Current rules recorded by another agent-tool release, or with no usable version, allow nothing extra, so only the rules decide.
