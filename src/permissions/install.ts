@@ -162,25 +162,27 @@ export function checkPermissions(rootDir: string, target: string): PermissionChe
   return checks(root, harnesses(target), readManifest(root));
 }
 
-/** What `--harness all` wrote before Gemini rules existed. */
+/** What `--harness all` wrote before Gemini rules existed, and the first release whose `all` adds them. */
 const LEGACY_ALL: readonly Harness[] = ["claude", "codex"];
+const GEMINI_RELEASE = "0.1.76";
 
 /**
- * The push gate's check, or null without a manifest: the harnesses the manifest records, as
- * `all`, one name, or a comma-separated list when single-harness installs added up, and their
- * check, from one reading of the manifest. Claude and Codex alone are what `all` wrote before
- * Gemini, so that pair is checked against every harness `all` covers now, and fails until the
- * install adds the new ones; a manifest recording none is checked as `all`, as before.
+ * The push gate's check, or null without a manifest: the harnesses the manifest records and
+ * their check, from one reading of the manifest. A manifest recording none is checked against
+ * every harness, as before. Claude and Codex alone, recorded by a release before Gemini rules
+ * (or by none), are what `all` wrote then, so that pair is checked against every harness and
+ * fails until the install adds the new ones; any set a later release recorded is checked as is.
  */
-export function checkInstalledPermissions(rootDir: string): { harness: string; changes: PermissionCheck[] } | null {
+export function checkInstalledPermissions(rootDir: string): { harnesses: Harness[]; changes: PermissionCheck[] } | null {
   const root = realpathSync(rootDir);
   const recorded = readManifest(root);
   if (recorded.raw === undefined) return null;
   const installed = HARNESSES.filter(harness => recorded.manifest[harness] !== undefined);
-  const legacy = installed.length === LEGACY_ALL.length && LEGACY_ALL.every(harness => installed.includes(harness));
-  const targets = !installed.length || legacy ? [...HARNESSES] : installed;
-  const harness = targets.length === HARNESSES.length ? "all" : targets.join(",");
-  return { harness, changes: checks(root, targets, recorded) };
+  const version = recorded.manifest.agentToolVersion;
+  const legacy = installed.length === LEGACY_ALL.length && LEGACY_ALL.every(harness => installed.includes(harness))
+    && (version === undefined || Bun.semver.order(version, GEMINI_RELEASE) < 0);
+  const harnesses = !installed.length || legacy ? [...HARNESSES] : installed;
+  return { harnesses, changes: checks(root, harnesses, recorded) };
 }
 
 /**

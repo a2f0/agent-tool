@@ -237,19 +237,29 @@ test("a manifest an earlier all wrote is checked for every harness all covers no
   const root = project();
   installPermissions(root, "claude", true);
   installPermissions(root, "codex", true);
-  // Claude and Codex rules alone are what `all` wrote before Gemini.
-  expect(checkInstalledPermissions(root)).toMatchObject({ harness: "all", changes: [{ status: "unchanged" }, { status: "unchanged" }, { path: ".gemini/policies/agent-tool.toml", status: "missing" }, { status: "unchanged" }] });
+  // Recorded by this release, Claude and Codex alone came from single-harness installs: checked as is.
+  expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex"] });
+  expect(checkInstalledPermissions(root)!.changes.every(item => item.status === "unchanged")).toBe(true);
+  // Recorded by a release before Gemini rules, or by none, the pair is what `all` wrote then.
+  const manifestFile = path.join(root, ".agent-tool-permissions.json"), manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
+  for (const agentToolVersion of ["0.1.75", "0.1.76-rc.1", undefined]) {
+    writeFileSync(manifestFile, JSON.stringify({ ...manifest, agentToolVersion }));
+    expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex", "gemini"], changes: [{ status: "unchanged" }, { status: "unchanged" }, { path: ".gemini/policies/agent-tool.toml", status: "missing" }, { status: "outdated" }] });
+  }
+  writeFileSync(manifestFile, JSON.stringify({ ...manifest, agentToolVersion: "0.1.77" }));
+  expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex"] });
   installPermissions(root, "all", true);
+  expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex", "gemini"] });
   expect(checkInstalledPermissions(root)?.changes.every(item => item.status === "unchanged")).toBe(true);
   const only = project();
   installPermissions(only, "gemini", true);
-  expect(checkInstalledPermissions(only)).toMatchObject({ harness: "gemini", changes: [{ path: ".gemini/policies/agent-tool.toml", status: "unchanged" }, { status: "unchanged" }] });
+  expect(checkInstalledPermissions(only)).toMatchObject({ harnesses: ["gemini"], changes: [{ path: ".gemini/policies/agent-tool.toml", status: "unchanged" }, { status: "unchanged" }] });
   // Any other pair added up from single-harness installs is checked as recorded, never asking for the third.
   for (const pair of [["claude", "gemini"], ["codex", "gemini"]] as const) {
     const root = project();
     for (const harness of pair) installPermissions(root, harness, true);
     const check = checkInstalledPermissions(root)!;
-    expect(check.harness).toBe(pair.join(","));
+    expect(check.harnesses).toEqual([...pair]);
     expect(check.changes.map(item => item.path)).not.toContain(pair[0] === "claude" ? ".codex/rules/agent-tool.rules" : ".claude/settings.json");
     expect(check.changes.every(item => item.status === "unchanged")).toBe(true);
   }

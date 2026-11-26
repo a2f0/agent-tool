@@ -165,7 +165,7 @@ function runGuards(root: string, config: AgentToolConfig, tuples: PushTuple[], d
   // A manifest that vanishes after the presence check fails its guard rather than passing unchecked.
   const vanished = (file: string) => { throw new Error(`${file} disappeared during the check.`); };
   if (present(SKILLS_MANIFEST)) guard(guards, "skills", undefined, () => { const { harnesses, changes } = checkInstalledSkills(root) ?? vanished(SKILLS_MANIFEST); const drift = changes.filter(change => change.status !== "unchanged"); return { ok: !drift.length, details: { harnesses, changes: drift } }; });
-  if (present(PERMISSIONS_MANIFEST)) guard(guards, "permissions", undefined, () => { const { harness, changes } = checkInstalledPermissions(root) ?? vanished(PERMISSIONS_MANIFEST); const drift = changes.filter(change => change.status !== "unchanged"); return { ok: !drift.length, details: { harness, changes: drift } }; });
+  if (present(PERMISSIONS_MANIFEST)) guard(guards, "permissions", undefined, () => { const { harnesses, changes } = checkInstalledPermissions(root) ?? vanished(PERMISSIONS_MANIFEST); const drift = changes.filter(change => change.status !== "unchanged"); return { ok: !drift.length, details: { harnesses, changes: drift } }; });
   guard(guards, "branch", undefined, () => { const branches = pushedBranches(tuples).map(name => ({ name, errors: branchErrors(name, config) })).filter(branch => branch.errors.length); return { ok: !branches.length, details: { branches } }; });
   let refs: PushedRef[] = [];
   guard(guards, "ranges", undefined, () => { refs = pushedRefs(tuples, destination); return { ok: true }; });

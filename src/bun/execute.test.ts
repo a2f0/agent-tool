@@ -83,12 +83,14 @@ test("an executable that asks is refused while the generated rules predate its c
     expect(JSON.parse(f.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
   }
   // Only recorded harnesses are checked, as before: a manifest that records none requires no rule files.
-  rmSync(path.join(f.project, ".claude"), { recursive: true }); rmSync(path.join(f.project, ".codex"), { recursive: true });
+  for (const directory of [".claude", ".codex", ".gemini"]) rmSync(path.join(f.project, directory), { recursive: true });
   writeFileSync(manifestFile, JSON.stringify({ schemaVersion: 1 }));
   expect(JSON.parse(f.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
   // A recorded harness whose rules are gone is stale.
-  writeFileSync(manifestFile, JSON.stringify({ schemaVersion: 1, codex: manifest.codex }));
-  expect(f.run(["x", "wrangler"]).stderr).toMatch(/Permission rules predate the current class of 'bun x wrangler'/);
+  for (const harness of ["codex", "gemini"]) {
+    writeFileSync(manifestFile, JSON.stringify({ schemaVersion: 1, [harness]: manifest[harness] }));
+    expect(f.run(["x", "wrangler"]).stderr).toMatch(/Permission rules predate the current class of 'bun x wrangler'/);
+  }
   // A manifest link, even a dangling one, is refused rather than read as no manifest.
   rmSync(manifestFile); symlinkSync(path.join(f.project, "missing.json"), manifestFile);
   expect(f.run(["x", "wrangler"]).stderr).toMatch(/Refusing permissions destination symlink/);
