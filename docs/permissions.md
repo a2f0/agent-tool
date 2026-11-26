@@ -269,7 +269,8 @@ committed diff shows the regeneration ran. `check` fails until it does: its
 last entry is the manifest's, with `recordedVersion` and `currentVersion`, and
 is `outdated` when the manifest records another release or no usable one, as
 manifests from releases before the field do, until `install --apply` with the
-same `--harness` replaces it. `agent-tool bun x` still refuses an
+same `--harness` replaces it. `--harness` names one harness or `all`, so for a
+scope that names harnesses, run `install` and `check` once for each of them. `agent-tool bun x` still refuses an
 executable only while the rules themselves are stale, so a manifest that
 records another release refuses nothing more there. The skills
 manifest records the version the same way
@@ -291,8 +292,11 @@ Each harness also has limits that the rules cannot change:
 - Gemini CLI loads `<cwd>/.gemini/policies/` only in a trusted folder, from the
   directory where the session starts, and asks the user once to accept a new or
   changed policy file in each such directory (headless runs accept it with a
-  warning). A chain joined by `&&`, `||`, `;`, or `|` is allowed only when every
-  command in it is; redirection and command substitution fall back to asking.
+  warning). A chain joined by `&&`, `||`, `;`, `|`, `&`, or a newline is
+  allowed only when every command in it is; redirection, command substitution
+  (`$(…)` or backticks), and process substitution fall back to asking. The
+  rules rely on that splitting, which Gemini CLI 0.71.1 performs before any
+  rule applies.
 
 After upgrading agent-tool, regenerate the managed permissions and start a new
 Codex or Gemini CLI session so it loads the updated rules; Gemini then asks

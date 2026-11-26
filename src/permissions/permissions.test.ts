@@ -45,8 +45,9 @@ function geminiRules(source: string): GeminiRule[] {
  * encoding, which ends in the closing quote; an embedded quote is encoded as `\"`. This models
  * Gemini CLI 0.71.1, whose policy utils build `\x00"command":"(?:<commandRegex>)` and test it
  * against the stable JSON of the tool's arguments (`buildArgsPatterns`). It models one command:
- * Gemini itself splits `&&`, `||`, `;`, and `|` chains and asks for redirection and command
- * substitution before any rule applies, which this model does not repeat.
+ * Gemini itself splits `&&`, `||`, `;`, `|`, `&`, and newline chains and asks for redirection
+ * and command or process substitution before any rule applies, which this model does not repeat;
+ * the rules rely on that splitting for everything after the command name.
  */
 function geminiAllows(source: string, command: string): boolean {
   const encoded = JSON.stringify(command).slice(1);
