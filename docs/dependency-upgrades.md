@@ -88,7 +88,9 @@ apply the exact approved saved plan. Keep state and plans out of Git.
 - The generated Gemini CLI policy follows Gemini CLI 0.71.1's policy engine:
   workspace rules in `.gemini/policies/`, a `commandRegex` anchored after
   `"command":"` in the arguments' JSON, the `default`/`autoEdit`/`plan`/`yolo`
-  approval modes, plan mode's read-only deny in the default tier, priorities
+  approval modes, plan mode's read-only deny in the default tier, redirection
+  asking for any rule with an argument pattern since 0.63.0
+  (google-gemini/gemini-cli#29506), priorities
   0–999 with the first match of a stable sort deciding, a ReDoS guard that
   refuses quantified groups, chains split at `&&`, `||`, `;`, `|`, `&`, and line
   breaks before rules apply, and redirection and substitution asking in

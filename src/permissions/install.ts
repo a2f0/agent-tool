@@ -137,9 +137,9 @@ function pending(root: string, targets: Harness[], manifest: Manifest, project: 
 
 /**
  * The scope a manifest's installs asked for, in harness order without repeats, or none when it
- * records no harness. Manifests from releases before the scope field stand in their harness
- * entries, so an upgrade adds a harness `all` gained only when it installs `all`, as the
- * default install and `check` do.
+ * records no harness. Manifests from releases before the scope field are read as scoped to the
+ * harnesses they record, so an upgrade adds a harness `all` gained only when it installs `all`,
+ * as the default install and `check` do.
  */
 function recordedScope(manifest: Manifest): Scope | undefined {
   const { scope } = manifest;

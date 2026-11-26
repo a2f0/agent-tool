@@ -262,10 +262,10 @@ The manifest also records the `scope` installs asked for: `all`, which a later
 single-harness install keeps, or the harnesses single installs added up. The
 push gate checks that scope, so `all` covers each harness a newer release adds
 and fails until `install --apply` writes its rules. Manifests written before
-the scope field record none; their harness entries stand in, so such a
-manifest gains a harness `all` added only through an `all` install, which is
-the default, and `check`, also `all` by default, reports it `missing` until
-then. A single-harness install never narrows `all`:
+the scope field have none and are read as scoped to the harnesses they
+record. Such a manifest gains a harness `all` added only through an `all`
+install, which is the default; `check`, also `all` by default, reports that
+harness `missing` until then. A single-harness install never narrows `all`:
 to keep a harness out, remove its generated rules and its manifest entry, set
 `scope` to the list of harnesses to keep, then install each of them. A scope
 list must name every harness the manifest records, or every command that reads
@@ -303,9 +303,15 @@ Each harness also has limits that the rules cannot change:
   warning). A chain joined by `&&`, `||`, `;`, `|`, `&`, or a newline is
   allowed only when every command in it is; redirection, command substitution
   (`$(…)` or backticks), and process substitution fall back to asking, in
-  `autoEdit` as in `default`. The rules rely on that splitting, which Gemini
-  CLI 0.71.1 performs before any rule applies, so they require 0.71.1 or later;
-  [dependency upgrades](dependency-upgrades.md#current-compatibility-constraints)
+  `autoEdit` as in `default`, because a rule that matches the whole command
+  carries an argument pattern, which Gemini never lets redirect. That is why
+  the arguments stay unrestricted: a rule that missed a redirected command
+  would let Gemini approve its parts one by one, and in `autoEdit` it then skips
+  the redirection check. The rules need Gemini CLI 0.63.0 or later. Releases
+  before project policies (google-gemini/gemini-cli#18682) ignore the file, so
+  everything asks; later ones before 0.63.0 load it and split chains, but in
+  `autoEdit` they let any allowed command redirect, for every allow rule.
+  [Dependency upgrades](dependency-upgrades.md#current-compatibility-constraints)
   lists what to recheck for a newer release.
 
 After upgrading agent-tool, regenerate the managed permissions and start a new

@@ -130,9 +130,11 @@ const regex = (text: string) => text.replace(/[.^$|?*+()[\]{}\\]/g, "\\$&");
 /**
  * What ends a command name in its JSON encoding: a space or the closing quote, never an escaped
  * quote. The arguments after it are not restricted, as Claude's and Codex's rules leave them to
- * their harness: Gemini splits chains and asks for redirection and substitution itself. Its ReDoS
- * guard also refuses any quantified group, so no pattern can allow an escaped quote while refusing
- * shell syntax, and a quote-free class would make every double-quoted argument ask.
+ * their harness: Gemini splits chains and asks for redirection and substitution itself. Matching
+ * the whole command is also the stricter choice there: Gemini asks for a redirection that a rule
+ * with an argument pattern matched in every mode, but approves a command no rule matched part by
+ * part and, in `autoEdit`, skips that check (Gemini CLI 0.71.1). Its ReDoS guard refuses any
+ * quantified group as well, so no pattern could allow an escaped quote while refusing shell syntax.
  */
 export const GEMINI_NAME_END = '(?: |")';
 
@@ -157,7 +159,7 @@ export function geminiPolicy(project: CatalogEntry[] = []): string {
     "# approval mode and policies, which outrank these workspace rules.",
     "# Each command ends at a space or the end of the command, never a quote, and a",
     "# command whose --apply form asks gets no rule. Plan mode stays read-only, and",
-    "# YOLO already allows every command. Requires Gemini CLI 0.71.1 or later, which",
+    "# YOLO already allows every command. Requires Gemini CLI 0.63.0 or later, which",
     "# splits chains and asks for redirection and substitution before these rules apply.",
   ];
   const invocations = `(?:${INVOCATIONS.map(regex).join("|")})`;
