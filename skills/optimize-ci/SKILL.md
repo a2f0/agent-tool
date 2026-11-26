@@ -13,6 +13,8 @@ not a win.
 ## Measuring
 
 `agent-tool ci timings` reads GitHub Actions through `gh` and changes nothing.
+When a repository's agent-tool pin predates the command, run
+`bunx --bun @a2f0/agent-tool@latest ci timings`.
 
 | Command | Shows |
 | --- | --- |
@@ -71,8 +73,9 @@ A lane is a job name without shard counters, so `Test (api 1/3)` and
    merge, and report the change in median and p90 wall clock. Start the next
    round from step 3 with the new top lane.
 7. Learn. Repository-specific findings go in that repository's guidance.
-   Cross-repository lessons go in [references/lessons.md](references/lessons.md)
-   here, by PR.
+   Cross-repository lessons go in agent-tool's
+   `skills/optimize-ci/references/lessons.md` by PR, naming the repository and
+   PR; [the installed copy](references/lessons.md) is read-only.
 
 ## Pitfalls
 
@@ -96,3 +99,11 @@ A lane is a job name without shard counters, so `Test (api 1/3)` and
 - Changing a shard count reshuffles which files share a worker; with test
   isolation off, that can surface leaks between files. Run every new shard
   composition before pushing.
+
+## Ownership
+
+agent-tool (`a2f0/agent-tool`) owns this skill at `skills/optimize-ci/` and the
+`ci timings` command at `src/ci/`, with its tests beside it; `agent-tool skills
+install --apply` installs it in each adopting repository. Change it there,
+never in an installed copy. A repository's CI layout, required checks, and
+measured baselines belong in its own docs.

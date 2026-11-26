@@ -837,12 +837,15 @@ agent-tool ci timings --run <run-id> [--min-seconds 10]
 agent-tool ci timings --job <job-id> [--top 25]
 ```
 
-- The summary reads the latest successful runs (`--limit`, default 50, at most
-  200; `--branch` and `--event` filter them) and leaves out re-run attempts,
-  whose jobs mix timestamps, and runs without the `--gate` job. Wall clock runs
+- The summary reads the latest successful runs of `--workflow` (a file name
+  such as `ci.yml` or a numeric id; `--limit`, default 50, at most 200;
+  `--branch` and `--event` filter them) and leaves out re-run attempts, whose
+  jobs mix timestamps, runs in which no job executed, and runs without the
+  `--gate` job; a `--gate` that names no job in any run exits 1. Wall clock runs
   from a run's creation to the gate job's end, or to its last job's end without
   `--gate`. It reports wall clock and first-job start lag (median, p90, min,
-  max), how often each lane finished last among the jobs the gate waits for,
+  max), how often each lane finished last among the jobs that ended before the
+  gate started,
   and per job its duration, the share of runs in which it took at least
   `--threshold` minutes (default 2), and its start lag. A lane is a job name
   without shard counters such as `1/3`.

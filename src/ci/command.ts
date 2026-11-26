@@ -4,7 +4,7 @@ import { runRead } from "../git/prContext";
 import { assert, json, option, output, repository } from "../workflows/core";
 import { parseJobLog, runSteps, summarizeRuns, type TimedJob, type TimedRun } from "./timings";
 
-export const CI_TIMINGS_USAGE = `Usage: agent-tool ci timings [--workflow <file|name|id>] [--branch <name>] [--event <event>] [--limit <n>] [--gate <job>] [--threshold <minutes>]
+export const CI_TIMINGS_USAGE = `Usage: agent-tool ci timings [--workflow <file|id>] [--branch <name>] [--event <event>] [--limit <n>] [--gate <job>] [--threshold <minutes>]
        agent-tool ci timings --run <run-id> [--min-seconds <n>]
        agent-tool ci timings --job <job-id> [--top <n>]
 
@@ -91,6 +91,8 @@ export function ciTimingsCommand(argv: string[]): number {
   const repo = repository().nameWithOwner;
   const runs = listRuns(repo, { workflow, branch, event }, count)
     .map(item => ({ ...item, jobs: item.attempt > 1 ? [] : jobs(repo, item.id, false) }));
-  output({ repo, workflow: workflow ?? null, branch: branch ?? null, event: event ?? null, gate: gate ?? null, ...summarizeRuns(runs, { gate, thresholdMinutes }) });
+  const summary = summarizeRuns(runs, { gate, thresholdMinutes });
+  assert(summary.runs > 0 || summary.excluded.missingGate === 0, `No run had a job named '${gate}'; --gate takes the gate job's name exactly as the run lists it (ci timings --run <id>).`);
+  output({ repo, workflow: workflow ?? null, branch: branch ?? null, event: event ?? null, gate: gate ?? null, ...summary });
   return 0;
 }
