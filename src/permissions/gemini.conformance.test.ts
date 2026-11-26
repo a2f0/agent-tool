@@ -40,7 +40,9 @@ test.skipIf(!bundle)("Gemini CLI's engine allows routine commands and asks for c
     return (await engine.check({ name: "run_shell_command", args: { command } }, undefined)).decision;
   };
   const allowed = ["agent-tool pr checks --wait --head abc", "bun run agent-tool repo base-health", "node_modules/.bin/agent-tool branch push abc --remote origin", 'agent-tool pr open "feat: x" --body-file b.md', "agent-tool pr checks && agent-tool repo context"];
-  const asked = ["agent-tool pr checks && rm x", "agent-tool pr checks; rm x", "agent-tool pr checks | sh", "agent-tool pr checks & rm x", "agent-tool pr checks x\nrm x", "agent-tool pr checks > f", "agent-tool pr checks > ~/.zshrc 2>&1", "agent-tool pr checks && agent-tool repo context > f", "agent-tool pr checks $(rm x)", "agent-tool pr checks `rm x`", "agent-tool pr checks <(rm x)", 'agent-tool pr checks"X"', 'agent-tool bun x vite"-node"', "agent-tool pr merge x abc main", "agent-tool permissions install --apply", "node_modules/xbin/agent-tool pr checks"];
+  const asked = ["agent-tool pr checks && rm x", "agent-tool pr checks; rm x", "agent-tool pr checks | sh", "agent-tool pr checks & rm x", "agent-tool pr checks x\nrm x", "agent-tool pr checks > f", "agent-tool pr checks > ~/.zshrc 2>&1", "agent-tool pr checks && agent-tool repo context > f", "agent-tool pr checks $(rm x)", "agent-tool pr checks `rm x`", "agent-tool pr checks <(rm x)", 'agent-tool pr checks"X"', 'agent-tool bun x vite"-node"', "agent-tool pr merge x abc main", "agent-tool permissions install --apply", "node_modules/xbin/agent-tool pr checks",
+    'agent-tool pr checks "$(rm x)"', "agent-tool pr checks >(rm x)", "agent-tool pr checks |& sh", "{ agent-tool pr checks; rm x; }", "(agent-tool pr checks; rm x)",
+    "agent-tool pr threads reply 1 --body-file - <<EOF\nx\nEOF", "agent-tool pr threads reply 1 --body-file - <<< x", "X=1 agent-tool pr checks", "env agent-tool pr checks"];
   const decisions: Record<string, Record<string, string>> = {}, expected: Record<string, Record<string, string>> = {};
   for (const command of [...allowed, ...asked]) {
     const allow = allowed.includes(command);

@@ -32,6 +32,15 @@ afterEach(() => {
 });
 
 const gh = (rootDir: string) => doctor(rootDir).tools.find((tool) => tool.name === "gh");
+const gemini = (rootDir: string) => doctor(rootDir).tools.find((tool) => tool.name === "gemini");
+
+test("reports a Gemini CLI older than the generated policy needs as incompatible", () => {
+  expect(gemini(binDir)).toEqual({ name: "gemini", version: "unavailable", compatible: false, missingFlags: [] });
+  for (const [version, compatible] of [["0.71.1", true], ["0.63.0", true], ["0.62.9", false], ["0.63.0-nightly.20260901", false], ["unknown", false]] as const) {
+    stub("gemini", version, "");
+    expect({ version, compatible: gemini(binDir)?.compatible }).toEqual({ version, compatible });
+  }
+});
 
 test("reports a gh whose pr checks command takes --json as compatible", () => {
   stub("gh", "gh version 2.80.0", "      --json fields   Output JSON with the specified fields");

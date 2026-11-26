@@ -312,7 +312,8 @@ Each harness also has limits that the rules cannot change:
   everything asks; later ones before 0.63.0 load it and split chains, but in
   `autoEdit` they let any allowed command redirect, for every allow rule, as
   Gemini then chose for that mode (google-gemini/gemini-cli#26542), so the
-  rules keep `autoEdit` there too.
+  rules keep `autoEdit` there too. `agent-tool doctor` reports an older Gemini
+  CLI as incompatible.
   [Dependency upgrades](dependency-upgrades.md#current-compatibility-constraints)
   lists what to recheck for a newer release.
 
