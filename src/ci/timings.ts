@@ -60,7 +60,8 @@ export interface TimingSummary {
 
 /**
  * Summarize successful runs of one workflow. A gate job, when named, ends the wall clock; `lastToFinish`
- * then counts only jobs that finished before the gate started, which are the ones it waited for.
+ * then counts only jobs that finished before the gate started, which are the ones it waited for. When
+ * most jobs ended after the gate started, the gate is taken to poll them, and the count uses its end.
  */
 export function summarizeRuns(runs: TimedRun[], options: { gate?: string; thresholdMinutes: number }): TimingSummary {
   const excluded = { reruns: 0, noJobs: 0, missingGate: 0 };
@@ -77,8 +78,12 @@ export function summarizeRuns(runs: TimedRun[], options: { gate?: string; thresh
     const end = gate?.completedAt ?? work.reduce((latest, job) => job.completedAt > latest ? job.completedAt : latest, work[0]!.completedAt);
     walls.push(minutesBetween(run.createdAt, end));
     firstLags.push(Math.max(0, minutesBetween(run.createdAt, jobs.reduce((first, job) => job.startedAt < first ? job.startedAt : first, jobs[0]!.startedAt)) * 60));
-    // Jobs that ended after the gate started (optional lanes, post-gate deploys) did not hold it.
-    const awaited = gate ? work.filter(job => job.completedAt <= gate.startedAt) : work;
+    // A gate that `needs` its jobs starts after they end, so jobs that ended after it started (optional
+    // lanes, post-gate deploys) did not hold it. A gate that polls starts early: when most jobs ended after
+    // it started, it is taken to poll, and the jobs that ended before it did are the ones it waited for.
+    const beforeStart = gate ? work.filter(job => job.completedAt <= gate.startedAt) : work;
+    const polls = gate !== undefined && beforeStart.length * 2 < work.length;
+    const awaited = polls ? work.filter(job => job.completedAt <= gate.completedAt) : beforeStart;
     const finisher = awaited.reduce<(typeof work)[number] | undefined>((latest, job) => !latest || job.completedAt > latest.completedAt ? job : latest, undefined);
     if (finisher) last.set(lane(finisher.name), (last.get(lane(finisher.name)) ?? 0) + 1);
     for (const job of work) {
