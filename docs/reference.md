@@ -773,7 +773,8 @@ The bundle provides `cross-agent-review`, `open-issue`, `open-pr`,
 `seo-optimization`, which pairs with [`seo probe`](#seo-probe),
 `app-store-readiness`, `audit-trails`, `space-cleanup`, which runs
 [`space`](#disk-space), `performance-pass`, which runs
-[`perf`](#page-performance), and `take-screenshots`, which runs the
+[`perf`](#page-performance), `optimize-ci`, which runs
+[`ci timings`](workflows.md#ci-timings), and `take-screenshots`, which runs the
 [screenshot store](screenshots.md#shared-store) commands. A skill may ship
 Markdown files under `references/` beside its `SKILL.md`, and the
 `agents/openai.yaml` that Codex reads for its display name, description, and

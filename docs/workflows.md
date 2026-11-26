@@ -825,6 +825,39 @@ bind conditional jobs to a successful scope job's exact string output:
 failed scope jobs, and incorrectly skipped required jobs fail. Repository path
 classification and job selection stay in the repository.
 
+## CI timings
+
+`ci timings` reads GitHub Actions through `gh`, prints JSON, and changes
+nothing. It finds the jobs that hold a workflow's wall clock, for the
+`optimize-ci` skill:
+
+```sh
+agent-tool ci timings --workflow ci.yml --gate "CI gate" --event pull_request --limit 80
+agent-tool ci timings --run <run-id> [--min-seconds 10]
+agent-tool ci timings --job <job-id> [--top 25]
+```
+
+- The summary reads the latest successful runs (`--limit`, default 50, at most
+  200; `--branch` and `--event` filter them) and leaves out re-run attempts,
+  whose jobs mix timestamps, and runs without the `--gate` job. Wall clock runs
+  from a run's creation to the gate job's end, or to its last job's end without
+  `--gate`. It reports wall clock and first-job start lag (median, p90, min,
+  max), how often each lane finished last among the jobs the gate waits for,
+  and per job its duration, the share of runs in which it took at least
+  `--threshold` minutes (default 2), and its start lag. A lane is a job name
+  without shard counters such as `1/3`.
+- `--run` lists one run's jobs, longest first, with their start offset and the
+  steps that took at least `--min-seconds`.
+- `--job` reads one job's log: each Turbo task's cache result (`hit`, `miss`,
+  or `bypass`) and Bun test files ranked by summed case durations, keyed by
+  task so the same path in two packages stays apart. Files a replayed task
+  printed are marked `cached`, since their durations come from the run that
+  filled the cache. Bun omits the duration of very fast cases; they count in
+  `casesWithoutDuration`.
+
+Every argument is checked before the first GitHub read; mixing one mode's
+options with another's exits 1.
+
 ## Release decisions and verification
 
 ```sh

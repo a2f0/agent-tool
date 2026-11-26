@@ -24,7 +24,7 @@ out of agent sessions where that matters.
 
 | Class | Decision | Commands |
 | --- | --- | --- |
-| `read` | allow | Context, checks, listings, previews, diagnostics, logs, and read-only scans such as `state-machines`, `push-gate hook\|check`, `repo base-health`, `review carry`, `perf diff`, and `screenshots status` |
+| `read` | allow | Context, checks, listings, previews, diagnostics, logs, and read-only scans such as `state-machines`, `push-gate hook\|check`, `repo base-health`, `ci timings`, `review carry`, `perf diff`, and `screenshots status` |
 | `local` | allow | `bun install\|update\|remove\|test`, `bun x` for executables classified `local`, `branch create`, `versions`, `images build`, `screenshots build`, `review` (other than `review carry`), `teardown --apply`, and applied skill or hook installs |
 | `share` | allow | `branch push`, `pr open`, `pr cancel-runs`, `pr threads reply\|resolve`, `repo cleanup --apply` |
 | `release` | ask | `pr merge` and executables classified `release` |
