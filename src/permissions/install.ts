@@ -126,22 +126,24 @@ function pending(root: string, targets: Harness[], manifest: Manifest, project: 
   });
 }
 
-/** Each generated file's change, then the manifest's, which every new agent-tool release updates. */
 /** What `--harness all` wrote before manifests recorded their scope and `all` covered Gemini. */
 const LEGACY_ALL: readonly Harness[] = ["claude", "codex"];
 
 /**
- * The scope a manifest's installs asked for, or none when it records no harness. Manifests
- * from releases before the scope field stand in their harness entries, and Claude and Codex
- * alone are what `all` wrote then, so that pair means `all`, which now covers more.
+ * The scope a manifest's installs asked for, in harness order without repeats, or none when it
+ * records no harness. Manifests from releases before the scope field stand in their harness
+ * entries, and Claude and Codex alone are what `all` wrote then, so that pair means `all`,
+ * which now covers more.
  */
 function recordedScope(manifest: Manifest): Scope | undefined {
-  if (manifest.scope !== undefined) return manifest.scope;
+  const { scope } = manifest;
+  if (scope !== undefined) return scope === "all" ? scope : HARNESSES.filter(harness => scope.includes(harness));
   const installed = HARNESSES.filter(harness => manifest[harness] !== undefined);
   if (!installed.length) return undefined;
   return installed.length === LEGACY_ALL.length && LEGACY_ALL.every(harness => installed.includes(harness)) ? "all" : installed;
 }
 
+/** Each generated file's change, then the manifest's, which every new agent-tool release updates. */
 export function installPermissions(rootDir: string, target: string, apply = false): PermissionChange[] {
   const root = realpathSync(rootDir);
   const { raw: recorded, manifest } = readManifest(root);

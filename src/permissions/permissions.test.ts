@@ -44,7 +44,9 @@ function geminiRules(source: string): GeminiRule[] {
  * Gemini CLI's commandRegex match: the pattern, anchored at the start of the command's JSON
  * encoding, which ends in the closing quote; an embedded quote is encoded as `\"`. This models
  * Gemini CLI 0.71.1, whose policy utils build `\x00"command":"(?:<commandRegex>)` and test it
- * against the stable JSON of the tool's arguments (`buildArgsPatterns`).
+ * against the stable JSON of the tool's arguments (`buildArgsPatterns`). It models one command:
+ * Gemini itself splits `&&`, `||`, `;`, and `|` chains and asks for redirection and command
+ * substitution before any rule applies, which this model does not repeat.
  */
 function geminiAllows(source: string, command: string): boolean {
   const encoded = JSON.stringify(command).slice(1);
@@ -285,6 +287,10 @@ test("the push gate checks the recorded scope, and an earlier all's pair as all"
   const only = project();
   installPermissions(only, "gemini", true);
   expect(checkInstalledPermissions(only)).toMatchObject({ harnesses: ["gemini"], changes: [{ path: ".gemini/policies/agent-tool.toml", status: "unchanged" }, { status: "unchanged" }] });
+  // A hand-edited scope is read in harness order without repeats.
+  const onlyFile = path.join(only, ".agent-tool-permissions.json");
+  writeFileSync(onlyFile, JSON.stringify({ ...JSON.parse(readFileSync(onlyFile, "utf8")), scope: ["gemini", "gemini"] }));
+  expect(checkInstalledPermissions(only)!.harnesses).toEqual(["gemini"]);
   // Any other pair added up from single-harness installs is checked as recorded, never asking for the third.
   for (const pair of [["claude", "gemini"], ["codex", "gemini"]] as const) {
     const root = project();

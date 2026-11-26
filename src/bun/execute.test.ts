@@ -73,6 +73,13 @@ test("an executable that asks is refused while the generated rules predate its c
     writeFileSync(path.join(f.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables } }));
     expect(f.run(["x", "wrangler"]).stderr).toMatch(/Permission rules predate the current class of 'bun x wrangler'/);
   }
+  // A Gemini policy alone is checked the same way: its old allow rule refuses the reclassified executable.
+  const gemini = fixture();
+  binary(gemini.project, "wrangler");
+  writeFileSync(path.join(gemini.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "local" } } }));
+  expect(spawnSync(process.execPath, [cli, "permissions", "install", "--harness", "gemini", "--apply"], { cwd: gemini.project, encoding: "utf8" }).status).toBe(0);
+  writeFileSync(path.join(gemini.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
+  expect(gemini.run(["x", "wrangler"]).stderr).toMatch(/Permission rules predate the current class of 'bun x wrangler'/);
   writeFileSync(path.join(f.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
   expect(spawnSync(process.execPath, [cli, "permissions", "install", "--apply"], { cwd: f.project, encoding: "utf8" }).status).toBe(0);
   expect(JSON.parse(f.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
