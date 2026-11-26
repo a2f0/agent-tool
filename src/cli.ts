@@ -11,6 +11,7 @@ import { buildScreenshots, describeScreenshots } from "./screenshots/build";
 import { screenshotsStoreCommand } from "./screenshots/store/command";
 import { spaceCommand } from "./space/command";
 import { perfCommand } from "./perf/command";
+import { ciTimingsCommand } from "./ci/command";
 import { review } from "./harnesses";
 import { carryReviewCommand } from "./review/carry";
 import { runAgentToolAction } from "./runAgentToolAction";
@@ -59,6 +60,8 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   repo base-health [--branch name] [--limit N]  CI health of the default branch's tip (GitHub only)
   policy check | toolchain check
   ci gate <needs.json|-> [--policy policy.json]
+  ci timings [--workflow file] [--limit N] [--gate job] | --run <id> | --job <id>
+                                        Which jobs hold a workflow's wall clock; ci timings --help lists options
   release plan <package.json> [--github-output] [--allow-private-source]
   release verify <package> <version> <merge-oid> --workflow name [--timeout seconds]
   logs <file> [--max-bytes N] [--tail-lines N]  Bounded local log tail
@@ -135,7 +138,12 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
   }
   if (command === "--version") { usage(args.length === 0, "Unexpected version arguments."); writeSync(1, `${metadata.version}\n`); return 0; }
   if (command === "run") return runCommand(args);
-  if (command === "ci") { usage(args.shift() === "gate", "Usage: ci gate <needs.json|-> [--policy policy.json]"); return gateCommand(args); }
+  if (command === "ci") {
+    const action = args.shift();
+    if (action === "timings") return ciTimingsCommand(args);
+    usage(action === "gate", "Usage: ci gate <needs.json|-> [--policy policy.json] | ci timings [options]");
+    return gateCommand(args);
+  }
   if (command === "release") return releaseCommand(args);
   if (command === "proc") return procCommand(args);
   if (command === "teardown") return teardownCommand(args);

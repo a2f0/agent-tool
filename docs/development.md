@@ -10,8 +10,9 @@ Shared implementation lives under `src/` by domain: `workflows/` for repository
 mechanics, `pr/` and `git/` for existing GitHub guards, `release/` for registry
 logic, `commands/` for execution receipts, `seo/` for the `seo probe` command,
 and `review/`, `version/`, `skills/`, `images/`, `screenshots/` (with the shared
-capture store in `screenshots/store/`), `space/` (disk cleanup), and `perf/`
-(page-load measurement) for their respective APIs. Tests live beside
+capture store in `screenshots/store/`), `space/` (disk cleanup), `perf/`
+(page-load measurement), and `ci/` (GitHub Actions timing reports) for their
+respective APIs. Tests live beside
 implementation. `screenshots/gallery.ts`, `gallery.css`, and `manifest.ts` are
 browser entry points that the package exports; they import nothing from Node
 or Bun, and `tsconfig.browser.json`, part of `typecheck`, checks them with the
@@ -59,7 +60,7 @@ its layers. A test asserts the real configuration passes.
    import nothing above themselves.
 2. Configuration: `config.ts`, which parses `agent-tool.json` from the primitive
    schemas.
-3. Domains: `bun/`, `commands/`, `dependencies/`, `graph/`, `images/`, `perf/`,
+3. Domains: `bun/`, `ci/`, `commands/`, `dependencies/`, `graph/`, `images/`, `perf/`,
    `permissions/`, `pr/`, `processes/`, `release/`, `review/`, `screenshots/`,
    `seo/`, `skills/`, `space/`, `stateMachines/`, `version/`, and `harnesses.ts`.
    Domains may use each other without cycles.
