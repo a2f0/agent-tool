@@ -46,8 +46,8 @@ export interface JobStats {
 
 export interface TimingSummary {
   runs: number;
-  /** Runs left out: re-run attempts mix timestamps of several attempts, and runs without the named gate job. */
-  excluded: { reruns: number; missingGate: number };
+  /** Runs left out: re-run attempts mix timestamps of several attempts, runs in which no job executed, and runs without the named gate job. */
+  excluded: { reruns: number; noJobs: number; missingGate: number };
   thresholdMinutes: number;
   /** Run creation to the gate job's end, or to the last job's end without a gate. */
   wallMinutes: Spread;
@@ -58,23 +58,28 @@ export interface TimingSummary {
   jobs: JobStats[];
 }
 
-/** Summarize successful runs of one workflow. A gate job, when named, ends the wall clock and is left out of `lastToFinish`. */
+/**
+ * Summarize successful runs of one workflow. A gate job, when named, ends the wall clock; `lastToFinish`
+ * then counts only jobs that finished before the gate started, which are the ones it waited for.
+ */
 export function summarizeRuns(runs: TimedRun[], options: { gate?: string; thresholdMinutes: number }): TimingSummary {
-  const excluded = { reruns: 0, missingGate: 0 };
+  const excluded = { reruns: 0, noJobs: 0, missingGate: 0 };
   const walls: number[] = [], firstLags: number[] = [];
   const last = new Map<string, number>();
   const perJob = new Map<string, { durations: number[]; lags: number[] }>();
   for (const run of runs) {
     if (run.attempt > 1) { excluded.reruns++; continue; }
     const jobs = executedJobs(run.jobs);
-    if (!jobs.length) continue;
+    if (!jobs.length) { excluded.noJobs++; continue; }
     const gate = options.gate === undefined ? undefined : jobs.find(job => job.name === options.gate);
     if (options.gate !== undefined && !gate) { excluded.missingGate++; continue; }
     const work = jobs.filter(job => job !== gate);
     const end = gate?.completedAt ?? work.reduce((latest, job) => job.completedAt > latest ? job.completedAt : latest, work[0]!.completedAt);
     walls.push(minutesBetween(run.createdAt, end));
     firstLags.push(Math.max(0, minutesBetween(run.createdAt, jobs.reduce((first, job) => job.startedAt < first ? job.startedAt : first, jobs[0]!.startedAt)) * 60));
-    const finisher = work.reduce<(typeof work)[number] | undefined>((latest, job) => !latest || job.completedAt > latest.completedAt ? job : latest, undefined);
+    // Jobs that ended after the gate started (optional lanes, post-gate deploys) did not hold it.
+    const awaited = gate ? work.filter(job => job.completedAt <= gate.startedAt) : work;
+    const finisher = awaited.reduce<(typeof work)[number] | undefined>((latest, job) => !latest || job.completedAt > latest.completedAt ? job : latest, undefined);
     if (finisher) last.set(lane(finisher.name), (last.get(lane(finisher.name)) ?? 0) + 1);
     for (const job of work) {
       const entry = perJob.get(job.name) ?? { durations: [], lags: [] };
@@ -144,7 +149,9 @@ export function parseJobLog(text: string): LogTimings {
     const line = lines[index]!;
     if (line.startsWith("##[group]")) {
       const name = line.slice("##[group]".length).trim();
-      const next = lines.slice(index + 1).find(candidate => candidate.trim() !== "")?.trim() ?? "";
+      let ahead = index + 1;
+      while (ahead < lines.length && lines[ahead]!.trim() === "") ahead++;
+      const next = lines[ahead]?.trim() ?? "";
       const cache = next.match(CACHE)?.[1] as LogTask["cache"] | undefined;
       const parent = [...stack].reverse().find(entry => entry.kind === "task");
       if (cache) { tasks.push({ task: name, cache }); stack.push({ kind: "task", name, cached: cache === "hit" }); }
