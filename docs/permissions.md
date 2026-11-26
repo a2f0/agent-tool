@@ -310,7 +310,9 @@ Each harness also has limits that the rules cannot change:
   the redirection check. The rules need Gemini CLI 0.63.0 or later. Releases
   before project policies (google-gemini/gemini-cli#18682) ignore the file, so
   everything asks; later ones before 0.63.0 load it and split chains, but in
-  `autoEdit` they let any allowed command redirect, for every allow rule.
+  `autoEdit` they let any allowed command redirect, for every allow rule, as
+  Gemini then chose for that mode (google-gemini/gemini-cli#26542), so the
+  rules keep `autoEdit` there too.
   [Dependency upgrades](dependency-upgrades.md#current-compatibility-constraints)
   lists what to recheck for a newer release.
 

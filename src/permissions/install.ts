@@ -136,16 +136,41 @@ function pending(root: string, targets: Harness[], manifest: Manifest, project: 
 }
 
 /**
- * The scope a manifest's installs asked for, in harness order without repeats, or none when it
- * records no harness. Manifests from releases before the scope field are read as scoped to the
- * harnesses they record, so an upgrade adds a harness `all` gained only when it installs `all`,
- * as the default install and `check` do.
+ * The harnesses a manifest's installs asked for: none yet, `all`, a recorded list, or, for a
+ * manifest from a release before the scope field, the harnesses its entries record. Lists are in
+ * harness order without repeats.
  */
-function recordedScope(manifest: Manifest): Scope | undefined {
+export type ScopeState =
+  | { status: "none" }
+  | { status: "all" }
+  | { status: "listed"; harnesses: Harness[] }
+  | { status: "inferred"; harnesses: Harness[] };
+
+/**
+ * The manifest's scope state. An inferred scope means an upgrade adds a harness `all` gained only
+ * when it installs `all`, as the default install and `check` do.
+ */
+export function scopeState(manifest: Pick<Manifest, "scope" | Harness>): ScopeState {
   const { scope } = manifest;
-  if (scope !== undefined) return scope === "all" ? scope : HARNESSES.filter(harness => scope.includes(harness));
+  if (scope === "all") return { status: "all" };
+  if (scope !== undefined) return { status: "listed", harnesses: HARNESSES.filter(harness => scope.includes(harness)) };
   const installed = HARNESSES.filter(harness => manifest[harness] !== undefined);
-  return installed.length ? installed : undefined;
+  return installed.length ? { status: "inferred", harnesses: installed } : { status: "none" };
+}
+
+/**
+ * One install's transition: installing `all`, or any harness under `all`, gives `all`; a single
+ * install adds its harness to the list or inferred harnesses, so a later push gate checks each.
+ */
+export function scopeTransition(state: ScopeState, target: Harness | "all"): Extract<ScopeState, { status: "all" | "listed" }> {
+  if (target === "all" || state.status === "all") return { status: "all" };
+  const previous = state.status === "none" ? [] : state.harnesses;
+  return { status: "listed", harnesses: HARNESSES.filter(harness => harness === target || previous.includes(harness)) };
+}
+
+/** The harnesses a push gate checks for a scope state: every current one for `all` or none. */
+function scopeHarnesses(state: ScopeState): Harness[] {
+  return state.status === "all" || state.status === "none" ? [...HARNESSES] : state.harnesses;
 }
 
 /** Each generated file's change, then the manifest's, which every new agent-tool release updates. */
@@ -153,13 +178,12 @@ export function installPermissions(rootDir: string, target: string, apply = fals
   const root = realpathSync(rootDir);
   const { raw: recorded, manifest } = readManifest(root);
   const project = projectCommands(root);
-  const changes = pending(root, harnesses(target), manifest, project);
+  const targets = harnesses(target);
+  const changes = pending(root, targets, manifest, project);
   // Recording the version makes every upgrade change the manifest, so a committed sync is visible.
   const { schemaVersion: _schema, agentToolVersion: _version, scope: _scope, ...owned } = manifest;
-  // `all` stays `all`; single installs add up, so a later push gate checks each of them.
-  const previous = recordedScope(manifest);
-  const scope: Scope = target === "all" || previous === "all" ? "all" : HARNESSES.filter(harness => harness === target || previous?.includes(harness));
-  const next: Manifest = { schemaVersion: 1, agentToolVersion: AGENT_TOOL_VERSION, scope, ...owned };
+  const scope = scopeTransition(scopeState(manifest), target === "all" ? "all" : targets[0]!);
+  const next: Manifest = { schemaVersion: 1, agentToolVersion: AGENT_TOOL_VERSION, scope: scope.status === "all" ? "all" : scope.harnesses, ...owned };
   for (const change of changes) {
     if (change.harness === "claude") next.claude = claudePermissions(project);
     else next[change.harness] = { file: change.relative, sha256: hash(change.contents) };
@@ -201,8 +225,7 @@ export function checkInstalledPermissions(rootDir: string): { harnesses: Harness
   const root = realpathSync(rootDir);
   const recorded = readManifest(root);
   if (recorded.raw === undefined) return null;
-  const scope = recordedScope(recorded.manifest);
-  const checked = scope === undefined || scope === "all" ? [...HARNESSES] : scope;
+  const checked = scopeHarnesses(scopeState(recorded.manifest));
   return { harnesses: checked, changes: checks(root, checked, recorded) };
 }
 
@@ -224,14 +247,14 @@ const EARLIER_ALL: readonly Harness[] = ["claude", "codex"];
 
 /**
  * The installs that regenerate a manifest's rules without widening its scope: `all`, or one per
- * harness it names. A manifest from before the scope field that records Claude and Codex may come
- * from an `all` install, which should gain the harnesses `all` added, so `all` is offered first there.
+ * harness it names. An inferred scope of Claude and Codex may come from an `all` install, which
+ * should gain the harnesses `all` added, so `all` is offered first there.
  */
 function installCommands(manifest: Manifest): string {
-  const scope = recordedScope(manifest), all = "agent-tool permissions install --apply";
-  if (scope === undefined || scope === "all") return all;
-  const each = scope.map(harness => `agent-tool permissions install --harness ${harness} --apply`).join(", then ");
-  return manifest.scope === undefined && EARLIER_ALL.every(harness => scope.includes(harness)) ? `${all}, or to keep only the recorded harnesses, ${each}` : each;
+  const state = scopeState(manifest), all = "agent-tool permissions install --apply";
+  if (state.status === "all" || state.status === "none") return all;
+  const each = state.harnesses.map(harness => `agent-tool permissions install --harness ${harness} --apply`).join(", then ");
+  return state.status === "inferred" && EARLIER_ALL.every(harness => state.harnesses.includes(harness)) ? `${all}, or to keep only the recorded harnesses, ${each}` : each;
 }
 
 export function showPermissions(rootDir: string, target: string): string {

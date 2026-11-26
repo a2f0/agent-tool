@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CATALOG, CLASSES, GEMINI_NAME_END, GEMINI_MODES, INVOCATIONS, claudePermissions, codexRules, geminiPolicy, strictest, type PermissionClass } from "./catalog";
-import { checkInstalledPermissions, checkPermissions, installPermissions } from "./install";
+import { checkInstalledPermissions, checkPermissions, installPermissions, scopeState, scopeTransition, type ScopeState } from "./install";
 import metadata from "../../package.json";
 import { HELP } from "../cli";
 import { parseConfig } from "../config";
@@ -257,6 +257,22 @@ test("edited or unmanaged Gemini policies are preserved, and other policy files 
   writeFileSync(path.join(root, ".agent-tool-permissions.json"), JSON.stringify({ schemaVersion: 1 }));
   expect(checkPermissions(root, "gemini")[0]!.status).toBe("unmanaged");
   expect(readFileSync(user, "utf8")).toContain('commandPrefix = "make"');
+});
+
+test("the scope moves only through its transition: `all` absorbs, single installs add up", () => {
+  const entry = { file: "x", sha256: "0".repeat(64) };
+  expect(scopeState({})).toEqual({ status: "none" });
+  expect(scopeState({ scope: "all" })).toEqual({ status: "all" });
+  expect(scopeState({ scope: ["gemini", "claude", "gemini"] })).toEqual({ status: "listed", harnesses: ["claude", "gemini"] });
+  expect(scopeState({ codex: entry, claude: { allow: [], ask: [] } })).toEqual({ status: "inferred", harnesses: ["claude", "codex"] });
+  const states: ScopeState[] = [{ status: "none" }, { status: "all" }, { status: "listed", harnesses: ["codex"] }, { status: "inferred", harnesses: ["claude", "codex"] }];
+  const table = states.map(state => [state.status, ...(["all", "claude", "gemini"] as const).map(target => scopeTransition(state, target))]);
+  expect(table).toEqual([
+    ["none", { status: "all" }, { status: "listed", harnesses: ["claude"] }, { status: "listed", harnesses: ["gemini"] }],
+    ["all", { status: "all" }, { status: "all" }, { status: "all" }],
+    ["listed", { status: "all" }, { status: "listed", harnesses: ["claude", "codex"] }, { status: "listed", harnesses: ["codex", "gemini"] }],
+    ["inferred", { status: "all" }, { status: "listed", harnesses: ["claude", "codex"] }, { status: "listed", harnesses: ["claude", "codex", "gemini"] }],
+  ]);
 });
 
 test("the push gate checks the recorded scope, or an earlier manifest's harnesses", () => {
