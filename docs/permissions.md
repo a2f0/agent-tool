@@ -2,9 +2,9 @@
 
 agent-tool assigns each of its commands a permission class and generates allow
 rules for routine commands. Consequential commands keep the user's chosen
-approval mode and sandbox policy. The same classification drives both Claude
-Code and Codex; generated project rules do not force extra prompts or grant
-blanket approval.
+approval mode and sandbox policy. The same classification drives Claude Code,
+Codex, and Gemini CLI; generated project rules do not force extra prompts or
+grant blanket approval.
 
 ## What the rules protect
 
@@ -216,7 +216,7 @@ agent-tool permissions install --apply
 agent-tool permissions check              # CI
 ```
 
-`install` writes two files and records what it owns in
+`install` writes three files and records what it owns in
 `.agent-tool-permissions.json`:
 
 - `.claude/settings.json` gains `permissions.allow` entries for the classes that
@@ -242,6 +242,20 @@ agent-tool permissions check              # CI
   permission ranks. Reinstalling replaces the managed file and removes the
   forced prompts written by older versions. A locally edited rules file is
   refused rather than overwritten; other `.rules` files are left alone.
+- `.gemini/policies/agent-tool.toml` holds one Gemini CLI `allow` rule per
+  class for the `run_shell_command` tool, listing the same command prefixes as
+  the Codex rules. Gemini matches a `commandPrefix` up to whitespace or the end
+  of the command, so a command whose `--apply` form asks gets no rule here
+  either. The rules apply only in the `default` and `autoEdit` approval modes:
+  a workspace allow outranks plan mode's read-only deny, and YOLO allows every
+  command already. Only allow rules are written, and user and admin policies
+  outrank workspace ones. A locally edited policy file is refused rather than
+  overwritten; other files in `.gemini/policies/` are left alone.
+
+Before Gemini existed here, `--harness all` meant Claude Code and Codex. A
+manifest recording both is checked against every harness `all` now covers, so
+`check` reports the Gemini policy `missing` until `install --apply` adds it,
+just as the recorded version already requires after an upgrade.
 
 The manifest also records, as `agentToolVersion`, the agent-tool release that
 wrote it, so every upgrade changes it even when no rule changed, and the
@@ -268,6 +282,11 @@ Each harness also has limits that the rules cannot change:
   commands only when it is a plain chain joined by `&&`, `||`, `;`, or `|`;
   redirection (including `2>&1`), substitution, variables, and control flow make
   the whole script one opaque command subject to the harness default.
+- Gemini CLI loads `<cwd>/.gemini/policies/` only in a trusted folder, from the
+  directory where the session starts, and asks the user once to accept a new or
+  changed policy file in each such directory (headless runs accept it with a
+  warning). A chain joined by `&&`, `||`, `;`, or `|` is allowed only when every
+  command in it is; redirection and command substitution fall back to asking.
 
 After upgrading agent-tool, regenerate the managed permissions and start a new
 Codex session so it loads the updated rules. Removing a generated prompt does
@@ -308,7 +327,7 @@ default, or the directory `CLAUDE_CONFIG_DIR` names:
       "$defaults",
       "Release: merging a pull request, publishing a package, or deleting remote state, including `agent-tool pr merge`, `gh pr merge`, `npm publish`, and `bun publish`",
       "Dependency intake: adding a third-party package with `agent-tool bun add`, `bun add`, `npm install <name>`, `pnpm add`, or `yarn add`, or running `bunx`, `bun x`, or `npx`, which can download one",
-      "Permission changes: `agent-tool permissions install --apply`, or edits to `.claude/settings.json`, `.codex/rules/`, or `permissions` in `agent-tool.json`",
+      "Permission changes: `agent-tool permissions install --apply`, or edits to `.claude/settings.json`, `.codex/rules/`, `.gemini/policies/`, or `permissions` in `agent-tool.json`",
       "Arbitrary execution: `agent-tool bun x` with an executable that runs whatever file or command it is given, such as `tsx`"
     ]
   }

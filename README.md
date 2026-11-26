@@ -93,7 +93,8 @@ validation suite, and release procedures.
   captured screenshots into a website, and the gallery and carousel web
   components that show them.
 - [Permissions](docs/permissions.md): which commands run without approval in
-  Claude Code and Codex, and the dependency commands that enforce it.
+  Claude Code, Codex, and Gemini CLI, and the dependency commands that enforce
+  it.
 - [Dependency maintenance](docs/dependency-upgrades.md): active compatibility
   constraints and the dependency-update workflow.
 - [Design](docs/design.md) and [extraction history](docs/extraction.md): component

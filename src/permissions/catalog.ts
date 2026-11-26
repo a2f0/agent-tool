@@ -115,3 +115,39 @@ export function codexRules(project: CatalogEntry[] = []): string {
   }
   return `${lines.join("\n")}\n`;
 }
+
+/** Gemini CLI's approval modes the rules apply in; see geminiPolicy. */
+export const GEMINI_MODES = ["default", "autoEdit"] as const;
+/** Any priority stays inside the workspace tier, below every user and admin policy. */
+const GEMINI_PRIORITY = 100;
+
+/**
+ * Gemini CLI policy rules for `.gemini/policies/`. Its `commandPrefix` matches a whole
+ * word prefix, like Codex's prefix rules, so a command whose `--apply` form asks gets
+ * no rule. Only allow rules are generated, as for Claude and Codex, so other commands
+ * keep the user's approval mode and policies, which outrank workspace rules. The rules
+ * name their modes: a workspace allow outranks plan mode's default read-only deny, and
+ * YOLO already allows every command.
+ */
+export function geminiPolicy(project: CatalogEntry[] = []): string {
+  const lines = [
+    "# Managed by agent-tool; regenerate with `agent-tool permissions install --apply`.",
+    "# Only routine commands receive allow rules. Other commands keep the user's",
+    "# approval mode and policies, which outrank these workspace rules.",
+    "# A command whose --apply form asks gets no rule, since prefixes also match --apply.",
+    "# Plan mode stays read-only, and YOLO already allows every command.",
+  ];
+  const prefixes = new Map<PermissionClass, string[]>();
+  for (const invocation of INVOCATIONS) for (const entry of [...CATALOG, ...project]) {
+    const value = strictest(entry);
+    if (CLASSES[value].decision === "allow") prefixes.set(value, [...(prefixes.get(value) ?? []), `${invocation} ${entry.command}`]);
+  }
+  for (const value of Object.keys(CLASSES) as PermissionClass[]) {
+    const commands = prefixes.get(value);
+    if (!commands) continue;
+    lines.push("", `# ${value}: ${CLASSES[value].description}`, "[[rule]]", 'toolName = "run_shell_command"', "commandPrefix = [");
+    for (const command of commands) lines.push(`  ${quote(command)},`);
+    lines.push("]", 'decision = "allow"', `priority = ${GEMINI_PRIORITY}`, `modes = [${GEMINI_MODES.map(quote).join(", ")}]`);
+  }
+  return `${lines.join("\n")}\n`;
+}

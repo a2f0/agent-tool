@@ -3,21 +3,27 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, renameSync, 
 import path from "node:path";
 import { readRegularFile } from "../system/files";
 import { AGENT_TOOL_VERSION, manifestVersionCheck, validVersion, type CheckStatus } from "../system/manifestVersion";
-import { claudePermissions, codexRules, type CatalogEntry, type ClaudePermissions } from "./catalog";
+import { claudePermissions, codexRules, geminiPolicy, type CatalogEntry, type ClaudePermissions } from "./catalog";
 import { projectCommands } from "./project";
 
 export const PERMISSIONS_MANIFEST = ".agent-tool-permissions.json";
 const CLAUDE_SETTINGS = ".claude/settings.json";
-const CODEX_RULES = ".codex/rules/agent-tool.rules";
-const HARNESSES = ["claude", "codex"] as const;
+const HARNESSES = ["claude", "codex", "gemini"] as const;
 type Harness = typeof HARNESSES[number];
+/** Harnesses whose rules are a whole generated file, owned by its recorded hash. */
+type FileHarness = Exclude<Harness, "claude">;
+const GENERATED: Record<FileHarness, { relative: string; render: (project: CatalogEntry[]) => string }> = {
+  codex: { relative: ".codex/rules/agent-tool.rules", render: codexRules },
+  gemini: { relative: ".gemini/policies/agent-tool.toml", render: geminiPolicy },
+};
 const hash = (source: string) => createHash("sha256").update(source).digest("hex");
 
+interface OwnedFile { file: string; sha256: string }
 /**
  * What an install owns and the agent-tool version that wrote it. Manifests from releases before
  * the version field lack it and stay readable; the field is additive, so `schemaVersion` stays 1.
  */
-interface Manifest { schemaVersion: 1; agentToolVersion?: string; claude?: ClaudePermissions; codex?: { file: string; sha256: string } }
+interface Manifest { schemaVersion: 1; agentToolVersion?: string; claude?: ClaudePermissions; codex?: OwnedFile; gemini?: OwnedFile }
 /** One reading of the manifest: its bytes, none without one, and its parsed contents. */
 interface Recorded { raw?: string; manifest: Manifest }
 export interface PermissionChange { path: string; status: "create" | "update" | "unchanged" }
@@ -26,7 +32,7 @@ export interface PermissionCheck { path: string; status: CheckStatus; recordedVe
 
 export function harnesses(target: string): Harness[] {
   if (target === "all") return [...HARNESSES];
-  if (!(HARNESSES as readonly string[]).includes(target)) throw new Error(`Unknown permissions harness '${target}'; use all, claude, or codex.`);
+  if (!(HARNESSES as readonly string[]).includes(target)) throw new Error(`Unknown permissions harness '${target}'; use all, claude, codex, or gemini.`);
   return [target as Harness];
 }
 
@@ -58,10 +64,11 @@ function readManifest(root: string): Recorded {
   const parsed: unknown = JSON.parse(raw);
   const object = (item: unknown): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item);
   const strings = (items: unknown) => Array.isArray(items) && items.every(item => typeof item === "string");
+  const owned = (item: unknown) => object(item) && typeof item.file === "string" && typeof item.sha256 === "string" && /^[a-f0-9]{64}$/.test(item.sha256);
   // Present ownership entries must be well formed; a falsy one must not drop its harness from the check.
   if (!object(parsed) || parsed.schemaVersion !== 1
     || (parsed.claude !== undefined && !(object(parsed.claude) && strings(parsed.claude.allow) && strings(parsed.claude.ask)))
-    || (parsed.codex !== undefined && !(object(parsed.codex) && typeof parsed.codex.file === "string" && typeof parsed.codex.sha256 === "string" && /^[a-f0-9]{64}$/.test(parsed.codex.sha256)))) throw new Error("Invalid managed permissions manifest.");
+    || (Object.keys(GENERATED) as FileHarness[]).some(harness => parsed[harness] !== undefined && !owned(parsed[harness]))) throw new Error("Invalid managed permissions manifest.");
   const { agentToolVersion, ...value } = parsed as unknown as Manifest;
   // The version is provenance, not ownership: an unusable one counts as none, which the check reports and the install replaces.
   return { raw, manifest: { ...value, ...(validVersion(agentToolVersion) ? { agentToolVersion } : {}) } };
@@ -98,7 +105,7 @@ interface Pending { harness: Harness; relative: string; file: string; contents: 
 
 function pending(root: string, targets: Harness[], manifest: Manifest, project: CatalogEntry[]): Pending[] {
   return targets.map(harness => {
-    const relative = harness === "claude" ? CLAUDE_SETTINGS : CODEX_RULES;
+    const relative = harness === "claude" ? CLAUDE_SETTINGS : GENERATED[harness].relative;
     const file = destination(root, relative);
     // One read of each destination serves both the merge and the comparison.
     const read = readRegularFile(file);
@@ -107,8 +114,8 @@ function pending(root: string, targets: Harness[], manifest: Manifest, project: 
     let contents: string;
     if (harness === "claude") contents = `${JSON.stringify(mergedSettings(parseSettings(current), manifest.claude, claudePermissions(project)), null, 2)}\n`;
     else {
-      contents = codexRules(project);
-      if (current !== undefined && current !== contents && hash(current) !== manifest.codex?.sha256) throw new Error(`Locally edited or unmanaged rules: ${relative}. Preserve them before installing.`);
+      contents = GENERATED[harness].render(project);
+      if (current !== undefined && current !== contents && hash(current) !== manifest[harness]?.sha256) throw new Error(`Locally edited or unmanaged rules: ${relative}. Preserve them before installing.`);
     }
     return { harness, relative, file, contents, status: current === contents ? "unchanged" : current === undefined ? "create" : "update" };
   });
@@ -125,7 +132,7 @@ export function installPermissions(rootDir: string, target: string, apply = fals
   const next: Manifest = { schemaVersion: 1, agentToolVersion: AGENT_TOOL_VERSION, ...owned };
   for (const change of changes) {
     if (change.harness === "claude") next.claude = claudePermissions(project);
-    else next.codex = { file: change.relative, sha256: hash(change.contents) };
+    else next[change.harness] = { file: change.relative, sha256: hash(change.contents) };
   }
   const manifestFile = destination(root, PERMISSIONS_MANIFEST), contents = `${JSON.stringify(next, null, 2)}\n`;
   const manifestStatus: PermissionChange["status"] = recorded === contents ? "unchanged" : recorded === undefined ? "create" : "update";
@@ -143,7 +150,7 @@ function checks(root: string, targets: Harness[], { raw, manifest }: Recorded): 
   const files = pending(root, targets, manifest, project).map((change): PermissionCheck => {
     if (change.status === "create") return { path: change.relative, status: "missing" };
     if (change.status === "update") return { path: change.relative, status: "outdated" };
-    const managed = change.harness === "claude" ? JSON.stringify(manifest.claude) === JSON.stringify(claudePermissions(project)) : manifest.codex?.sha256 === hash(change.contents);
+    const managed = change.harness === "claude" ? JSON.stringify(manifest.claude) === JSON.stringify(claudePermissions(project)) : manifest[change.harness]?.sha256 === hash(change.contents);
     return { path: change.relative, status: managed ? "unchanged" : "unmanaged" };
   });
   return [...files, manifestVersionCheck(PERMISSIONS_MANIFEST, raw !== undefined, manifest.agentToolVersion)];
@@ -157,14 +164,16 @@ export function checkPermissions(rootDir: string, target: string): PermissionChe
 
 /**
  * The push gate's check, or null without a manifest: the `--harness` the rules were installed
- * for, from the manifest, and its check, from one reading of the manifest.
+ * for, from the manifest, and its check, from one reading of the manifest. Only `all` records
+ * more than one harness, so a manifest an earlier `all` wrote (Claude and Codex) is checked
+ * against every harness `all` now covers, and fails until the install adds the new ones.
  */
 export function checkInstalledPermissions(rootDir: string): { harness: string; changes: PermissionCheck[] } | null {
   const root = realpathSync(rootDir);
   const recorded = readManifest(root);
   if (recorded.raw === undefined) return null;
-  const { claude, codex } = recorded.manifest;
-  const harness = claude && !codex ? "claude" : codex && !claude ? "codex" : "all";
+  const installed = HARNESSES.filter(harness => recorded.manifest[harness] !== undefined);
+  const harness = installed.length === 1 ? installed[0]! : "all";
   return { harness, changes: checks(root, harnesses(harness), recorded) };
 }
 
@@ -183,5 +192,5 @@ export function checkRecordedPermissions(rootDir: string): PermissionCheck[] | n
 
 export function showPermissions(rootDir: string, target: string): string {
   const project = projectCommands(realpathSync(rootDir));
-  return harnesses(target).map(harness => harness === "claude" ? `${JSON.stringify({ permissions: claudePermissions(project) }, null, 2)}\n` : codexRules(project)).join("\n");
+  return harnesses(target).map(harness => harness === "claude" ? `${JSON.stringify({ permissions: claudePermissions(project) }, null, 2)}\n` : GENERATED[harness].render(project)).join("\n");
 }
