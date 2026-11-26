@@ -107,7 +107,7 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
                                         Page load timing, seeded screenshots, and pixel diffs; perf --help lists options
   init                                  Create agent-tool.json without overwriting
   config show
-  doctor                                JSON versions and supported review flags
+  doctor                                JSON versions, supported review flags, and the Gemini CLI minimum
   --help | --version
 
 Legacy actions remain available: solicitClaudeCodeReview, solicitCodexReview,

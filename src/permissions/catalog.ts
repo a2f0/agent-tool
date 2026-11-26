@@ -160,7 +160,8 @@ export function geminiPolicy(project: CatalogEntry[] = []): string {
     "# Each command ends at a space or the end of the command, never a quote, and a",
     "# command whose --apply form asks gets no rule. Plan mode stays read-only, and",
     "# YOLO already allows every command. Requires Gemini CLI 0.63.0 or later, which",
-    "# asks for redirection these rules matched in autoEdit too (`agent-tool doctor` checks).",
+    "# asks for redirection these rules matched in autoEdit too; `agent-tool doctor`",
+    "# reports an older one, which nothing here prevents from loading this file.",
   ];
   const invocations = `(?:${INVOCATIONS.map(regex).join("|")})`;
   for (const value of Object.keys(CLASSES) as PermissionClass[]) {

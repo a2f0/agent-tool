@@ -765,7 +765,8 @@ changing a command's directory does not change the session's skill scope.
 
 Skill consumers and review providers are distinct. Hermes can coordinate every
 bundled workflow, but `review` and `doctor` still support Claude Code, Codex, and
-OpenCode as independent review providers. There is no `review hermes` adapter
+OpenCode as independent review providers; `doctor` also reports Gemini CLI, a
+permissions target rather than a review provider. There is no `review hermes` adapter
 or Hermes permission installer. Existing read-only review and exact-commit
 guards apply regardless of which harness coordinates the work.
 
