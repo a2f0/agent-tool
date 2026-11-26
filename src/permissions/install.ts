@@ -208,11 +208,17 @@ export function checkInstalledPermissions(rootDir: string): { harnesses: Harness
  * Rules no manifest records are the user's by the installer's ownership contract (an install
  * keeps them), so they are not judged here, as before the version field.
  */
-export function checkRecordedPermissions(rootDir: string): PermissionCheck[] | null {
+export function checkRecordedPermissions(rootDir: string): { changes: PermissionCheck[]; install: string[] } | null {
   const root = realpathSync(rootDir);
   const recorded = readManifest(root);
   if (recorded.raw === undefined) return null;
-  return checks(root, HARNESSES.filter(harness => recorded.manifest[harness] !== undefined), recorded);
+  return { changes: checks(root, HARNESSES.filter(harness => recorded.manifest[harness] !== undefined), recorded), install: installCommands(recorded.manifest) };
+}
+
+/** The installs that regenerate a manifest's rules without widening its scope: `all`, or one per harness it names. */
+function installCommands(manifest: Manifest): string[] {
+  const scope = recordedScope(manifest);
+  return scope === undefined || scope === "all" ? ["agent-tool permissions install --apply"] : scope.map(harness => `agent-tool permissions install --harness ${harness} --apply`);
 }
 
 export function showPermissions(rootDir: string, target: string): string {
