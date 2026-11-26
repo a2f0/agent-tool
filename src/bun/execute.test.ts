@@ -92,7 +92,7 @@ test("an executable that asks is refused while the generated rules predate its c
   writeFileSync(fullFile, JSON.stringify(legacy));
   rmSync(path.join(f.project, ".gemini"), { recursive: true });
   writeFileSync(path.join(f.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
-  expect(f.run(["x", "wrangler"]).stderr).toContain("(agent-tool permissions install --harness claude --apply, then agent-tool permissions install --harness codex --apply)");
+  expect(f.run(["x", "wrangler"]).stderr).toContain("(agent-tool permissions install --apply, or to keep only the recorded harnesses, agent-tool permissions install --harness claude --apply, then agent-tool permissions install --harness codex --apply)");
   expect(spawnSync(process.execPath, [cli, "permissions", "install", "--apply"], { cwd: f.project, encoding: "utf8" }).status).toBe(0);
   expect(JSON.parse(f.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
   // Current rules recorded by another agent-tool release, or with no usable version, allow nothing extra, so only the rules decide.

@@ -110,6 +110,10 @@ test("Gemini rules allow exactly what Codex's do, outside plan and YOLO modes", 
   for (const { commandRegex, ...rule } of rules) {
     expect(rule).toEqual({ toolName: "run_shell_command", decision: "allow", priority: 0, modes: ["default", "autoEdit"] });
     expect(commandRegex.endsWith(GEMINI_NAME_END)).toBe(true);
+    // Gemini CLI 0.71.1 refuses a pattern with a quantified group (its NESTED_QUANTIFIER check)
+    // or longer than 2048 characters once wrapped as `\x00"command":"(?:…)`.
+    expect(/\([^)]*[*+?{][^\n\r]*\)[*+?{]/.test(commandRegex)).toBe(false);
+    expect(`\\x00"command":"(?:${commandRegex})`.length).toBeLessThan(2048);
   }
   expect(GEMINI_MODES).toEqual(["default", "autoEdit"]);
   const expand = (tokens: (string | string[])[]): string[] => tokens.reduce<string[][]>((rows, token) => rows.flatMap(row => (Array.isArray(token) ? token : [token]).map(value => [...row, value])), [[]]).map(words => words.join(" "));
@@ -385,8 +389,10 @@ test("install records the agent-tool version, and check requires the running one
     expect(installPermissions(root, "all", true).filter(item => item.status !== "unchanged")).toEqual([{ path: ".agent-tool-permissions.json", status: "update" }]);
     expect(JSON.parse(readFileSync(manifestFile, "utf8"))).toEqual(manifest);
   }
+  // A harness a newer release added names that release instead of reading as corruption.
+  expect(() => { writeFileSync(manifestFile, JSON.stringify({ ...manifest, scope: ["claude", "opencode"] })); checkPermissions(root, "all"); }).toThrow(/scope names opencode, which this agent-tool release does not know; use the release that wrote it \(/);
   // Ownership entries that are present must be well formed, so a falsy one cannot drop its harness.
-  for (const invalid of [{ ...manifest, schemaVersion: 2 }, { ...manifest, scope: "some" }, { ...manifest, scope: [] }, { ...manifest, scope: ["opencode"] }, { ...manifest, scope: null }, { ...manifest, claude: false }, { ...manifest, codex: null }, { ...manifest, gemini: null }, { ...manifest, claude: { allow: "Bash(x)", ask: [] } }, { ...manifest, codex: { file: 1, sha256: manifest.codex.sha256 } }, { ...manifest, gemini: { file: manifest.gemini.file, sha256: "x" } }, [], null]) {
+  for (const invalid of [{ ...manifest, schemaVersion: 2 }, { ...manifest, scope: "some" }, { ...manifest, scope: [] }, { ...manifest, scope: [1] }, { ...manifest, scope: null }, { ...manifest, claude: false }, { ...manifest, codex: null }, { ...manifest, gemini: null }, { ...manifest, claude: { allow: "Bash(x)", ask: [] } }, { ...manifest, codex: { file: 1, sha256: manifest.codex.sha256 } }, { ...manifest, gemini: { file: manifest.gemini.file, sha256: "x" } }, [], null]) {
     writeFileSync(manifestFile, JSON.stringify(invalid));
     expect(() => checkPermissions(root, "all")).toThrow("Invalid managed permissions manifest.");
     expect(() => checkInstalledPermissions(root)).toThrow("Invalid managed permissions manifest.");

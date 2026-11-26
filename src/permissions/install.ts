@@ -69,6 +69,12 @@ function readManifest(root: string): Recorded {
   const strings = (items: unknown) => Array.isArray(items) && items.every(item => typeof item === "string");
   const owned = (item: unknown) => object(item) && typeof item.file === "string" && typeof item.sha256 === "string" && /^[a-f0-9]{64}$/.test(item.sha256);
   const scope = (item: unknown) => item === "all" || (Array.isArray(item) && item.length > 0 && item.every(harness => (HARNESSES as readonly unknown[]).includes(harness)));
+  // A harness a newer release added is not corruption: name it and the release that wrote it.
+  if (object(parsed) && Array.isArray(parsed.scope)) {
+    const unknown = parsed.scope.filter(harness => typeof harness === "string" && !(HARNESSES as readonly string[]).includes(harness));
+    const writer = typeof parsed.agentToolVersion === "string" ? ` (${parsed.agentToolVersion})` : "";
+    if (unknown.length) throw new Error(`Managed permissions manifest scope names ${unknown.join(", ")}, which this agent-tool release does not know; use the release that wrote it${writer}.`);
+  }
   // Present ownership and scope entries must be well formed; a falsy one must not drop a harness from the check.
   if (!object(parsed) || parsed.schemaVersion !== 1
     || (parsed.scope !== undefined && !scope(parsed.scope))
@@ -206,17 +212,23 @@ export function checkInstalledPermissions(rootDir: string): { harnesses: Harness
  * Rules no manifest records are the user's by the installer's ownership contract (an install
  * keeps them), so they are not judged here, as before the version field.
  */
-export function checkRecordedPermissions(rootDir: string): { changes: PermissionCheck[]; install: string[] } | null {
+export function checkRecordedPermissions(rootDir: string): { changes: PermissionCheck[]; install: string } | null {
   const root = realpathSync(rootDir);
   const recorded = readManifest(root);
   if (recorded.raw === undefined) return null;
   return { changes: checks(root, HARNESSES.filter(harness => recorded.manifest[harness] !== undefined), recorded), install: installCommands(recorded.manifest) };
 }
 
-/** The installs that regenerate a manifest's rules without widening its scope: `all`, or one per harness it names. */
-function installCommands(manifest: Manifest): string[] {
-  const scope = recordedScope(manifest);
-  return scope === undefined || scope === "all" ? ["agent-tool permissions install --apply"] : scope.map(harness => `agent-tool permissions install --harness ${harness} --apply`);
+/**
+ * The installs that regenerate a manifest's rules without widening its scope: `all`, or one per
+ * harness it names. A manifest from before the scope field may come from an `all` install, which
+ * should gain the harnesses `all` added, so `all` is offered first there.
+ */
+function installCommands(manifest: Manifest): string {
+  const scope = recordedScope(manifest), all = "agent-tool permissions install --apply";
+  if (scope === undefined || scope === "all") return all;
+  const each = scope.map(harness => `agent-tool permissions install --harness ${harness} --apply`).join(", then ");
+  return manifest.scope === undefined ? `${all}, or to keep only the recorded harnesses, ${each}` : each;
 }
 
 export function showPermissions(rootDir: string, target: string): string {
