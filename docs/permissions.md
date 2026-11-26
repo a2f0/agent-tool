@@ -250,18 +250,21 @@ agent-tool permissions check              # CI
   word (`agent-tool bun x vite"-node"` runs `vite-node`), so the rules do not use
   it. A command whose `--apply` form asks gets no rule here either, since a
   rule also matches the command with arguments. The rules apply only in the
-  `default` and `autoEdit` approval modes:
-  a workspace allow outranks plan mode's read-only deny, and YOLO allows every
-  command already. Only allow rules are written, and user and admin policies
-  outrank workspace ones. A locally edited policy file is refused rather than
-  overwritten; other files in `.gemini/policies/` are left alone.
+  `default` and `autoEdit` approval modes: a workspace allow outranks plan
+  mode's read-only deny, and YOLO allows every command already. Only allow
+  rules are written, and user and admin policies outrank workspace ones. The
+  rules take priority 0, the lowest Gemini accepts, so a project's own rule in
+  `.gemini/policies/` outranks them at any higher priority; at 0 as well,
+  Gemini's file load order decides. A locally edited policy file is refused
+  rather than overwritten; other files in `.gemini/policies/` are left alone.
 
 The manifest also records the `scope` installs asked for: `all`, which a later
 single-harness install keeps, or the harnesses single installs added up. The
 push gate checks that scope, so `all` covers each harness a newer release adds
-and fails until `install --apply` writes its rules. Manifests from releases
-before 0.1.76 record no scope; their harness entries stand in, and Claude Code
-and Codex alone, which is what `all` wrote then, count as `all`.
+and fails until `install --apply` writes its rules. Manifests written before
+the scope field record none; their harness entries stand in, and Claude Code
+and Codex alone, which is what `all` wrote then, count as `all`, so update such
+a manifest with `--harness all`.
 
 The manifest also records, as `agentToolVersion`, the agent-tool release that
 wrote it, so every upgrade changes it even when no rule changed, and the
@@ -269,11 +272,11 @@ committed diff shows the regeneration ran. `check` fails until it does: its
 last entry is the manifest's, with `recordedVersion` and `currentVersion`, and
 is `outdated` when the manifest records another release or no usable one, as
 manifests from releases before the field do, until `install --apply` with the
-same `--harness` replaces it. `--harness` names one harness or `all`, so for a
-scope that names harnesses, run `install` and `check` once for each of them. `agent-tool bun x` still refuses an
-executable only while the rules themselves are stale, so a manifest that
-records another release refuses nothing more there. The skills
-manifest records the version the same way
+same `--harness` replaces it. `--harness` names one harness or `all`, so for
+a scope that names harnesses, run `install` and `check` once for each of them.
+`agent-tool bun x` still refuses an executable only while the rules themselves
+are stale, so a manifest that records another release refuses nothing more
+there. The skills manifest records the version the same way
 ([skill installation](reference.md#portable-skills)).
 
 Each harness also has limits that the rules cannot change:

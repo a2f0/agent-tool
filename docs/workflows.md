@@ -233,9 +233,9 @@ do not act on this one. It then runs, in order:
    every harness their manifests record (for permissions, the recorded scope,
    where `all` covers every current harness, as
    [generated rules](permissions.md#generated-rules) describes);
-   `branch check --pre-push`; and, for
-   every pushed ref that is not a deletion, `commits check` and `checks
-   binaries` over the commits that push adds. Every guard runs and reports;
+   `branch check --pre-push`; and, for every pushed ref that is not a
+   deletion, `commits check` and `checks binaries` over the commits that push
+   adds. Every guard runs and reports;
    any failure refuses the push before a declared step starts. A manifest
    the guard cannot read fails that guard alone. Both manifests record the
    agent-tool release whose install wrote them, and the guards compare it
@@ -333,8 +333,8 @@ take a revision range or a diff base can use it directly. Deleted refs keep
 The command prints one JSON report: `ok`, `remote`, `refs` (as above with
 `commits` reduced to a count), `guards` (each with `name`, an optional `ref`,
 `ok`, `durationMs`, and `details` or `error` when it failed; the skills and
-permissions guards' `details` list the checked `harnesses`, an array since
-0.1.76 for permissions, which earlier reported one `harness` string), `steps` (null
+permissions guards' `details` list the checked `harnesses` as an array, where
+the permissions guard once reported one `harness` string), `steps` (null
 when none ran, else the run-group `report` path, `status`, `durationMs`,
 `error`, and each step's `label`, `status`, `durationMs`, and `log`),
 `worktree`, `budget` (`seconds`, `elapsedMs`, `exceeded`, and the `slowest`

@@ -118,8 +118,12 @@ export function codexRules(project: CatalogEntry[] = []): string {
 
 /** Gemini CLI's approval modes the rules apply in; see geminiPolicy. */
 export const GEMINI_MODES = ["default", "autoEdit"] as const;
-/** Any priority stays inside the workspace tier, below every user and admin policy. */
-const GEMINI_PRIORITY = 100;
+/**
+ * Gemini CLI accepts priorities 0 to 999 within a tier and lets the first matching rule of a
+ * stable sort by priority decide. Every priority stays inside the workspace tier, below user and
+ * admin policies; the lowest also lets a project's own workspace rule at any higher priority win.
+ */
+const GEMINI_PRIORITY = 0;
 
 const regex = (text: string) => text.replace(/[.^$|?*+()[\]{}\\]/g, "\\$&");
 

@@ -104,7 +104,7 @@ test("Gemini rules allow exactly what Codex's do, outside plan and YOLO modes", 
   // One rule per routine command, each naming every invocation.
   expect(rules.length).toBe([...CATALOG, ...project].filter(entry => CLASSES[strictest(entry)].decision === "allow").length);
   for (const { commandRegex, ...rule } of rules) {
-    expect(rule).toEqual({ toolName: "run_shell_command", decision: "allow", priority: 100, modes: ["default", "autoEdit"] });
+    expect(rule).toEqual({ toolName: "run_shell_command", decision: "allow", priority: 0, modes: ["default", "autoEdit"] });
     expect(commandRegex.endsWith('(?: |")')).toBe(true);
   }
   expect(GEMINI_MODES).toEqual(["default", "autoEdit"]);
@@ -263,7 +263,7 @@ test("the push gate checks the recorded scope, and an earlier all's pair as all"
   // A manifest from a release before the scope field records Claude and Codex alone after `all`,
   // so the pair is checked against every harness `all` covers now, whatever version it names.
   const { scope: _scope, ...earlier } = manifest;
-  for (const agentToolVersion of ["0.1.75", "0.1.77", undefined]) {
+  for (const agentToolVersion of ["0.0.1", "99.0.0", undefined]) {
     writeFileSync(manifestFile, JSON.stringify({ ...earlier, agentToolVersion }));
     expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex", "gemini"], changes: [{ status: "unchanged" }, { status: "unchanged" }, { path: ".gemini/policies/agent-tool.toml", status: "missing" }, { status: "outdated" }] });
   }
