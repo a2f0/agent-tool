@@ -99,6 +99,14 @@ A lane is a job name without shard counters, so `Test (api 1/3)` and
 - Changing a shard count reshuffles which files share a worker; with test
   isolation off, that can surface leaks between files. Run every new shard
   composition before pushing.
+- Config chosen on `CI` (reporters, plugins, entries) looks different to
+  static analysis locally and on CI, so a check passes locally and fails on CI.
+  Keep config the same everywhere, or run those checks with `CI=true` too.
+- A recorded-durations file only orders and balances work. It must ignore
+  entries for items that no longer exist and weight unknown ones, or a rename
+  in any pull request fails CI on a scheduling hint.
+- Merge policy is part of the wall clock: a check that forces queued pull
+  requests to integrate after every merge reruns their CI one at a time.
 
 ## Ownership
 
