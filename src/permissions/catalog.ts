@@ -157,7 +157,8 @@ export function geminiPolicy(project: CatalogEntry[] = []): string {
     "# approval mode and policies, which outrank these workspace rules.",
     "# Each command ends at a space or the end of the command, never a quote, and a",
     "# command whose --apply form asks gets no rule. Plan mode stays read-only, and",
-    "# YOLO already allows every command.",
+    "# YOLO already allows every command. Requires Gemini CLI 0.71.1 or later, which",
+    "# splits chains and asks for redirection and substitution before these rules apply.",
   ];
   const invocations = `(?:${INVOCATIONS.map(regex).join("|")})`;
   for (const value of Object.keys(CLASSES) as PermissionClass[]) {

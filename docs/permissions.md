@@ -304,7 +304,9 @@ Each harness also has limits that the rules cannot change:
   allowed only when every command in it is; redirection, command substitution
   (`$(…)` or backticks), and process substitution fall back to asking, in
   `autoEdit` as in `default`. The rules rely on that splitting, which Gemini
-  CLI 0.71.1 performs before any rule applies.
+  CLI 0.71.1 performs before any rule applies, so they require 0.71.1 or later;
+  [dependency upgrades](dependency-upgrades.md#current-compatibility-constraints)
+  lists what to recheck for a newer release.
 
 After upgrading agent-tool, regenerate the managed permissions and start a new
 Codex or Gemini CLI session so it loads the updated rules; Gemini then asks

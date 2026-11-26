@@ -219,16 +219,19 @@ export function checkRecordedPermissions(rootDir: string): { changes: Permission
   return { changes: checks(root, HARNESSES.filter(harness => recorded.manifest[harness] !== undefined), recorded), install: installCommands(recorded.manifest) };
 }
 
+/** What `--harness all` wrote before manifests recorded their scope and `all` covered Gemini. */
+const EARLIER_ALL: readonly Harness[] = ["claude", "codex"];
+
 /**
  * The installs that regenerate a manifest's rules without widening its scope: `all`, or one per
- * harness it names. A manifest from before the scope field may come from an `all` install, which
- * should gain the harnesses `all` added, so `all` is offered first there.
+ * harness it names. A manifest from before the scope field that records Claude and Codex may come
+ * from an `all` install, which should gain the harnesses `all` added, so `all` is offered first there.
  */
 function installCommands(manifest: Manifest): string {
   const scope = recordedScope(manifest), all = "agent-tool permissions install --apply";
   if (scope === undefined || scope === "all") return all;
   const each = scope.map(harness => `agent-tool permissions install --harness ${harness} --apply`).join(", then ");
-  return manifest.scope === undefined ? `${all}, or to keep only the recorded harnesses, ${each}` : each;
+  return manifest.scope === undefined && EARLIER_ALL.every(harness => scope.includes(harness)) ? `${all}, or to keep only the recorded harnesses, ${each}` : each;
 }
 
 export function showPermissions(rootDir: string, target: string): string {
