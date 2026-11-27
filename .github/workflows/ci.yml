@@ -12,9 +12,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # The Gemini conformance step runs third-party code as this user, which could read a token kept in .git/config.
-          persist-credentials: false
       - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
         with:
           version: 2026.11.8
@@ -25,9 +22,6 @@ jobs:
       - run: bun run typecheck
       - run: bun src/index.ts graph check
       - run: bun test --parallel=2
-      - if: runner.os == 'Linux'
-        name: Check the generated Gemini rules with Gemini CLI's own policy engine
-        run: bun scripts/testing/gemini-conformance.ts
       - run: bun scripts/testing/smoke-package.ts
       - run: bun run build
       - run: git diff --exit-code -- src/skills/bundled.ts
@@ -51,3 +45,19 @@ jobs:
           bun scripts/testing/smoke-package.ts
           bun test src/commands src/dependencies src/graph src/images src/processes src/workflows src/release src/review/diagnostics.test.ts
           bun test src/bun/dependencyModes.test.ts src/bun/dependencyModesSafety.test.ts src/permissions
+  # Gemini CLI's own policy engine checks the generated Gemini rules. The engine is third-party
+  # code, so it runs in a job with no token permissions, no persisted credentials, and no later
+  # steps or artifacts it could reach.
+  gemini-conformance:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        with:
+          version: 2026.11.8
+          install_args: bun
+      - run: bun install --frozen-lockfile
+      - run: bun scripts/testing/gemini-conformance.ts

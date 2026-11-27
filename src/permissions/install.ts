@@ -259,7 +259,8 @@ function outsideScope(root: string, checked: Harness[]): PermissionCheck[] {
   };
   return (Object.keys(GENERATED) as FileHarness[])
     .filter(harness => !checked.includes(harness) && present(path.join(root, GENERATED[harness].relative)))
-    .map(harness => ({ path: GENERATED[harness].relative, status: "unmanaged", detail: `outside the recorded scope; delete it, or run agent-tool permissions install --harness ${harness} --apply` }));
+    // Every checked set covers the recorded harnesses, so such a file is unrecorded, which an install refuses to overwrite.
+    .map(harness => ({ path: GENERATED[harness].relative, status: "unmanaged", detail: `not recorded in the manifest, though ${harness} loads it; delete it, then run agent-tool permissions install --harness ${harness} --apply if ${harness} should keep rules` }));
 }
 
 /** Each generated file, then for a scope check any outside it, then the manifest's own entry, against one reading of the manifest. */

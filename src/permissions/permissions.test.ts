@@ -341,7 +341,7 @@ test("the push gate checks the recorded scope, or an earlier manifest's harnesse
   installPermissions(narrowed, "codex", true);
   mkdirSync(path.join(narrowed, ".gemini/policies"), { recursive: true });
   writeFileSync(path.join(narrowed, ".gemini/policies/agent-tool.toml"), "stale\n");
-  const stray = { path: ".gemini/policies/agent-tool.toml", status: "unmanaged" as const, detail: "outside the recorded scope; delete it, or run agent-tool permissions install --harness gemini --apply" };
+  const stray = { path: ".gemini/policies/agent-tool.toml", status: "unmanaged" as const, detail: "not recorded in the manifest, though gemini loads it; delete it, then run agent-tool permissions install --harness gemini --apply if gemini should keep rules" };
   expect(checkPermissions(narrowed).changes).toContainEqual(stray);
   expect(checkInstalledPermissions(narrowed)!.changes).toContainEqual(stray);
   expect(checkPermissions(narrowed).changes.at(-1)!.path).toBe(".agent-tool-permissions.json");

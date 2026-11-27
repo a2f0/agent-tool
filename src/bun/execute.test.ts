@@ -136,7 +136,7 @@ test("the refusal advises regenerating only the recorded scope", () => {
   writeFileSync(narrowedFile, JSON.stringify({ ...withoutCodex, scope: ["gemini"] }));
   writeFileSync(path.join(narrowed.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
   expect(spawnSync(process.execPath, [cli, "permissions", "install", "--apply"], { cwd: narrowed.project, encoding: "utf8" }).status).toBe(0);
-  expect(narrowed.run(["x", "wrangler"]).stderr).toContain("(agent-tool permissions install --apply) before running it. .codex/rules/agent-tool.rules is outside the recorded scope; delete it, or run agent-tool permissions install --harness codex --apply.");
+  expect(narrowed.run(["x", "wrangler"]).stderr).toContain("(agent-tool permissions install --apply) before running it. .codex/rules/agent-tool.rules is not recorded in the manifest, though codex loads it; delete it, then run agent-tool permissions install --harness codex --apply if codex should keep rules.");
   rmSync(path.join(narrowed.project, ".codex"), { recursive: true });
   expect(JSON.parse(narrowed.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
 }, 30_000);
