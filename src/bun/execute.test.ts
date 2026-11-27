@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -142,6 +143,22 @@ test("the refusal advises regenerating only the recorded scope", () => {
   expect(narrowed.run(["x", "wrangler"]).stderr).toContain(".gemini/policies/agent-tool.toml is a retired Gemini CLI policy not recorded in the manifest; delete it.");
   rmSync(path.join(narrowed.project, ".gemini"), { recursive: true });
   expect(JSON.parse(narrowed.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
+  // A Gemini-only legacy manifest blocks a reclassified executable and names manual removal or explicit --harness install.
+  const geminiOnly = fixture();
+  binary(geminiOnly.project, "wrangler");
+  mkdirSync(path.join(geminiOnly.project, ".gemini/policies"), { recursive: true });
+  writeFileSync(path.join(geminiOnly.project, ".gemini/policies/agent-tool.toml"), "# old\n");
+  writeFileSync(
+    path.join(geminiOnly.project, ".agent-tool-permissions.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      agentToolVersion: "0.1.81",
+      scope: ["gemini"],
+      gemini: { file: ".gemini/policies/agent-tool.toml", sha256: createHash("sha256").update("# old\n").digest("hex") },
+    }),
+  );
+  writeFileSync(path.join(geminiOnly.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
+  expect(geminiOnly.run(["x", "wrangler"]).stderr).toContain("delete .gemini/policies/agent-tool.toml and .agent-tool-permissions.json, or run agent-tool permissions install --harness <all|claude|codex> --apply");
 }, 30_000);
 
 test("--cwd cannot reach another checkout, and options must precede --", () => {

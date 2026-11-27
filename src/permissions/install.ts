@@ -221,7 +221,7 @@ function pending(root: string, targets: Harness[], manifest: Manifest, project: 
 }
 
 /** Validate a retired Gemini CLI policy before removing it on a bare or `all` install. */
-function pendingGeminiRemoval(root: string, legacyGemini: LegacyGeminiState): { file: string; relative: string } | null {
+function pendingGeminiRemoval(root: string, legacyGemini: LegacyGeminiState): { file: string; relative: string; sha256: string } | null {
   if (legacyGemini.status === "none") return null;
   const file = destination(root, RETIRED_GEMINI_POLICY);
   const read = readRegularFile(file);
@@ -230,7 +230,7 @@ function pendingGeminiRemoval(root: string, legacyGemini: LegacyGeminiState): { 
   if (!legacyGemini.record || hash(read.contents) !== legacyGemini.record.sha256) {
     throw new Error(`Locally edited or unmanaged rules: ${RETIRED_GEMINI_POLICY}. Preserve or delete them before installing.`);
   }
-  return { file, relative: RETIRED_GEMINI_POLICY };
+  return { file, relative: RETIRED_GEMINI_POLICY, sha256: legacyGemini.record.sha256 };
 }
 
 /**
@@ -348,8 +348,16 @@ export function installPermissions(rootDir: string, target?: string, apply = fal
   if (apply) {
     for (const change of changes) if (change.status !== "unchanged") atomicWrite(change.file, change.contents);
     if (geminiRemoval) {
-      unlinkSync(geminiRemoval.file);
-      removeEmptyParents(root, geminiRemoval.file);
+      const current = readRegularFile(destination(root, geminiRemoval.relative));
+      if (current.status === "file") {
+        if (hash(current.contents) !== geminiRemoval.sha256) {
+          throw new Error(`Locally edited or unmanaged rules: ${geminiRemoval.relative}. Preserve or delete them before installing.`);
+        }
+        unlinkSync(geminiRemoval.file);
+        removeEmptyParents(root, geminiRemoval.file);
+      } else if (current.status === "irregular") {
+        throw new Error(`Permissions destination is not a regular file: ${geminiRemoval.relative}`);
+      }
     }
     if (manifestStatus !== "unchanged") atomicWrite(manifestFile, contents);
   }
