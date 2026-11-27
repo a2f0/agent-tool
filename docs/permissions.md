@@ -253,7 +253,8 @@ agent-tool permissions check              # CI
   `default` approval mode: a workspace allow would outrank plan mode's
   read-only deny, YOLO allows every command already, and `autoEdit` keeps the
   user's own rules, since Gemini CLI before 0.63.0 lets an allowed command
-  redirect there unprompted (google-gemini/gemini-cli#26542). Only allow
+  redirect there unprompted, as google-gemini/gemini-cli#26542 chose, until
+  google-gemini/gemini-cli#29506 changed it. Only allow
   rules are written, and user and admin policies outrank workspace ones. The
   rules take priority 0, the lowest Gemini accepts, so a project's own rule in
   `.gemini/policies/` outranks them at any higher priority; at 0 as well,
@@ -309,10 +310,13 @@ Each harness also has limits that the rules cannot change:
   `default` mode. The arguments stay unrestricted because a rule that matches
   the whole command is the stricter one: a rule that missed a redirected
   command would let Gemini approve its parts one by one, and outside `default`
-  skip the redirection check. Every release that loads project policies
-  (google-gemini/gemini-cli#18682 onward) splits chains and asks for
-  redirection in `default`; earlier releases ignore the file, so everything
-  asks. Gemini's
+  skip the redirection check. The opt-in conformance test
+  (`src/permissions/gemini.conformance.test.ts`) passes against Gemini CLI
+  0.37.0, the first release published as a bundle, and 0.40.0, 0.50.0, 0.62.0,
+  0.63.0, and 0.71.1. Releases 0.31.0 to 0.36, the first to load project
+  policies (google-gemini/gemini-cli#18682), enforce `modes` in their source
+  but are published unbundled, so the test cannot load them; earlier releases
+  ignore the file, so everything asks. Gemini's
   [policy engine](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/docs/reference/policy-engine.md)
   documents the discovery, trust, and tiers above;
   [dependency upgrades](dependency-upgrades.md#current-compatibility-constraints)

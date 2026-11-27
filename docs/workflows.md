@@ -282,7 +282,8 @@ installed, or regenerated files left uncommitted. Only CI can catch those, so
 each repository configures a merge-gating CI job that installs the pinned
 release for the pushed commit and, for each manifest it manages, runs
 `skills check` or `permissions check` with the same `--harness` scope as its
-install.
+install; a permissions scope that lists harnesses takes one check per harness
+([generated rules](permissions.md#generated-rules)).
 
 Steps that need the push itself, such as a per-commit message linter or a
 changed-path classifier, read `AGENT_TOOL_PUSH_GATE`, the path of a private
