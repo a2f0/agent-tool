@@ -47,7 +47,8 @@ jobs:
           bun test src/bun/dependencyModes.test.ts src/bun/dependencyModesSafety.test.ts src/permissions
   # Gemini CLI's own policy engine checks the generated Gemini rules. The engine is third-party
   # code, so it runs in a job with no token permissions, no persisted credentials, and no later
-  # steps or artifacts it could reach.
+  # steps or artifacts. The runner gives it sudo, which reaches the Actions cache, so this job
+  # saves no cache and the release workflows restore none.
   gemini-conformance:
     runs-on: ubuntu-latest
     permissions: {}
@@ -59,5 +60,6 @@ jobs:
         with:
           version: 2026.11.8
           install_args: bun
+          cache: false
       - run: bun install --frozen-lockfile
       - run: bun scripts/testing/gemini-conformance.ts

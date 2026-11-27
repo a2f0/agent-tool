@@ -112,7 +112,9 @@ A separate required `gemini-conformance` job runs
 CLI releases, the supported floor and a current one, verifies their npm
 integrity, and runs the Gemini conformance test against each. The job has no
 token permissions or persisted credentials and nothing runs after it, since
-the test imports Gemini's third-party bundle. It needs the network, so it is
+the test imports Gemini's third-party bundle; it saves no Actions cache, and
+the release and publish workflows restore none, as the runner's sudo would let
+the bundle write one. It needs the network, so it is
 not part of `verify.json`.
 Local source integration tests use disposable Git repositories, bare remotes,
 and API stubs to check guard behavior without mutating GitHub. Dependency-mode
