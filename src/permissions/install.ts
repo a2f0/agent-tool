@@ -80,9 +80,6 @@ function readManifest(root: string): Recorded {
     || (parsed.scope !== undefined && !scope(parsed.scope))
     || (parsed.claude !== undefined && !(object(parsed.claude) && strings(parsed.claude.allow) && strings(parsed.claude.ask)))
     || (Object.keys(GENERATED) as FileHarness[]).some(harness => parsed[harness] !== undefined && !owned(parsed[harness]))) throw new Error("Invalid managed permissions manifest.");
-  // A scope list covers every harness the manifest records, so no recorded rules fall out of the push gate's check.
-  const outside = Array.isArray(parsed.scope) ? HARNESSES.filter(harness => parsed[harness] !== undefined && !(parsed.scope as unknown[]).includes(harness)) : [];
-  if (outside.length) throw new Error(`Invalid managed permissions manifest: it records ${outside.join(", ")} outside its scope; remove those rules and their entries, or add them to the scope.`);
   const { agentToolVersion, ...value } = parsed as unknown as Manifest;
   // The version is provenance, not ownership: an unusable one counts as none, which the check reports and the install replaces.
   return { raw, manifest: { ...value, ...(validVersion(agentToolVersion) ? { agentToolVersion } : {}) } };
@@ -153,7 +150,9 @@ export type ScopeState =
 export function scopeState(manifest: Pick<Manifest, "scope" | Harness>): ScopeState {
   const { scope } = manifest;
   if (scope === "all") return { status: "all" };
-  if (scope !== undefined) return { status: "listed", harnesses: HARNESSES.filter(harness => scope.includes(harness)) };
+  // A list also covers every harness the manifest records, so no recorded rules fall out of the check;
+  // a release before scopes keeps the field while an install adds an entry, as after a rollback.
+  if (scope !== undefined) return { status: "listed", harnesses: HARNESSES.filter(harness => scope.includes(harness) || manifest[harness] !== undefined) };
   const installed = HARNESSES.filter(harness => manifest[harness] !== undefined);
   return installed.length ? { status: "inferred", harnesses: installed } : { status: "none" };
 }

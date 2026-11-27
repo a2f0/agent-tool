@@ -326,14 +326,19 @@ test("the push gate checks the recorded scope, or an earlier manifest's harnesse
   const only = project();
   installPermissions(only, "gemini", true);
   expect(checkInstalledPermissions(only)).toMatchObject({ harnesses: ["gemini"], changes: [{ path: ".gemini/policies/agent-tool.toml", status: "unchanged" }, { status: "unchanged" }] });
-  // A scope list that omits a recorded harness is refused, so its rules cannot fall out of the check.
+  // A scope list that omits a recorded harness, as an earlier release's install leaves after a rollback,
+  // still covers it: its rules stay checked, and the next install records it in the scope.
   const both = project();
   installPermissions(both, "claude", true);
   installPermissions(both, "gemini", true);
   const bothFile = path.join(both, ".agent-tool-permissions.json");
   writeFileSync(bothFile, JSON.stringify({ ...JSON.parse(readFileSync(bothFile, "utf8")), scope: ["claude"] }));
-  expect(() => checkInstalledPermissions(both)).toThrow(/records gemini outside its scope/);
-  expect(() => installPermissions(both, "claude")).toThrow(/records gemini outside its scope/);
+  expect(checkInstalledPermissions(both)).toMatchObject({ harnesses: ["claude", "gemini"] });
+  rmSync(path.join(both, ".gemini"), { recursive: true });
+  expect(checkInstalledPermissions(both)!.changes).toContainEqual({ path: ".gemini/policies/agent-tool.toml", status: "missing" });
+  installPermissions(both, "gemini", true);
+  installPermissions(both, "claude", true);
+  expect(JSON.parse(readFileSync(bothFile, "utf8")).scope).toEqual(["claude", "gemini"]);
   // A hand-edited scope is read in harness order without repeats.
   const onlyFile = path.join(only, ".agent-tool-permissions.json");
   writeFileSync(onlyFile, JSON.stringify({ ...JSON.parse(readFileSync(onlyFile, "utf8")), scope: ["gemini", "gemini"] }));
