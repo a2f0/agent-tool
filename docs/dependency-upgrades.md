@@ -93,8 +93,12 @@ apply the exact approved saved plan. Keep state and plans out of Git.
     rules in `default` alone through each rule's `modes`, which Gemini has
     enforced since the first release that loads project policies (0.31.0),
     and plan mode's read-only deny in the default tier.
-  - A ReDoS guard that refuses a quantified group holding a quantifier, `(?:`
-    included, so the rules group with capturing parentheses.
+  - A ReDoS guard that refuses a pattern in which a `(` has a quantifier
+    character before the next `)` and a later `)` is quantified, `(?:`
+    included, so the rules use capturing groups and quantify only a group
+    holding no quantifier.
+  - Bash on macOS and Linux, and PowerShell on Windows, whose `(…)` and `@(…)`
+    the rules exclude as well; the conformance test runs the bash path only.
   - For a command no rule matches as a whole: chains checked command by
     command in some releases, and redirection and substitution asking in
     `default` (in `autoEdit` too since 0.63.0,
@@ -114,7 +118,7 @@ apply the exact approved saved plan. Keep state and plans out of Git.
     where `<bundle>` is its `@google/gemini-cli/bundle` directory (for
     Homebrew, under `$(brew --prefix gemini-cli)/libexec/lib/node_modules`).
   - See the [policy engine](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/docs/reference/policy-engine.md)
-  and [TOML loader](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/packages/core/src/policy/toml-loader.ts).
+    and [TOML loader](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/packages/core/src/policy/toml-loader.ts).
 
 ## Maintenance records
 

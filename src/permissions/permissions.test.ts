@@ -97,9 +97,9 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
   for (const command of ["agent-tool bun x a.b -- c", "agent-tool bun x c+d -- e"]) expect(geminiAllows(dotted, command)).toBe(true);
   for (const command of ["agent-tool bun x aXb -- c", "agent-tool bun x ccd -- e", "agent-tool bun x cd -- e", "node_modules/xbin/agent-tool pr checks", "bun run agent-toolX pr checks"]) expect({ command, allowed: geminiAllows(dotted, command) }).toEqual({ command, allowed: false });
   for (const command of ["gh pr merge 1", "npm publish", "bun add left-pad", "bunx cowsay", "npx cowsay"]) expect(geminiAllows(gemini, command)).toBe(false);
-  // Arguments may quote and escape, but shell syntax, a line break, or another JSON escape fails to match.
-  for (const command of ['agent-tool pr open "fix(api): x" --body-file b.md', "agent-tool pr checks a\\b", "agent-tool pr checks ~/x *", "agent-tool pr checks"]) expect({ command, allowed: geminiAllows(gemini, command) }).toEqual({ command, allowed: true });
-  for (const command of ["agent-tool pr checks $X", "agent-tool pr checks ${X:-`rm x`}", "agent-tool pr checks `rm x`", 'agent-tool pr checks "a" `rm x`', "agent-tool pr checks; rm x", "agent-tool pr checks && rm x", "agent-tool pr checks | sh", "agent-tool pr checks & rm x", "agent-tool pr checks > f", "agent-tool pr checks < f", "agent-tool pr checks x\nrm x", "agent-tool pr checks\t-x", "agent-tool pr checks \\$X"])
+  // Arguments may quote and escape, but bash or PowerShell syntax, a line break, or another JSON escape fails to match.
+  for (const command of ['agent-tool pr open "feat: x" --body-file b.md', "agent-tool pr checks a\\b", "agent-tool pr checks ~/x *", "agent-tool pr checks"]) expect({ command, allowed: geminiAllows(gemini, command) }).toEqual({ command, allowed: true });
+  for (const command of ["agent-tool pr checks $X", "agent-tool pr checks ${X:-`rm x`}", "agent-tool pr checks `rm x`", 'agent-tool pr checks "a" `rm x`', "agent-tool pr checks; rm x", "agent-tool pr checks && rm x", "agent-tool pr checks | sh", "agent-tool pr checks & rm x", "agent-tool pr checks > f", "agent-tool pr checks < f", "agent-tool pr checks x\nrm x", "agent-tool pr checks\t-x", "agent-tool pr checks \\$X", "agent-tool pr checks (Remove-Item x)", "agent-tool pr checks a(Remove-Item x)", "agent-tool pr checks @(Remove-Item x)", 'agent-tool pr open "fix(api): x"'])
     expect({ command, allowed: geminiAllows(gemini, command) }).toEqual({ command, allowed: false });
 });
 

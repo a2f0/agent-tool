@@ -247,9 +247,11 @@ and records what it owns in `.agent-tool-permissions.json`:
   commands as the Codex rules. Each is a `commandRegex` naming the three
   invocations and ending the command at a space or the end of the command,
   with arguments that may quote and escape but hold no backtick, `$`, `;`,
-  `&`, `|`, `<`, `>`, or line break; a command with any of them matches no
-  rule as a whole, as Codex treats such a script as one opaque command
-  (below). Gemini's own
+  `&`, `|`, `<`, `>`, `(`, `)`, `@`, or line break; a command with any of
+  them matches no rule as a whole, as Codex treats such a script as one
+  opaque command (below). Parentheses and `@` are excluded because Gemini runs
+  commands through PowerShell on Windows, which evaluates `(…)` and `@(…)` in
+  an argument, so a title such as `pr open "fix(api): x"` asks. Gemini's own
   `commandPrefix` also ends at a quote, which the shell joins into the same
   word (`agent-tool bun x vite"-node"` runs `vite-node`), so the rules do not use
   it. A command whose `--apply` form asks gets no rule here either, since a

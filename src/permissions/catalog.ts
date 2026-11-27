@@ -135,16 +135,21 @@ const GEMINI_PRIORITY = 0;
 const regex = (text: string) => text.replace(/[.^$|?*+()[\]{}\\]/g, "\\$&");
 /**
  * What may follow a command name in its JSON encoding, through the closing quote: nothing, or a
- * space and arguments free of shell syntax. An argument may not hold a backtick, `$`, `;`, `&`,
- * `|`, `<`, or `>`, or a JSON escape other than an escaped quote or backslash, so no raw newline
- * or control character either. A command that does fails to match as a whole, and Gemini then
+ * space and arguments free of shell syntax, for bash and for PowerShell, which Gemini runs on
+ * Windows. An argument may not hold a backtick, `$`, `;`, `&`, `|`, `<`, `>`, `(`, `)`, or `@`,
+ * or a JSON escape other than an escaped quote or backslash, so no raw newline or control
+ * character either. PowerShell evaluates `(…)` and `@(…)` in an argument, and Gemini 0.37.0 has
+ * no check for them. A command that holds any of these fails to match as a whole, and Gemini then
  * checks each command of a chain on its own and asks for redirection in `default` mode, or asks
  * outright, as Codex treats such a script as opaque. Gemini's own substitution checks are not
- * enough: 0.37.0 to 0.63.0 allow ``${X:-`rm x`}`` under an argument-blind rule. Groups capture
- * rather than use `(?:`, whose `?` Gemini's ReDoS guard reads as a quantifier inside a quantified
- * group; no group here holds a quantifier before its `)`, so the guard accepts every pattern.
+ * enough: 0.37.0 to 0.63.0 allow ``${X:-`rm x`}`` under an argument-blind rule.
+ *
+ * Gemini's ReDoS guard refuses a pattern in which a `(` has a quantifier character before the
+ * next `)` and any later `)` is quantified. So the one quantified group holds no quantifier, an
+ * empty alternative stands in for an outer `?`, and groups capture, since the `?` of a `(?:`
+ * would trip the guard.
  */
-export const GEMINI_ARGUMENTS = '( (\\\\["\\\\]|[^`$"\\\\;&|<>])*)?"';
+export const GEMINI_ARGUMENTS = '( (\\\\["\\\\]|[^`$"\\\\;&|<>()@])*|)"';
 
 /**
  * Gemini CLI policy rules for `.gemini/policies/`: one allow rule per routine command,
@@ -164,9 +169,9 @@ export function geminiPolicy(project: CatalogEntry[] = []): string {
     "# Only routine commands receive allow rules. Other commands keep the user's",
     "# approval mode and policies, which outrank these workspace rules.",
     "# Each command ends at a space or the end of the command, never a quote; its",
-    "# arguments hold no backtick, $, ;, &, |, <, >, or line break, so any shell",
-    "# syntax falls back to Gemini's own checks; and a command whose --apply form",
-    "# asks gets no rule. The rules apply in the default",
+    "# arguments hold no backtick, $, ;, &, |, <, >, (, ), @, or line break, so",
+    "# bash or PowerShell syntax falls back to Gemini's own checks; and a command",
+    "# whose --apply form asks gets no rule. The rules apply in the default",
     "# approval mode only: plan mode stays read-only, autoEdit keeps the user's rules,",
     "# and YOLO already allows every command. Requires Gemini CLI 0.37.0 or later.",
   ];
