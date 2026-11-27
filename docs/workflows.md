@@ -501,17 +501,19 @@ read over Git's own transport: the `git ls-remote` of a branch that
 `pr checks`, `pr preflight`, `pr merge`, `pr open`, `repo context`,
 `repo cleanup`, `branch create`, and `branch push` use, and the base fetch
 behind `repo context --fetch`, `repo cleanup`, `pr merge`, reviews, and
-`branch create`. For those, an SSH connection failure that OpenSSH reports is
-transient too: a connect or banner exchange that timed out
-(`ssh: connect to host <host> port <n>: Operation timed out`, or
-`Connection timed out` on Linux), a server that closed or reset the
-connection (`kex_exchange_identification: ...`,
-`Connection closed by <ip> port <n>`, `Connection reset by peer`), or a name
-lookup the resolver calls temporary. It makes at most four attempts, pausing
-1, 2, then 4 seconds, and inside a wait never pauses past its deadline.
-Authentication, rate-limit, not-found, and other 4xx failures are never
-retried, and neither are SSH's `Permission denied (publickey)`,
-`Host key verification failed`, and GitHub's `Repository not found`; a
+`branch create`. One classification serves every retried call, `gh` reads
+and `repo cleanup`'s checked delete included, and it also counts as transient
+an SSH connection failure that OpenSSH reports: a connect or banner exchange
+that timed out (`ssh: connect to host <host> port <n>: Operation timed out`,
+`Connection timed out` on Linux, or `connect: operation timed out` from `gh`),
+a server that closed or reset the connection
+(`kex_exchange_identification: ...`, `Connection closed by <ip> port <n>`,
+`Connection reset by peer`), or a name lookup the resolver calls temporary.
+It makes at most four attempts, pausing 1, 2, then 4 seconds, and inside a
+wait never pauses past its deadline. Authentication, rate-limit, not-found,
+and other 4xx failures are never retried, and neither is any output with
+`Permission denied`, such as SSH's `Permission denied (publickey)`, or with
+`Host key verification failed` or GitHub's `Repository not found`; a
 permanent match wins over a transient one in the same output. Git ends every
 SSH failure with `Could not read from remote repository`, so that line alone
 decides nothing. When the budget runs out the command fails with GitHub's last

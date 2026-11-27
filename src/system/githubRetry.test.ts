@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { viewCurrentBranchPr } from "../git/currentBranchPr";
 import { fetchBase, remoteBranchHead, runRead } from "../git/prContext";
+import { branchCommand } from "../workflows/branch";
 import { mutateGit } from "../workflows/core";
 import { withCallDeadline } from "./boundedCalls";
 import { GITHUB_RETRY, TransientGitHubError, retryCheckedGitHubMutation, transientGitHubFailure } from "./githubRetry";
@@ -155,11 +156,12 @@ function fixtureGit(cwd: string, args: string[]): string {
 }
 
 /**
- * Real Git over a fake `ssh` that fails with each listed stderr in turn,
- * exiting 255 as ssh does, then serves a bare repository with one commit on
- * main. Git adds its own lines around each failure, as in the sweeps' logs.
+ * Real Git over a fake `ssh` that takes each listed entry in turn: a stderr to
+ * fail with, exiting 255 as ssh does, or null to serve a bare repository with
+ * one commit on main, which it also does once the list runs out. Git adds its
+ * own lines around each failure, as in the sweeps' logs.
  */
-function fakeSsh(failures: string[]) {
+function fakeSsh(failures: (string | null)[]) {
   const work = path.join(directory, "work"), bare = path.join(directory, "remote.git"), local = path.join(directory, "local");
   fixtureGit(directory, ["init", "-q", "-b", "main", work]);
   fixtureGit(work, ["commit", "-q", "--allow-empty", "-m", "chore: initialize"]);
@@ -167,7 +169,7 @@ function fakeSsh(failures: string[]) {
   fixtureGit(directory, ["init", "-q", local]);
   const bin = path.join(directory, "ssh-bin"); mkdirSync(bin);
   const state = path.join(directory, "ssh-failures.json"), calls = path.join(directory, "ssh-calls");
-  const fail = (next: string[]) => { writeFileSync(state, JSON.stringify(next)); };
+  const fail = (next: (string | null)[]) => { writeFileSync(state, JSON.stringify(next)); };
   fail(failures);
   // Named ssh, so Git passes it OpenSSH's options.
   writeFileSync(path.join(bin, "ssh"), `#!${process.execPath}
@@ -175,9 +177,9 @@ import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 appendFileSync(${JSON.stringify(calls)}, JSON.stringify(process.argv.slice(2)) + "\\n");
 const failures = JSON.parse(readFileSync(${JSON.stringify(state)}, "utf8"));
-if (failures.length) {
-  const stderr = failures.shift();
-  writeFileSync(${JSON.stringify(state)}, JSON.stringify(failures));
+const stderr = failures.length ? failures.shift() : null;
+writeFileSync(${JSON.stringify(state)}, JSON.stringify(failures));
+if (stderr !== null) {
   if (stderr) process.stderr.write(stderr + "\\n");
   process.exit(255);
 }
@@ -200,6 +202,22 @@ test("a Git read over SSH is retried after a transient connection failure, and t
   expect(remote.calls()).toBe(5);
 }, 30_000);
 
+test("branch create retries its base fetch after a transient SSH failure, but not after a permanent one", () => {
+  const remote = fakeSsh([]);
+  process.chdir(remote.work);
+  fixtureGit(remote.work, ["remote", "add", "origin", SSH_URL]);
+  // Create lists the new name and then the base over SSH before it fetches the base, so the third call is the fetch.
+  remote.fail([null, null, SSH_TIMEOUT]);
+  expect(branchCommand(["create", "fix/x", "--base", "main", "--remote", "origin"])).toBe(0);
+  expect(fixtureGit(remote.work, ["branch", "--show-current"])).toBe("fix/x");
+  // The failed fetch, its retry, and the listing that confirms the base did not move.
+  expect(remote.calls()).toBe(5);
+  fixtureGit(remote.work, ["switch", "-q", "main"]);
+  remote.fail([null, null, "git@github.com: Permission denied (publickey)."]);
+  expect(() => branchCommand(["create", "fix/y", "--base", "main", "--remote", "origin"])).toThrow("Permission denied (publickey).");
+  expect(remote.calls()).toBe(8);
+}, 30_000);
+
 test.each([
   "git@github.com: Permission denied (publickey).",
   "ERROR: Repository not found.",
@@ -218,6 +236,16 @@ test.each([
   const fetched = failure(() => fetchBase(SSH_URL, "refs/heads/main"));
   expect((fetched as Error).message).toStartWith(`Could not fetch base 'refs/heads/main' from '${SSH_URL}': ${stderr}`.trimEnd());
   expect(remote.calls()).toBe(2);
+}, 30_000);
+
+test("a failed base fetch reports a bounded tail of Git's stderr", () => {
+  const remote = fakeSsh([Array.from({ length: 100 }, (_, line) => `ERROR: Repository not found (line ${line}).`).join("\n")]);
+  process.chdir(remote.local);
+  const message = (failure(() => fetchBase(SSH_URL, "refs/heads/main")) as Error).message;
+  expect(message).toContain("(line 99).\nfatal: Could not read from remote repository.");
+  expect(message).not.toContain("(line 0)");
+  expect(message.split("\n").length).toBeLessThanOrEqual(20);
+  expect(remote.calls()).toBe(1);
 }, 30_000);
 
 test("a push over SSH is sent once, while a read of the same remote is retried", () => {

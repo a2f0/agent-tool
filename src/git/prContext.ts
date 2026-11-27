@@ -2,6 +2,7 @@ import { gitEnvironment } from "./environment";
 import { spawnSync } from "node:child_process";
 import { boundedExecFileSync } from "../system/boundedCalls";
 import { retryGitHubRead } from "../system/githubRetry";
+import { outputTail } from "../system/outputTail";
 import { randomUUID } from "node:crypto";
 
 import { viewCurrentBranchPr } from "./currentBranchPr";
@@ -214,10 +215,11 @@ export function fetchBase(repositoryUrl: string, target: string): string {
         { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8", env: gitEnvironment() },
       );
       if (spawnExitCode("git fetch", result) === 0) return;
-      const stderr = result.stderr?.trim() ?? "";
-      // The retry classifies Git's stderr when there is any, rather than this message.
+      const stderr = result.stderr ?? "";
+      const detail = outputTail(stderr);
+      // The retry classifies Git's whole stderr when there is any, rather than this bounded message.
       throw Object.assign(new Error(
-        `Could not fetch base '${target}' from '${repositoryUrl}'${stderr ? `: ${stderr}` : "."}`,
+        `Could not fetch base '${target}' from '${repositoryUrl}'${detail ? `: ${detail}` : "."}`,
       ), { stderr });
     });
     return run("git", ["rev-parse", `${temporaryRef}^{commit}`]);

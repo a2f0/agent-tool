@@ -5,6 +5,7 @@ import { gitEnvironment } from "../git/environment";
 import { runRead } from "../git/prContext";
 import { boundedExecFileSync, withCallDeadline } from "../system/boundedCalls";
 import { TransientGitHubError } from "../system/githubRetry";
+import { outputTail } from "../system/outputTail";
 
 export function output(value: unknown): void { writeSync(1, `${JSON.stringify(value, null, 2)}\n`); }
 export function assert(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }
@@ -39,11 +40,6 @@ export function mutateGitCaptured(args: string[]): void {
   if (result.status === 0) return;
   const detail = outputTail(result.stderr || result.stdout || "");
   throw new Error(`git ${args[0]} failed (${result.signal ?? result.status})${detail ? `: ${detail}` : "."} Inspect checkout state before retrying.`);
-}
-/** The last lines of a command's output, bounded for an error message. */
-export function outputTail(text: string, lines = 20, characters = 2000): string {
-  const tail = text.trim().split("\n").slice(-lines).join("\n");
-  return tail.length > characters ? `…${tail.slice(-characters)}` : tail;
 }
 export function clean(): void { assert(!git(["status", "--porcelain=v1", "--untracked-files=all"]), "Checkout has local changes; preserve them before continuing."); }
 export function head(): string { return oid(git(["rev-parse", "HEAD"])); }
