@@ -162,12 +162,16 @@ export function scopeState(manifest: Pick<Manifest, "scope" | Harness>): ScopeSt
   return installed.length ? { status: "inferred", harnesses: installed } : { status: "none" };
 }
 
-/** What moves a scope: an install of `all` or of one harness. */
-export type ScopeEvent = { type: "install"; target: Harness | "all" };
+/**
+ * What moves a scope: an install of `all`, of one harness, or, for a bare install, of the recorded
+ * scope, which keeps a list and installs `all` otherwise.
+ */
+export type ScopeEvent = { type: "install"; target: Harness | "all" | "recorded" };
 
 /**
- * One install's transition: an `all` scope, or a list already naming the harness, stays the same
- * state; installing `all` gives `all`; a single install adds its harness to the list or inferred
+ * One install's transition: an `all` scope, a list already naming the harness, or a list a bare
+ * install regenerates stays the same state; installing `all`, or the recorded scope of an earlier
+ * manifest or none, gives `all`; a single install adds its harness to the list or inferred
  * harnesses, so a later push gate checks each.
  */
 export function scopeTransition(state: ScopeState, event: ScopeEvent): Extract<ScopeState, { status: "all" | "listed" }> {
@@ -177,7 +181,8 @@ export function scopeTransition(state: ScopeState, event: ScopeEvent): Extract<S
     case "none":
     case "listed":
     case "inferred": {
-      if (event.target === "all") return { status: "all" };
+      if (event.target === "recorded" && state.status === "listed") return state;
+      if (event.target === "all" || event.target === "recorded") return { status: "all" };
       if (state.status === "listed" && state.harnesses.includes(event.target)) return state;
       const previous = state.status === "none" ? [] : state.harnesses;
       return { status: "listed", harnesses: HARNESSES.filter(harness => harness === event.target || previous.includes(harness)) };
@@ -203,13 +208,13 @@ export function installPermissions(rootDir: string, target?: string, apply = fal
   const root = realpathSync(rootDir);
   const { raw: recorded, manifest } = readManifest(root);
   const project = projectCommands(root);
-  const state = scopeState(manifest);
-  const listed = target === undefined && state.status === "listed" ? state : undefined;
-  const targets = listed ? listed.harnesses : harnesses(target ?? "all");
+  const event: ScopeEvent = { type: "install", target: target === undefined ? "recorded" : harnessTarget(target) };
+  const scope = scopeTransition(scopeState(manifest), event);
+  // A single install writes its harness alone; `all` and the recorded scope write every harness the new scope covers.
+  const targets = event.target === "all" || event.target === "recorded" ? scopeHarnesses(scope) : [event.target];
   const changes = pending(root, targets, manifest, project);
   // Recording the version makes every upgrade change the manifest, so a committed sync is visible.
   const { schemaVersion: _schema, agentToolVersion: _version, scope: _scope, ...owned } = manifest;
-  const scope = listed ?? scopeTransition(state, { type: "install", target: harnessTarget(target ?? "all") });
   const next: Manifest = { schemaVersion: 1, agentToolVersion: AGENT_TOOL_VERSION, scope: scope.status === "all" ? "all" : scope.harnesses, ...owned };
   for (const change of changes) {
     if (change.harness === "claude") next.claude = claudePermissions(project);
@@ -300,7 +305,7 @@ function installCommands(manifest: Manifest): string {
   // A bare install keeps a listed scope, and installs `all` for the others.
   if (state.status !== "inferred") return all;
   const each = state.harnesses.map(harness => `agent-tool permissions install --harness ${harness} --apply`).join(", then ");
-  return state.status === "inferred" && EARLIER_ALL.every(harness => state.harnesses.includes(harness)) ? `${all}, or to keep only the recorded harnesses, ${each}` : each;
+  return EARLIER_ALL.every(harness => state.harnesses.includes(harness)) ? `${all}, or to keep only the recorded harnesses, ${each}` : each;
 }
 
 export function showPermissions(rootDir: string, target: string): string {

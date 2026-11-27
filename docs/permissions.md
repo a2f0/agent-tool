@@ -317,8 +317,9 @@ Each harness also has limits that the rules cannot change:
   the whole command is the stricter one: a rule that missed a redirected
   command would let Gemini approve its parts one by one, and outside `default`
   skip the redirection check. The rules need Gemini CLI 0.37.0 or later, the
-  oldest release the conformance test can load, and CI checks them with
-  Gemini's own policy engine
+  oldest release the conformance test can load, which the generated header
+  states; CI checks that floor and a current release with Gemini's own policy
+  engine
   ([dependency upgrades](dependency-upgrades.md#current-compatibility-constraints)).
   Releases 0.31.0 to 0.36, the first to load project policies
   (google-gemini/gemini-cli#18682), keep the rules to `default`, and their

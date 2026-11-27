@@ -122,7 +122,7 @@ export function codexRules(project: CatalogEntry[] = []): string {
  * 0.63.0 lets an allowed command redirect anywhere unprompted in `autoEdit`, so `autoEdit` keeps
  * the user's own rules. In `default`, Gemini 0.31.0's engine, the first to load the file, already
  * asks for redirection (`shouldDowngradeForRedirection` skips only `autoEdit` and YOLO); CI
- * checks the release scripts/testing/gemini-conformance.ts pins.
+ * checks the releases scripts/testing/gemini-conformance.ts pins, from the 0.37.0 floor.
  */
 export const GEMINI_MODES = ["default"] as const;
 /**
@@ -164,7 +164,7 @@ export function geminiPolicy(project: CatalogEntry[] = []): string {
     "# Each command ends at a space or the end of the command, never a quote, and a",
     "# command whose --apply form asks gets no rule. The rules apply in the default",
     "# approval mode only: plan mode stays read-only, autoEdit keeps the user's rules,",
-    "# and YOLO already allows every command.",
+    "# and YOLO already allows every command. Requires Gemini CLI 0.37.0 or later.",
   ];
   const invocations = `(?:${INVOCATIONS.map(regex).join("|")})`;
   for (const value of Object.keys(CLASSES) as PermissionClass[]) {
