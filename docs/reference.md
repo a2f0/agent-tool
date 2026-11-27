@@ -879,7 +879,10 @@ Each harness runs with its own read-only protections:
   load), `--disable-slash-commands`, NDJSON `stream-json` stdin/stdout, and
   session-only `--settings` (`agentMode: ""`, `toolPermission: "request-review"`,
   `allowNonWorkspaceAccess: false`) allowing `read_file` on the snapshot alone
-  while denying commands, writes, URLs, and MCP tools. User-global rules,
+  while denying commands, writes, URLs, and MCP tools. Prompts above the CLI's
+  inline message ceiling offload the untrusted diff envelope to a read-only
+  `diff.patch` allowed through `read_file` so `## Instructions` and the
+  `VERDICT:` requirement are never truncated. User-global rules,
   skills, hooks, and plugins under `~/.gemini/` still load because `agy` has no
   `--safe-mode` flag, though `--settings` denies still outrank user allow rules.
 - **Claude**: safe mode and read-only tools.
