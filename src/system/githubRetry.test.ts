@@ -1,14 +1,20 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { viewCurrentBranchPr } from "../git/currentBranchPr";
-import { runRead } from "../git/prContext";
+import { fetchBase, remoteBranchHead, runRead } from "../git/prContext";
+import { mutateGit } from "../workflows/core";
 import { withCallDeadline } from "./boundedCalls";
 import { GITHUB_RETRY, TransientGitHubError, retryCheckedGitHubMutation, transientGitHubFailure } from "./githubRetry";
 
 const defaults = { ...GITHUB_RETRY };
 const originalPath = process.env.PATH;
+const originalCwd = process.cwd();
+// The Git tests point Git at a fake ssh and away from this machine's Git configuration.
+const GIT_VARIABLES = ["GIT_SSH_COMMAND", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"] as const;
+const originalGit = Object.fromEntries(GIT_VARIABLES.map(name => [name, process.env[name]]));
 let directory: string;
 beforeEach(() => {
   directory = mkdtempSync(path.join(tmpdir(), "agent-tool-github-retry-"));
@@ -17,6 +23,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   process.env.PATH = originalPath;
+  process.chdir(originalCwd);
+  for (const name of GIT_VARIABLES) { if (originalGit[name] === undefined) delete process.env[name]; else process.env[name] = originalGit[name]; }
   Object.assign(GITHUB_RETRY, defaults);
   rmSync(directory, { recursive: true, force: true });
 });
@@ -134,4 +142,131 @@ test("a checked mutation is resent only after its recheck, and never after a cli
   const exhausted = run(Array(10).fill(TIMEOUT), () => false);
   expect(exhausted).toMatchObject({ sent: 4, checked: 3 });
   expect(exhausted.outcome).toBeInstanceOf(TransientGitHubError);
+});
+
+// The URL form the sweeps reach GitHub with when port 22 times out.
+const SSH_URL = "ssh://git@ssh.github.com:443/o/r.git";
+const SSH_TIMEOUT = "ssh: connect to host ssh.github.com port 443: Operation timed out";
+const SSH_CLOSED = "kex_exchange_identification: Connection closed by remote host\nConnection closed by 140.82.112.36 port 443";
+const SSH_RESET = "kex_exchange_identification: read: Connection reset by peer\nConnection reset by 140.82.112.36 port 443";
+
+function fixtureGit(cwd: string, args: string[]): string {
+  return execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } }).trim();
+}
+
+/**
+ * Real Git over a fake `ssh` that fails with each listed stderr in turn,
+ * exiting 255 as ssh does, then serves a bare repository with one commit on
+ * main. Git adds its own lines around each failure, as in the sweeps' logs.
+ */
+function fakeSsh(failures: string[]) {
+  const work = path.join(directory, "work"), bare = path.join(directory, "remote.git"), local = path.join(directory, "local");
+  fixtureGit(directory, ["init", "-q", "-b", "main", work]);
+  fixtureGit(work, ["commit", "-q", "--allow-empty", "-m", "chore: initialize"]);
+  fixtureGit(directory, ["clone", "-q", "--bare", work, bare]);
+  fixtureGit(directory, ["init", "-q", local]);
+  const bin = path.join(directory, "ssh-bin"); mkdirSync(bin);
+  const state = path.join(directory, "ssh-failures.json"), calls = path.join(directory, "ssh-calls");
+  const fail = (next: string[]) => { writeFileSync(state, JSON.stringify(next)); };
+  fail(failures);
+  // Named ssh, so Git passes it OpenSSH's options.
+  writeFileSync(path.join(bin, "ssh"), `#!${process.execPath}
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+appendFileSync(${JSON.stringify(calls)}, JSON.stringify(process.argv.slice(2)) + "\\n");
+const failures = JSON.parse(readFileSync(${JSON.stringify(state)}, "utf8"));
+if (failures.length) {
+  const stderr = failures.shift();
+  writeFileSync(${JSON.stringify(state)}, JSON.stringify(failures));
+  if (stderr) process.stderr.write(stderr + "\\n");
+  process.exit(255);
+}
+process.exit(spawnSync("git", ["upload-pack", ${JSON.stringify(bare)}], { stdio: "inherit" }).status ?? 1);
+`);
+  chmodSync(path.join(bin, "ssh"), 0o755);
+  Object.assign(process.env, { GIT_SSH_COMMAND: path.join(bin, "ssh"), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" });
+  return { oid: fixtureGit(work, ["rev-parse", "HEAD"]), work, local, fail, calls: () => existsSync(calls) ? readFileSync(calls, "utf8").split("\n").filter(Boolean).length : 0 };
+}
+
+test("a Git read over SSH is retried after a transient connection failure, and then succeeds", () => {
+  const remote = fakeSsh([SSH_TIMEOUT, SSH_CLOSED]);
+  // The listing behind pr checks --wait, pr preflight, repo context, and repo cleanup.
+  expect(remoteBranchHead(SSH_URL, "main")).toBe(remote.oid);
+  expect(remote.calls()).toBe(3);
+  // The base fetch behind repo context --fetch, repo cleanup, and pr merge.
+  process.chdir(remote.local);
+  remote.fail([SSH_RESET]);
+  expect(fetchBase(SSH_URL, "refs/heads/main")).toBe(remote.oid);
+  expect(remote.calls()).toBe(5);
+}, 30_000);
+
+test.each([
+  "git@github.com: Permission denied (publickey).",
+  "ERROR: Repository not found.",
+  "Host key verification failed.",
+  // ssh printed nothing: Git's own "Could not read from remote repository" is not transient on its own.
+  "",
+  // A permanent failure wins over a transient-looking line in the same output.
+  `git@github.com: Permission denied (publickey).\n${SSH_CLOSED}`,
+])("a permanent SSH failure is not retried: %p", (stderr) => {
+  const remote = fakeSsh([stderr, stderr, stderr]);
+  const listing = failure(() => remoteBranchHead(SSH_URL, "main"));
+  expect(listing).not.toBeInstanceOf(TransientGitHubError);
+  expect((listing as Error).message).toContain(`${stderr}\nfatal: Could not read from remote repository.`);
+  expect(remote.calls()).toBe(1);
+  process.chdir(remote.local);
+  const fetched = failure(() => fetchBase(SSH_URL, "refs/heads/main"));
+  expect((fetched as Error).message).toStartWith(`Could not fetch base 'refs/heads/main' from '${SSH_URL}': ${stderr}`.trimEnd());
+  expect(remote.calls()).toBe(2);
+}, 30_000);
+
+test("a push over SSH is sent once, while a read of the same remote is retried", () => {
+  const remote = fakeSsh(Array(10).fill(SSH_TIMEOUT));
+  process.chdir(remote.work);
+  // branch push's mutation: a push that failed in transit may still have landed.
+  expect(() => { mutateGit(["push", SSH_URL, "HEAD:refs/heads/fix/x"]); }).toThrow("git push failed");
+  expect(remote.calls()).toBe(1);
+  const error = failure(() => remoteBranchHead(SSH_URL, "main"));
+  expect(error).toBeInstanceOf(TransientGitHubError);
+  expect((error as TransientGitHubError).attempts).toBe(GITHUB_RETRY.attempts);
+  expect((error as Error).message).toContain(SSH_TIMEOUT);
+  expect(remote.calls()).toBe(1 + GITHUB_RETRY.attempts);
+  process.chdir(remote.local);
+  const fetched = failure(() => fetchBase(SSH_URL, "refs/heads/main"));
+  expect(fetched).toBeInstanceOf(TransientGitHubError);
+  expect((fetched as Error).message).toContain(`Could not fetch base 'refs/heads/main' from '${SSH_URL}': ${SSH_TIMEOUT}`);
+  expect((fetched as Error).message).toContain(`GitHub failed transiently on all ${GITHUB_RETRY.attempts} attempt(s)`);
+  expect(remote.calls()).toBe(1 + 2 * GITHUB_RETRY.attempts);
+}, 30_000);
+
+test("inside a wait, a Git read's retry never pauses past the wait's deadline", async () => {
+  const remote = fakeSsh([SSH_TIMEOUT]);
+  Object.assign(GITHUB_RETRY, { initialDelayMs: 60_000, maxDelayMs: 60_000 });
+  const error = await withCallDeadline(Date.now() + 5_000, () => failure(() => remoteBranchHead(SSH_URL, "main")));
+  expect(error).toBeInstanceOf(TransientGitHubError);
+  expect((error as TransientGitHubError).attempts).toBe(1);
+  expect(remote.calls()).toBe(1);
+}, 15_000);
+
+test("OpenSSH's connection failures are transient, and its authentication and absence errors are not", () => {
+  // Git ends every SSH failure with the same lines, so the ssh line before them decides.
+  const viaGit = (line: string) => `${line}\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.`;
+  for (const line of [
+    SSH_TIMEOUT,
+    "ssh: connect to host ssh.github.com port 443: Connection timed out",
+    "Connection timed out during banner exchange\nConnection to 140.82.112.36 port 443 timed out",
+    SSH_CLOSED,
+    SSH_RESET,
+    "Connection to ssh.github.com closed by remote host.",
+    "ssh: Could not resolve hostname ssh.github.com: Temporary failure in name resolution",
+  ]) expect([line, transientGitHubFailure(viaGit(line))]).toEqual([line, true]);
+  for (const line of [
+    "git@github.com: Permission denied (publickey).",
+    "ERROR: Repository not found.",
+    "Host key verification failed.",
+    "ssh: connect to host ssh.github.com port 443: Connection refused",
+    "ssh: Could not resolve hostname ssh.github.com: nodename nor servname provided, or not known",
+    "",
+    `git@github.com: Permission denied (publickey).\n${SSH_CLOSED}`,
+  ]) expect([line, transientGitHubFailure(viaGit(line))]).toEqual([line, false]);
 });

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { loadConfig, type AgentToolConfig } from "../config";
 import { remoteBranchHead } from "../git/prContext";
 import { gitEnvironment } from "../git/environment";
+import { retryGitHubRead } from "../system/githubRetry";
 import { assert, clean, currentBranch, flag, git, head, mutateGit, mutateGitCaptured, nativeBranch, oid, option, output, repository } from "./core";
 
 export function branchErrors(name: string, config: AgentToolConfig): string[] {
@@ -73,7 +74,8 @@ export function branchCommand(args: string[]): number {
     if (pushUrl !== url) assert(!remoteBranchHead(pushUrl, name), `Push destination branch '${name}' already exists.`);
     const baseOid = remoteBranchHead(url, base);
     assert(baseOid, `Remote base '${base}' does not exist.`);
-    git(["fetch", "--no-tags", remote, `refs/heads/${base}`]);
+    // Read-only on the remote, so a transient SSH or network failure is retried, unlike `branch push`'s push.
+    retryGitHubRead(() => git(["fetch", "--no-tags", remote, `refs/heads/${base}`]));
     assert(git(["rev-parse", "FETCH_HEAD"]) === baseOid && remoteBranchHead(url, base) === baseOid, "Base moved while fetching; retry creation.");
     mutateGitCaptured(["switch", "--no-track", "-c", name, oid(baseOid)]);
     assert(currentBranch() === name && head() === baseOid, "Checkout changed during branch creation.");
@@ -87,6 +89,7 @@ export function branchCommand(args: string[]): number {
   clean();
   assert(head() === expected, "HEAD differs from the reviewed commit.");
   const url = remoteUrl(remote, true);
+  // Sent once, never retried: a push that failed in transit may still have landed.
   mutateGit(["push", "--set-upstream", remote, `HEAD:refs/heads/${branch}`]);
   assert(head() === expected && currentBranch() === branch && remoteBranchHead(url, branch) === expected, "Push changed local or remote HEAD; review the resulting commit before shipping.");
   clean();
