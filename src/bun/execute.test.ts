@@ -107,6 +107,12 @@ test("the refusal advises regenerating only the recorded scope", () => {
   binary(gemini.project, "wrangler");
   writeFileSync(path.join(gemini.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "local" } } }));
   expect(spawnSync(process.execPath, [cli, "permissions", "install", "--harness", "gemini", "--apply"], { cwd: gemini.project, encoding: "utf8" }).status).toBe(0);
+  // A bare check covers the recorded scope alone, as the push gate does; `--harness all` still covers every harness.
+  const check = (...args: string[]) => spawnSync(process.execPath, [cli, "permissions", "check", ...args], { cwd: gemini.project, encoding: "utf8" });
+  const bare = check();
+  expect(bare.status).toBe(0);
+  expect(JSON.parse(bare.stdout)).toMatchObject({ ok: true, harnesses: ["gemini"] });
+  expect(check("--harness", "all").status).toBe(1);
   writeFileSync(path.join(gemini.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
   // The advice regenerates only the recorded scope, never widening it to `all`.
   expect(gemini.run(["x", "wrangler"]).stderr).toMatch(/Permission rules predate the current class of 'bun x wrangler'; regenerate them with approval \(agent-tool permissions install --harness gemini --apply\)/);

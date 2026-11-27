@@ -219,8 +219,20 @@ export function installPermissions(rootDir: string, target: string, apply = fals
   return [...changes.map(({ relative, status }) => ({ path: relative, status })), { path: PERMISSIONS_MANIFEST, status: manifestStatus }];
 }
 
-/** Each generated file, then the manifest's own entry, against one reading of the manifest. */
-function checks(root: string, targets: Harness[], { raw, manifest }: Recorded): PermissionCheck[] {
+/**
+ * Generated rule files outside the checked harnesses, which their harness still loads: a scope
+ * check reports each as `unmanaged`, so narrowing a scope cannot leave stale rules unchecked.
+ * Claude's settings file holds the user's own settings too, so only whole generated files count.
+ */
+function outsideScope(root: string, checked: Harness[]): PermissionCheck[] {
+  const present = (file: string) => { try { lstatSync(file); return true; } catch { return false; } };
+  return (Object.keys(GENERATED) as FileHarness[])
+    .filter(harness => !checked.includes(harness) && present(path.join(root, GENERATED[harness].relative)))
+    .map(harness => ({ path: GENERATED[harness].relative, status: "unmanaged" }));
+}
+
+/** Each generated file, then for a scope check any outside it, then the manifest's own entry, against one reading of the manifest. */
+function checks(root: string, targets: Harness[], { raw, manifest }: Recorded, scope = false): PermissionCheck[] {
   const project = projectCommands(root);
   const files = pending(root, targets, manifest, project).map((change): PermissionCheck => {
     if (change.status === "create") return { path: change.relative, status: "missing" };
@@ -228,7 +240,7 @@ function checks(root: string, targets: Harness[], { raw, manifest }: Recorded): 
     const managed = change.harness === "claude" ? JSON.stringify(manifest.claude) === JSON.stringify(claudePermissions(project)) : manifest[change.harness]?.sha256 === hash(change.contents);
     return { path: change.relative, status: managed ? "unchanged" : "unmanaged" };
   });
-  return [...files, manifestVersionCheck(PERMISSIONS_MANIFEST, raw !== undefined, manifest.agentToolVersion)];
+  return [...files, ...(scope ? outsideScope(root, targets) : []), manifestVersionCheck(PERMISSIONS_MANIFEST, raw !== undefined, manifest.agentToolVersion)];
 }
 
 /**
@@ -240,7 +252,7 @@ export function checkPermissions(rootDir: string, target?: string): { harnesses:
   const root = realpathSync(rootDir);
   const recorded = readManifest(root);
   const checked = target === undefined ? scopeHarnesses(scopeState(recorded.manifest)) : harnesses(target);
-  return { harnesses: checked, changes: checks(root, checked, recorded) };
+  return { harnesses: checked, changes: checks(root, checked, recorded, target === undefined) };
 }
 
 /**
@@ -253,7 +265,7 @@ export function checkInstalledPermissions(rootDir: string): { harnesses: Harness
   const recorded = readManifest(root);
   if (recorded.raw === undefined) return null;
   const checked = scopeHarnesses(scopeState(recorded.manifest));
-  return { harnesses: checked, changes: checks(root, checked, recorded) };
+  return { harnesses: checked, changes: checks(root, checked, recorded, true) };
 }
 
 /**

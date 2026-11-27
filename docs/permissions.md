@@ -267,9 +267,11 @@ push gate checks that scope, so `all` covers each harness a newer release adds
 and fails until `install --apply` writes its rules. Manifests written before
 the scope field have none and are read as scoped to the harnesses they
 record. Such a manifest gains a harness `all` added only through an `all`
-install, which is the default; until then `check`, which without `--harness`
-checks the recorded scope as the push gate does, reports the manifest
-`outdated`, and `check --harness all` also reports the harness `missing`. A
+install, which is the default; until an install, of `all` or of each recorded
+harness, `check`, which without `--harness` checks the recorded scope as the
+push gate does, reports the manifest `outdated`, and `check --harness all`
+also reports the harness `missing`. A scope check also reports a generated
+rules file outside the scope as `unmanaged`, since its harness still loads it. A
 single-harness install never narrows `all`: to keep a harness out, remove its
 generated rules and its manifest entry, set `scope` to the list of harnesses
 to keep, then install each of them. A scope

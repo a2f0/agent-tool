@@ -30,18 +30,20 @@ test.skipIf(!bundle)("Gemini CLI's engine allows routine commands in default mod
   expect(chunk).toBeDefined();
   const gemini = await import(chunk!) as Gemini;
   const workspace = mkdtempSync(path.join(tmpdir(), "gemini-policy-")); directories.push(workspace);
-  writeFileSync(path.join(workspace, "agent-tool.toml"), geminiPolicy());
+  // One project executable whose name needs escaping reaches Gemini's loader and ReDoS guard too.
+  const project = [{ command: "bun x a.b+c", class: "local" as const }];
+  writeFileSync(path.join(workspace, "agent-tool.toml"), geminiPolicy(project));
   // Tiers as Gemini assigns them: its own defaults 1, workspace policies 3.
   const defaults = await gemini.loadPoliciesFromToml([path.join(bundle!, "policies")], () => 1);
   const ours = await gemini.loadPoliciesFromToml([workspace], () => 3);
   expect({ defaults: defaults.errors, ours: ours.errors }).toEqual({ defaults: [], ours: [] });
-  expect(ours.rules.length).toBe(CATALOG.filter(entry => CLASSES[strictest(entry)].decision === "allow").length);
+  expect(ours.rules.length).toBe([...CATALOG, ...project].filter(entry => CLASSES[strictest(entry)].decision === "allow").length);
   const decide = async (approvalMode: string, command: string) => {
     const engine = new gemini.PolicyEngine({ rules: [...defaults.rules, ...ours.rules], checkers: [...defaults.checkers, ...ours.checkers], approvalMode, nonInteractive: false });
     return (await engine.check({ name: "run_shell_command", args: { command } }, undefined)).decision;
   };
-  const allowed = ["agent-tool pr checks --wait --head abc", "bun run agent-tool repo base-health", "node_modules/.bin/agent-tool branch push abc --remote origin", 'agent-tool pr open "feat: x" --body-file b.md', "agent-tool pr checks && agent-tool repo context"];
-  const asked = ["agent-tool pr checks && rm x", "agent-tool pr checks; rm x", "agent-tool pr checks | sh", "agent-tool pr checks & rm x", "agent-tool pr checks x\nrm x", "agent-tool pr checks > f", "agent-tool pr checks > ~/.zshrc 2>&1", "agent-tool pr checks && agent-tool repo context > f", "agent-tool pr checks $(rm x)", "agent-tool pr checks `rm x`", "agent-tool pr checks <(rm x)", 'agent-tool pr checks"X"', 'agent-tool bun x vite"-node"', "agent-tool pr merge x abc main", "agent-tool permissions install --apply", "node_modules/xbin/agent-tool pr checks",
+  const allowed = ["agent-tool bun x a.b+c -- --check", "agent-tool pr checks --wait --head abc", "bun run agent-tool repo base-health", "node_modules/.bin/agent-tool branch push abc --remote origin", 'agent-tool pr open "feat: x" --body-file b.md', "agent-tool pr checks && agent-tool repo context"];
+  const asked = ["agent-tool bun x aXb+c", "agent-tool bun x a.bbc", "agent-tool pr checks && rm x", "agent-tool pr checks; rm x", "agent-tool pr checks | sh", "agent-tool pr checks & rm x", "agent-tool pr checks x\nrm x", "agent-tool pr checks > f", "agent-tool pr checks > ~/.zshrc 2>&1", "agent-tool pr checks && agent-tool repo context > f", "agent-tool pr checks $(rm x)", "agent-tool pr checks `rm x`", "agent-tool pr checks <(rm x)", 'agent-tool pr checks"X"', 'agent-tool bun x vite"-node"', "agent-tool pr merge x abc main", "agent-tool permissions install --apply", "node_modules/xbin/agent-tool pr checks",
     'agent-tool pr checks "$(rm x)"', "agent-tool pr checks >(rm x)", "agent-tool pr checks |& sh", "{ agent-tool pr checks; rm x; }", "(agent-tool pr checks; rm x)",
     "agent-tool pr threads reply 1 --body-file - <<EOF\nx\nEOF", "agent-tool pr threads reply 1 --body-file - <<< x", "X=1 agent-tool pr checks", "env agent-tool pr checks"];
   const decisions: Record<string, Record<string, string>> = {}, expected: Record<string, Record<string, string>> = {};

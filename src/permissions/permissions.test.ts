@@ -330,6 +330,20 @@ test("the push gate checks the recorded scope, or an earlier manifest's harnesse
   expect(checkPermissions(only)).toMatchObject({ harnesses: ["gemini"], changes: [{ status: "unchanged" }, { status: "unchanged" }] });
   expect(checkPermissions(only, "all").harnesses).toEqual(["claude", "codex", "gemini"]);
   expect(checkPermissions(project()).harnesses).toEqual(["claude", "codex", "gemini"]);
+  // A generated file left outside a listed scope is still loaded by its harness, so a scope check reports it.
+  const narrowed = project();
+  installPermissions(narrowed, "codex", true);
+  mkdirSync(path.join(narrowed, ".gemini/policies"), { recursive: true });
+  writeFileSync(path.join(narrowed, ".gemini/policies/agent-tool.toml"), "stale\n");
+  const stray = { path: ".gemini/policies/agent-tool.toml", status: "unmanaged" as const };
+  expect(checkPermissions(narrowed).changes).toContainEqual(stray);
+  expect(checkInstalledPermissions(narrowed)!.changes).toContainEqual(stray);
+  expect(checkPermissions(narrowed).changes.at(-1)!.path).toBe(".agent-tool-permissions.json");
+  // A named harness is checked as named, and Claude's settings, which hold the user's own too, never count.
+  expect(checkPermissions(narrowed, "codex").changes).not.toContainEqual(stray);
+  mkdirSync(path.join(narrowed, ".claude"), { recursive: true });
+  writeFileSync(path.join(narrowed, ".claude/settings.json"), "{}\n");
+  expect(checkPermissions(narrowed).changes.filter(change => change.status === "unmanaged")).toEqual([stray]);
   // A scope list that omits a recorded harness, as an earlier release's install leaves after a rollback,
   // still covers it: its rules stay checked, and the next install records it in the scope.
   const both = project();
