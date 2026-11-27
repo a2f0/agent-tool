@@ -746,7 +746,8 @@ writes the same bytes where each harness discovers them:
 | Hermes | `.agents/skills` (trusted projects) |
 | All | `.agents/skills` and `.claude/skills`; OpenCode discovers both without adding a third directory |
 
-Discovery paths follow the [Codex](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills),
+Discovery paths follow the [Antigravity](https://antigravity.google/docs/skills),
+[Codex](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills),
 [Claude Code](https://code.claude.com/docs/en/skills),
 [OpenCode](https://opencode.ai/docs/skills/), and
 [Hermes](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills#project-local-skills)

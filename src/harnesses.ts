@@ -1,6 +1,6 @@
 import { type PrContext, resolveReviewContext, run } from "./git/prContext";
 import { withPinnedReviewInput } from "./review/pinnedReviewInput";
-import { resolveReviewEffort, type ReviewEffort } from "./review/reviewEffort";
+import { DEFAULT_AGY_EFFORT, resolveReviewEffort, type ReviewEffort } from "./review/reviewEffort";
 import { AGY_ACCESS_NOTE, buildReviewPrompt, CLAUDE_ACCESS_NOTE, CODEX_ACCESS_NOTE, OPENCODE_ACCESS_NOTE } from "./review/reviewPrompt";
 import { spawnAgyReview } from "./review/solicitAgyReview";
 import { spawnClaudeReview } from "./review/solicitClaudeCodeReview";
@@ -18,7 +18,7 @@ export interface Harness {
 
 /** Harness-specific discovery and invocation stay behind this small boundary. */
 export const HARNESSES: readonly Harness[] = [
-  { name: "agy", executable: "agy", skillDirectory: ".agents/skills", defaultEffort: "high", accessNote: AGY_ACCESS_NOTE, review: spawnAgyReview },
+  { name: "agy", executable: "agy", skillDirectory: ".agents/skills", defaultEffort: DEFAULT_AGY_EFFORT, accessNote: AGY_ACCESS_NOTE, review: spawnAgyReview },
   { name: "claude", executable: "claude", skillDirectory: ".claude/skills", defaultEffort: "xhigh", accessNote: CLAUDE_ACCESS_NOTE, review: spawnClaudeReview },
   { name: "codex", executable: "codex", skillDirectory: ".agents/skills", defaultEffort: "high", accessNote: CODEX_ACCESS_NOTE, review: spawnCodexReview },
   { name: "opencode", executable: "opencode", skillDirectory: ".opencode/skills", defaultEffort: "high", accessNote: OPENCODE_ACCESS_NOTE, review: spawnOpencodeReview },

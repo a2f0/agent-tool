@@ -2,21 +2,11 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadConfig } from "../config";
-import {
-  MAX_BUFFER_BYTES,
-  resolveReviewContext,
-  spawnExitCode,
-} from "../git/prContext";
+import { MAX_BUFFER_BYTES, spawnExitCode } from "../git/prContext";
 import { withReviewDiagnostics } from "./diagnostics";
 import { reviewExecutable } from "./executable";
-import { withPinnedReviewInput } from "./pinnedReviewInput";
-import {
-  DEFAULT_AGY_EFFORT,
-  type ReviewEffort,
-  resolveReviewEffort,
-} from "./reviewEffort";
+import type { ReviewEffort } from "./reviewEffort";
 import { spawnReviewer } from "./reviewerProcess";
-import { AGY_ACCESS_NOTE, buildReviewPrompt } from "./reviewPrompt";
 import { type ReviewerEnv, relayReviewWithRetry } from "./runReview";
 
 /**
@@ -81,6 +71,10 @@ export function buildAgyReviewArgs(
   ];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * Extract the terminal `result` event from `agy --output-format stream-json`
  * NDJSON output. Non-JSON lines are ignored so diagnostic noise cannot hide a
@@ -106,12 +100,9 @@ export function extractAgyStreamResult(stdout: string): {
     } catch {
       continue;
     }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
-    const record = parsed as Record<string, unknown>;
-    if (record.event !== "result") continue;
-    const payload = record.result;
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) continue;
-    const result = payload as Record<string, unknown>;
+    if (!isRecord(parsed) || parsed.event !== "result") continue;
+    const result = parsed.result;
+    if (!isRecord(result)) continue;
     const status = typeof result.status === "string" ? result.status : null;
     const response = typeof result.response === "string" ? result.response : "";
     const error = typeof result.error === "string" ? result.error : null;
@@ -139,9 +130,10 @@ export async function spawnAgyReview(
     process.stderr.write("Antigravity CLI (`agy`) executable unavailable outside the repository.\n");
     return 1;
   }
+  // Load config before creating the temp directory so a bad config never leaks it.
+  const reviewConfig = loadConfig().review;
   const outDir = mkdtempSync(path.join(tmpdir(), "agent-tool-agy-"));
   const streamInput = `${JSON.stringify({ event: "user", message: { content: prompt } })}\n`;
-  const reviewConfig = loadConfig().review;
   try {
     return await relayReviewWithRetry("agy", async () => {
       const result = await withReviewDiagnostics("agy", (fd) =>
@@ -162,13 +154,12 @@ export async function spawnAgyReview(
       );
       const exitCode = spawnExitCode("agy", result);
       const parsed = extractAgyStreamResult(result.stdout ?? "");
-      if (parsed.error) {
-        process.stderr.write(`agy review error: ${parsed.error}\n`);
-      }
       if (exitCode !== 0) {
+        if (parsed.error) process.stderr.write(`agy review error: ${parsed.error}\n`);
         return { exitCode, review: "" };
       }
       if (parsed.status !== null && parsed.status !== "SUCCESS") {
+        if (parsed.error) process.stderr.write(`agy review error: ${parsed.error}\n`);
         return { exitCode: 1, review: "" };
       }
       return { exitCode: 0, review: parsed.review };
@@ -176,29 +167,4 @@ export async function spawnAgyReview(
   } finally {
     rmSync(outDir, { recursive: true, force: true });
   }
-}
-
-/**
- * Ask the local `agy` CLI to review the current branch's diff. Branch/PR/base
- * are derived from git + GitHub; when the branch has no PR yet the diff is
- * taken against the default branch. The prompt streams via NDJSON on stdin.
- */
-export function solicitAgyReview(
-  rootDir: string,
-  effortArg?: string,
-): Promise<number> {
-  const effort = resolveReviewEffort(effortArg, DEFAULT_AGY_EFFORT);
-  const context = resolveReviewContext();
-  return withPinnedReviewInput(rootDir, context, (input) => {
-    const prompt = buildReviewPrompt({
-      context,
-      diff: input.diff,
-      reviewInstructions: input.reviewInstructions,
-      accessNote: AGY_ACCESS_NOTE,
-      repositoryRoot: input.snapshotRoot,
-      generatedFiles: input.generatedFiles,
-    });
-
-    return spawnAgyReview(prompt, effort, input.snapshotRoot);
-  });
 }

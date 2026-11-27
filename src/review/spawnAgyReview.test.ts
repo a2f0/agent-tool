@@ -20,15 +20,18 @@ const bareEnv: ReviewerEnv = { PATH: SYSTEM_PATH };
 const cwdPath = path.join(stubDir, "cwd");
 const stdinPath = path.join(stubDir, "stdin");
 const argvPath = path.join(stubDir, "argv");
+const countPath = path.join(stubDir, "count");
 
 function stubAgy(ndjson: string, exitCode = 0): void {
   const payloadPath = path.join(stubDir, "payload");
+  rmSync(countPath, { force: true });
   writeFileSync(payloadPath, ndjson);
   const script = [
     "#!/bin/sh",
     `cat > ${JSON.stringify(stdinPath)}`,
     `pwd > ${JSON.stringify(cwdPath)}`,
     `printf '%s' "$*" > ${JSON.stringify(argvPath)}`,
+    `echo x >> ${JSON.stringify(countPath)}`,
     "echo 'stderr diagnostics' >&2",
     `cat ${JSON.stringify(payloadPath)}`,
     `exit ${exitCode}`,
@@ -102,13 +105,41 @@ describe("spawnAgyReview", () => {
     expect(existsSync(path.join(stubDir, "flaked-once"))).toBe(true);
   });
 
-  test("fails when stream-json reports ERROR status even on exit 0", async () => {
+  test("passes configured review.agyModel through to --model", async () => {
+    const configPath = path.join(stubDir, "agent-tool.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({ schemaVersion: 1, review: { agyModel: "claude-sonnet-5-5" } }),
+    );
+    stubAgy(
+      `${JSON.stringify({ event: "result", result: { status: "SUCCESS", response: "VERDICT: CLEAN\n" } })}\n`,
+    );
+    const previous = process.env.AGENT_TOOL_CONFIG;
+    process.env.AGENT_TOOL_CONFIG = configPath;
+    try {
+      expect(await spawnAgyReview("prompt", "high", stubDir, stubEnv)).toBe(0);
+      expect(readFileSync(argvPath, "utf8")).toContain("--model claude-sonnet-5-5");
+    } finally {
+      if (previous === undefined) delete process.env.AGENT_TOOL_CONFIG;
+      else process.env.AGENT_TOOL_CONFIG = previous;
+    }
+  });
+
+  test("retries once and fails when exit 0 emits no result event", async () => {
+    stubAgy(`${JSON.stringify({ event: "init", conversation_id: "c1" })}\n`, 0);
+
+    expect(await spawnAgyReview("prompt", "high", stubDir, stubEnv)).toBe(1);
+    expect(readFileSync(countPath, "utf8").trim().split("\n")).toHaveLength(2);
+  });
+
+  test("fails without retrying when stream-json reports ERROR status even on exit 0", async () => {
     stubAgy(
       `${JSON.stringify({ event: "result", result: { status: "ERROR", response: "", error: "invalid model" } })}\n`,
       0,
     );
 
     expect(await spawnAgyReview("prompt", "high", stubDir, stubEnv)).toBe(1);
+    expect(readFileSync(countPath, "utf8").trim().split("\n")).toHaveLength(1);
   });
 
   test("passes through a nonzero exit without retrying", async () => {
