@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   buildAgyReviewArgs,
   buildAgyReviewSettings,
+  encodeAgyStreamUserMessage,
   extractAgyStreamResult,
 } from "./solicitAgyReview";
 
@@ -41,6 +42,27 @@ describe("buildAgyReviewSettings", () => {
       "download_url(*)",
       "mcp(*)",
     ]);
+  });
+
+  test("adds explicit extra read_file entries when offloading an oversized diff", () => {
+    const diffPath = path.join(snapshotDir, "diff.patch");
+    const settings = JSON.parse(buildAgyReviewSettings(snapshotDir, [diffPath])) as {
+      permissions: { allow: string[] };
+    };
+    expect(settings.permissions.allow).toContain(
+      `read_file(${path.resolve(diffPath).replaceAll("\\", "/")})`,
+    );
+  });
+});
+
+describe("encodeAgyStreamUserMessage", () => {
+  test("encodes one NDJSON user turn line", () => {
+    const line = encodeAgyStreamUserMessage("hello\nworld");
+    expect(line.endsWith("\n")).toBe(true);
+    expect(JSON.parse(line)).toEqual({
+      event: "user",
+      message: { content: "hello\nworld" },
+    });
   });
 });
 

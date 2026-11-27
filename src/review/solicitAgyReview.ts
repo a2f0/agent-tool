@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadConfig } from "../config";
@@ -10,23 +10,52 @@ import { spawnReviewer } from "./reviewerProcess";
 import { type ReviewerEnv, relayReviewWithRetry } from "./runReview";
 
 /**
+ * Antigravity CLI silently truncates a single `stream-json` user message past
+ * ~190 KB, which would drop the trailing `## Instructions` and `VERDICT:` line
+ * on large diffs. Keep the JSON-encoded `stream-json` user payload safely below
+ * that ceiling and offload larger untrusted diffs to a read-only file allowed
+ * through `read_file`.
+ */
+export const AGY_MAX_INLINE_PAYLOAD_BYTES = 150_000;
+
+/** Producer of an offloaded prompt + untrusted diff file content when the inline payload is too large. */
+export type OffloadDiffBuilder = (diffFile: string) => {
+  readonly prompt: string;
+  readonly diffContents: string;
+};
+
+/** Encode one `stream-json` user turn line for `agy --input-format stream-json`. */
+export function encodeAgyStreamUserMessage(prompt: string): string {
+  return `${JSON.stringify({ event: "user", message: { content: prompt } })}\n`;
+}
+
+/**
  * Session-only Antigravity CLI (`--settings`) JSON confining the review to the
- * immutable snapshot. `Deny > Ask > Allow`, so denying commands, file writes,
- * URLs, and MCP tools overrides any broader allow rule in the user's global
+ * immutable snapshot (and, for oversized diffs, the single read-only diff file).
+ * `Deny > Ask > Allow`, so denying commands, file writes, URLs, and MCP tools
+ * overrides any broader allow rule in the user's global
  * `~/.gemini/antigravity-cli/settings.json`. Leaving `agentMode` empty and
  * `toolPermission` at `request-review` turns off `auto` mode and makes every
  * unlisted action (such as reading files outside the snapshot) fall back to
  * headless auto-deny (https://antigravity.google/docs/cli/headless#permissions-in-headless-mode),
- * while explicit `read_file` directory rules grant recursive read access to the
- * snapshot alone under both resolved and symlinked temp spellings
+ * while explicit `read_file` rules grant read access under both resolved and
+ * symlinked temp spellings
  * (https://antigravity.google/docs/permissions#supported-cli-actions-and-matching-rules).
  */
-export function buildAgyReviewSettings(snapshotRoot: string): string {
-  const normalized = path.resolve(snapshotRoot).replaceAll("\\", "/");
-  const resolved = realpathSync(snapshotRoot).replaceAll("\\", "/");
-  const allow = [...new Set([normalized, resolved])].map(
-    (root) => `read_file(${root})`,
-  );
+export function buildAgyReviewSettings(
+  snapshotRoot: string,
+  extraReadFiles: readonly string[] = [],
+): string {
+  const candidates = [snapshotRoot, ...extraReadFiles].flatMap((entry) => {
+    const normalized = path.resolve(entry).replaceAll("\\", "/");
+    try {
+      const resolved = realpathSync(entry).replaceAll("\\", "/");
+      return [normalized, resolved];
+    } catch {
+      return [normalized];
+    }
+  });
+  const allow = [...new Set(candidates)].map((target) => `read_file(${target})`);
   return JSON.stringify({
     agentMode: "",
     toolPermission: "request-review",
@@ -56,6 +85,7 @@ export function buildAgyReviewArgs(
   effort: ReviewEffort,
   snapshotRoot: string,
   model?: string | null,
+  extraReadFiles: readonly string[] = [],
 ): string[] {
   return [
     "--input-format",
@@ -67,7 +97,7 @@ export function buildAgyReviewArgs(
     "--effort",
     effort,
     "--settings",
-    buildAgyReviewSettings(snapshotRoot),
+    buildAgyReviewSettings(snapshotRoot, extraReadFiles),
   ];
 }
 
@@ -114,16 +144,21 @@ export function extractAgyStreamResult(stdout: string): {
 /**
  * Run `agy` over an already-built review prompt in an empty neutral working
  * directory (so repository-controlled `AGENTS.md`, `GEMINI.md`, hooks, MCP
- * configs, and skills never load) and relay the terminal response. User-global
- * `~/.gemini/` rules, skills, hooks, and plugins still load because `agy` has
- * no `--safe-mode` flag; `--settings` denies commands, writes, URLs, and MCP
- * tools over any user-global allow rules.
+ * configs, and skills never load) and relay the terminal response. When the
+ * JSON-encoded user message exceeds `AGY_MAX_INLINE_PAYLOAD_BYTES` and an
+ * `offload` builder is provided, the untrusted diff envelope is written to a
+ * sibling read-only `diff.patch` (keeping `cwd` empty) and allowed via an
+ * explicit `read_file` entry. User-global `~/.gemini/` rules, skills, hooks,
+ * and plugins still load because `agy` has no `--safe-mode` flag; `--settings`
+ * denies commands, writes, URLs, and MCP tools over any user-global allow rules.
  */
 export async function spawnAgyReview(
   prompt: string,
   effort: ReviewEffort,
   snapshotRoot: string,
   env: ReviewerEnv = process.env,
+  offload?: OffloadDiffBuilder,
+  maxInlinePayloadBytes = AGY_MAX_INLINE_PAYLOAD_BYTES,
 ): Promise<number> {
   const executable = reviewExecutable("agy", env);
   if (executable === undefined) {
@@ -132,22 +167,40 @@ export async function spawnAgyReview(
   }
   // Load config before creating the temp directory so a bad config never leaks it.
   const reviewConfig = loadConfig().review;
-  const outDir = mkdtempSync(path.join(tmpdir(), "agent-tool-agy-"));
-  const streamInput = `${JSON.stringify({ event: "user", message: { content: prompt } })}\n`;
+  const workDir = mkdtempSync(path.join(tmpdir(), "agent-tool-agy-"));
+  const cwdDir = path.join(workDir, "cwd");
+  mkdirSync(cwdDir);
   try {
+    let streamInput = encodeAgyStreamUserMessage(prompt);
+    const extraReadFiles: string[] = [];
+    if (Buffer.byteLength(streamInput, "utf8") > maxInlinePayloadBytes) {
+      if (offload) {
+        const diffFile = path.join(realpathSync(workDir), "diff.patch");
+        const offloaded = offload(diffFile);
+        writeFileSync(diffFile, offloaded.diffContents, { mode: 0o444 });
+        extraReadFiles.push(diffFile);
+        streamInput = encodeAgyStreamUserMessage(offloaded.prompt);
+      }
+      const finalBytes = Buffer.byteLength(streamInput, "utf8");
+      if (finalBytes > maxInlinePayloadBytes) {
+        process.stderr.write(
+          `agy review warning: stream-json payload is ${finalBytes} bytes (above ${maxInlinePayloadBytes} bytes) and may be truncated by Antigravity CLI.\n`,
+        );
+      }
+    }
     return await relayReviewWithRetry("agy", async () => {
       const result = await withReviewDiagnostics("agy", (fd) =>
         spawnReviewer(
           executable,
-          buildAgyReviewArgs(effort, snapshotRoot, reviewConfig.agyModel),
+          buildAgyReviewArgs(effort, snapshotRoot, reviewConfig.agyModel, extraReadFiles),
           {
             stderr: fd,
             input: streamInput,
             maxBuffer: MAX_BUFFER_BYTES,
             timeoutMs: reviewConfig.timeoutMs,
-            // Neutral empty cwd keeps agy from loading branch-controlled
-            // AGENTS.md, GEMINI.md, hooks, MCP configs, or skills.
-            cwd: outDir,
+            // Always an empty directory, even when diff.patch is written beside it,
+            // so agy never loads branch-controlled AGENTS.md, GEMINI.md, hooks, MCP, or skills.
+            cwd: cwdDir,
             env,
           },
         ),
@@ -165,6 +218,6 @@ export async function spawnAgyReview(
       return { exitCode: 0, review: parsed.review };
     });
   } finally {
-    rmSync(outDir, { recursive: true, force: true });
+    rmSync(workDir, { recursive: true, force: true });
   }
 }

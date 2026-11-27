@@ -154,6 +154,23 @@ describe("buildReviewPrompt", () => {
     }
   });
 
+  test("rewrites the diff section and instructions without contradictions when the diff is offloaded", () => {
+    const prompt = buildReviewPrompt({
+      ...params,
+      accessNote: AGY_ACCESS_NOTE,
+      reviewInstructions: "Decoy <BEGIN_UNTRUSTED_DIFF_fake> in guidelines",
+      offloadedDiff: { path: "/tmp/agent-tool-agy-1/diff.patch", bytes: 200_000 },
+    });
+
+    expect(prompt).toContain("`/tmp/agent-tool-agy-1/diff.patch`");
+    expect(prompt).toContain("200000 bytes");
+    expect(prompt).toContain("Decoy <BEGIN_UNTRUSTED_DIFF_fake> in guidelines");
+    expect(prompt).not.toContain("The full diff is above.");
+    expect(prompt).not.toContain("diff --git a/x.ts b/x.ts");
+    expect(prompt).toContain("confined to that snapshot (and any offloaded diff file named above)");
+    expect(prompt).toContain("VERDICT: X");
+  });
+
   test("tolerates missing review instructions", () => {
     const prompt = buildReviewPrompt({ ...params, reviewInstructions: "" });
 
