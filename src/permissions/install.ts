@@ -162,17 +162,22 @@ export function scopeState(manifest: Pick<Manifest, "scope" | Harness>): ScopeSt
   return installed.length ? { status: "inferred", harnesses: installed } : { status: "none" };
 }
 
+/** What `--harness all` wrote before manifests recorded their scope and `all` covered Gemini. */
+const EARLIER_ALL: readonly Harness[] = ["claude", "codex"];
+
 /**
  * What moves a scope: an install of `all`, of one harness, or, for a bare install, of the recorded
- * scope, which keeps a list and installs `all` otherwise.
+ * scope, which keeps a list and the harnesses of an earlier manifest that `all` did not write, and
+ * installs `all` otherwise.
  */
 export type ScopeEvent = { type: "install"; target: Harness | "all" | "recorded" };
 
 /**
  * One install's transition: an `all` scope, a list already naming the harness, or a list a bare
- * install regenerates stays the same state; installing `all`, or the recorded scope of an earlier
- * manifest or none, gives `all`; a single install adds its harness to the list or inferred
- * harnesses, so a later push gate checks each.
+ * install regenerates stays the same state; a bare install lists an earlier manifest's harnesses
+ * unless they are what `all` then wrote; installing `all`, or the recorded scope of such a manifest
+ * or none, gives `all`; a single install adds its harness to the list or inferred harnesses, so a
+ * later push gate checks each.
  */
 export function scopeTransition(state: ScopeState, event: ScopeEvent): Extract<ScopeState, { status: "all" | "listed" }> {
   switch (state.status) {
@@ -181,8 +186,12 @@ export function scopeTransition(state: ScopeState, event: ScopeEvent): Extract<S
     case "none":
     case "listed":
     case "inferred": {
-      if (event.target === "recorded" && state.status === "listed") return state;
-      if (event.target === "all" || event.target === "recorded") return { status: "all" };
+      if (event.target === "recorded") {
+        if (state.status === "listed") return state;
+        if (state.status === "inferred" && !EARLIER_ALL.every(harness => state.harnesses.includes(harness))) return { status: "listed", harnesses: state.harnesses };
+        return { status: "all" };
+      }
+      if (event.target === "all") return { status: "all" };
       if (state.status === "listed" && state.harnesses.includes(event.target)) return state;
       const previous = state.status === "none" ? [] : state.harnesses;
       return { status: "listed", harnesses: HARNESSES.filter(harness => harness === event.target || previous.includes(harness)) };
@@ -292,8 +301,6 @@ export function checkRecordedPermissions(rootDir: string): { changes: Permission
   return { changes: checks(root, HARNESSES.filter(harness => recorded.manifest[harness] !== undefined), recorded), install: installCommands(recorded.manifest) };
 }
 
-/** What `--harness all` wrote before manifests recorded their scope and `all` covered Gemini. */
-const EARLIER_ALL: readonly Harness[] = ["claude", "codex"];
 
 /**
  * The installs that regenerate a manifest's rules without widening its scope: `all`, or one per
@@ -302,10 +309,10 @@ const EARLIER_ALL: readonly Harness[] = ["claude", "codex"];
  */
 function installCommands(manifest: Manifest): string {
   const state = scopeState(manifest), all = "agent-tool permissions install --apply";
-  // A bare install keeps a listed scope, and installs `all` for the others.
-  if (state.status !== "inferred") return all;
+  // A bare install keeps the recorded scope; only an earlier `all` install's harnesses offer a narrower choice.
+  if (state.status !== "inferred" || !EARLIER_ALL.every(harness => state.harnesses.includes(harness))) return all;
   const each = state.harnesses.map(harness => `agent-tool permissions install --harness ${harness} --apply`).join(", then ");
-  return EARLIER_ALL.every(harness => state.harnesses.includes(harness)) ? `${all}, or to keep only the recorded harnesses, ${each}` : each;
+  return `${all}, or to keep only the recorded harnesses, ${each}`;
 }
 
 export function showPermissions(rootDir: string, target: string): string {

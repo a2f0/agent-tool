@@ -263,24 +263,28 @@ agent-tool permissions check              # CI: the recorded scope
   Gemini's file load order decides. A locally edited policy file is refused
   rather than overwritten; other files in `.gemini/policies/` are left alone.
 
-The manifest also records the `scope` installs asked for: `all`, which a later
-single-harness install keeps, or the harnesses single installs added up.
-`install` and `check` without `--harness` follow that scope, as the push gate
-does: a list stays the harnesses it names, and `all` covers each harness a
-newer release adds, so the check fails until `install --apply` writes its
-rules; `--harness all` widens a list. Manifests written before the scope field
-have none and are read as scoped to the harnesses they record, and a bare
-install gives them `all`, so they gain the harnesses `all` added. Until an
-install, of `all` or of each recorded harness, `check` reports such a manifest
-`outdated`, and `check --harness all` also reports the new harness `missing`.
-A scope check also reports a generated rules file outside the scope as
-`unmanaged`, since its harness still loads it. A single-harness install never
-narrows `all`: to keep a harness out, remove its generated rules and its
-manifest entry, set `scope` to the list of harnesses to keep, then run
-`install --apply`. A scope list also covers every harness the manifest
-records, so a list that leaves one out, as an earlier release's install can
-after a rollback, still checks its rules, and the next install adds it to the
-list.
+The manifest also records the `scope` installs asked for. `install` and
+`check` without `--harness` follow it, as the push gate does, so a check fails
+until an install writes the rules a scope covers:
+
+| Recorded scope | Bare `install` | `install --harness <name>` | Bare `check` and the push gate |
+| --- | --- | --- | --- |
+| `all` | `all` | `all`, writing that harness | every current harness |
+| A list | the list | the list plus that harness | the list |
+| None, recording Claude and Codex (what `all` wrote before scopes) | `all` | those plus that harness | the recorded harnesses |
+| None, recording other harnesses | those harnesses | those plus that harness | the recorded harnesses |
+| None, recording no harness | `all` | that harness | every current harness |
+
+`install --harness all` always gives `all`, so `all` covers each harness a newer
+release adds. Until an install, `check` reports a manifest from an earlier
+release `outdated`, and `check --harness all` also reports a new harness
+`missing`. A scope check also reports a generated rules file outside the scope
+as `unmanaged`, since its harness still loads it. No install narrows `all`: to
+keep a harness out, remove its generated rules and its manifest entry, set
+`scope` to the list of harnesses to keep, then run `install --apply`. A scope
+list also covers every harness the manifest records, so a list that leaves one
+out, as an earlier release's install can after a rollback, still checks its
+rules, and the next install adds it to the list.
 
 The manifest also records, as `agentToolVersion`, the agent-tool release that
 wrote it, so every upgrade changes it even when no rule changed, and the

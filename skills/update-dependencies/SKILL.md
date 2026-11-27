@@ -51,14 +51,14 @@ After upgrading agent-tool, run the repository's skill/permission sync commands.
 For each ownership manifest they do not refresh, run its installer directly:
 `agent-tool skills install --harness <existing-scope> --apply` for
 `.agent-tool-skills.json`, and `agent-tool permissions install --apply` for
-`.agent-tool-permissions.json`, which keeps a scope that lists harnesses and
-installs `all` otherwise. Preserve each harness scope, and commit the
-ownership manifests with any generated files. When `all` gains a harness, the
-install adds that harness's rules file, such as `.gemini/policies/agent-tool.toml`;
-name it in the PR so the reviewer sees the new allow rules. A permissions
-manifest with no `scope` predates scopes and cannot say whether `all` wrote
-it: follow the repository's sync command, which usually installs `all`, or the
-`agent-tool bun x` refusal advice, and ask when neither settles it.
+`.agent-tool-permissions.json`, which keeps the scope that manifest records.
+Preserve each harness scope, and commit the ownership manifests with any
+generated files. When `all` gains a harness, the install adds that harness's
+rules file, such as `.gemini/policies/agent-tool.toml`; name it in the PR so the
+reviewer sees the new allow rules. A permissions manifest from before scopes
+that records Claude and Codex, what `all` then wrote, gains `all`; when the
+repository kept those two on purpose, install each with `--harness` instead,
+and ask when its guidance does not say.
 The manifests record the agent-tool version, so every upgrade changes them, even
 when no skill or rule changed, and `skills check` and `permissions check` fail
 until the sync records the new version. Hermes reads the shared `.agents/skills`

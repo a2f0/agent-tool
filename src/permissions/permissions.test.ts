@@ -266,13 +266,15 @@ test("the scope moves only through its transition: `all` absorbs, single install
   expect(scopeState({ scope: "all" })).toEqual({ status: "all" });
   expect(scopeState({ scope: ["gemini", "claude", "gemini"] })).toEqual({ status: "listed", harnesses: ["claude", "gemini"] });
   expect(scopeState({ codex: entry, claude: { allow: [], ask: [] } })).toEqual({ status: "inferred", harnesses: ["claude", "codex"] });
-  const states: ScopeState[] = [{ status: "none" }, { status: "all" }, { status: "listed", harnesses: ["codex"] }, { status: "inferred", harnesses: ["claude", "codex"] }];
+  const states: ScopeState[] = [{ status: "none" }, { status: "all" }, { status: "listed", harnesses: ["codex"] }, { status: "inferred", harnesses: ["claude", "codex"] }, { status: "inferred", harnesses: ["codex"] }];
   const table = states.map(state => [state.status, ...(["all", "claude", "gemini", "recorded"] as const).map(target => scopeTransition(state, { type: "install", target }))]);
   expect(table).toEqual([
     ["none", { status: "all" }, { status: "listed", harnesses: ["claude"] }, { status: "listed", harnesses: ["gemini"] }, { status: "all" }],
     ["all", { status: "all" }, { status: "all" }, { status: "all" }, { status: "all" }],
     ["listed", { status: "all" }, { status: "listed", harnesses: ["claude", "codex"] }, { status: "listed", harnesses: ["codex", "gemini"] }, { status: "listed", harnesses: ["codex"] }],
     ["inferred", { status: "all" }, { status: "listed", harnesses: ["claude", "codex"] }, { status: "listed", harnesses: ["claude", "codex", "gemini"] }, { status: "all" }],
+    // An earlier manifest recording one harness came from a single install, which a bare install keeps.
+    ["inferred", { status: "all" }, { status: "listed", harnesses: ["claude", "codex"] }, { status: "listed", harnesses: ["codex", "gemini"] }, { status: "listed", harnesses: ["codex"] }],
   ]);
   // An event that changes nothing returns the same state.
   const all: ScopeState = { status: "all" }, listed: ScopeState = { status: "listed", harnesses: ["codex"] };

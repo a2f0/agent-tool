@@ -91,10 +91,11 @@ test("an executable that asks is refused while the generated rules predate its c
   for (const directory of [".claude", ".codex", ".gemini"]) rmSync(path.join(f.project, directory), { recursive: true });
   writeFileSync(manifestFile, JSON.stringify({ schemaVersion: 1 }));
   expect(JSON.parse(f.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
-  // A recorded harness whose rules are gone is stale; an earlier manifest recording one harness never came from `all`.
+  // A recorded harness whose rules are gone is stale; an earlier manifest recording one harness never came from `all`,
+  // and a bare install keeps that harness alone.
   for (const harness of ["codex", "gemini"]) {
     writeFileSync(manifestFile, JSON.stringify({ schemaVersion: 1, [harness]: manifest[harness] }));
-    expect(f.run(["x", "wrangler"]).stderr).toContain(`Permission rules predate the current class of 'bun x wrangler'; regenerate them with approval (agent-tool permissions install --harness ${harness} --apply) before`);
+    expect(f.run(["x", "wrangler"]).stderr).toContain("Permission rules predate the current class of 'bun x wrangler'; regenerate them with approval (agent-tool permissions install --apply) before");
   }
   // A manifest link, even a dangling one, is refused rather than read as no manifest.
   rmSync(manifestFile); symlinkSync(path.join(f.project, "missing.json"), manifestFile);
