@@ -8,7 +8,8 @@ import { readRegularFile } from "../system/files";
 /**
  * Changed files that agent-tool's installs wrote into the reviewed repository, which the
  * repository cannot edit by hand. The manifests come from the snapshot under review, so they only
- * select among the paths this release itself installs; no path is copied from them unchecked.
+ * select among the paths whose snapshot bytes match what this release installs; no path is copied
+ * from them unchecked and any hand-edited or forged entry stays under normal review.
  */
 export interface GeneratedFiles {
   /** Managed skill files `.agent-tool-skills.json` records, sorted. */

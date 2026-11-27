@@ -50,11 +50,23 @@ export function readSkillManifest(root: string): SkillManifest {
 }
 
 /**
- * The files the manifest records that this release installs: a bundled skill's file under a
- * skill directory. Any other entry is left out, since no install of this release writes it and
- * no check compares it with the bundle. Throws as an install would on an unusable manifest.
+ * The files the manifest records whose snapshot bytes match what this release installs: a bundled
+ * skill's file under a skill directory. Any edited, missing, or unbundled entry is left out so a
+ * hand-edited skill file never hides behind the generated-files prompt rule. Throws as an install
+ * would on an unusable manifest.
  */
 export function managedSkillFiles(rootDir: string): string[] {
-  const installed = new Set(Object.keys(DIRECTORY_HARNESSES).flatMap(directory => bundledSkillFiles().flatMap(([name, files]) => files.map(([inside]) => `${directory}/${name}/${inside}`))));
-  return Object.keys(readSkillManifest(realpathSync(rootDir)).files).filter(file => installed.has(file));
+  const root = realpathSync(rootDir);
+  const recorded = readSkillManifest(root);
+  const installed = new Map(Object.keys(DIRECTORY_HARNESSES).flatMap(directory => bundledSkillFiles().flatMap(([name, files]) => files.map(([inside, source]): [string, string] => [`${directory}/${name}/${inside}`, source]))));
+  return Object.keys(recorded.files).filter(file => {
+    const expected = installed.get(file);
+    if (expected === undefined) return false;
+    try {
+      const read = readRegularFile(safeDestination(root, file));
+      return read.status === "file" && read.contents === expected;
+    } catch {
+      return false;
+    }
+  });
 }

@@ -346,7 +346,25 @@ describe("generated files in the review prompt", () => {
     }
   });
 
-  test(`lists up to ${MAX_LISTED_GENERATED_FILES} paths, then names the skills manifest`, () => {
+  test("leaves hand-edited skill or permission files and forged Claude manifest rules under normal review", () => {
+    const root = consumer();
+    // Hand-edit a skill and a whole rules file, and forge an extra allow rule into Claude's manifest record.
+    writeFileSync(path.join(root, SKILL_FILES[0]!), "# locally edited skill\n");
+    writeFileSync(path.join(root, RULE_FILES[0]!), "# locally edited codex rules\n");
+    const permFile = path.join(root, ".agent-tool-permissions.json");
+    const perm = JSON.parse(readFileSync(permFile, "utf8")) as { claude: { allow: string[]; ask: string[] } };
+    perm.claude.allow.push("Bash(*)");
+    writeFileSync(permFile, JSON.stringify(perm));
+
+    const generated = changedGeneratedFiles(root, CHANGED);
+
+    expect(generated).toEqual({
+      skills: [SKILL_FILES[1]!],
+      permissions: [{ path: RULE_FILES[1]!, whole: true }],
+    });
+  });
+
+  test(`lists up to ${MAX_LISTED_GENERATED_FILES} total paths, then names the skills manifest`, () => {
     const skills = (count: number) =>
       Array.from({ length: count }, (_, index) => `.claude/skills/skill-${index}/SKILL.md`);
     const permissions = [{ path: ".codex/rules/agent-tool.rules", whole: true }];

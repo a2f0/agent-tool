@@ -852,9 +852,11 @@ the managed skill files `.agent-tool-skills.json` records and the rule files
 recorded rules. The reviewer lists findings about their contents under an
 `Upstream (agent-tool):` heading, with no severity and without raising the
 verdict, and still reviews the repository's own changes around them. The
-snapshot's manifests only select among the paths the running release installs;
-past 30 paths the skill files are counted under their manifest, and a missing
-or malformed manifest adds nothing. Files are materialized from raw Git blobs with collision and path
+snapshot's manifests only select among the paths whose contents match what the
+running release installs, so a hand-edited skill or rules file or a forged
+manifest entry stays under normal review; past 30 paths the skill files are
+counted under their manifest, and a missing or malformed manifest adds nothing.
+Files are materialized from raw Git blobs with collision and path
 validation, and diffs are text-only without external drivers. Snapshots are
 cleaned up, output must end in a verdict, and an incomplete but successful run
 is retried once. Helper Git operations disable hooks and replace objects.
