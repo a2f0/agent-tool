@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { ReviewerEnv } from "./runReview";
-import { AGY_MAX_INLINE_PROMPT_BYTES, spawnAgyReview } from "./solicitAgyReview";
+import { spawnAgyReview } from "./solicitAgyReview";
 
 const stubDir = mkdtempSync(path.join(tmpdir(), "agent-tool-agy-stub-"));
 const SYSTEM_PATH = ["/bin", "/usr/bin"].join(path.delimiter);
@@ -92,8 +92,9 @@ describe("spawnAgyReview", () => {
       message: { content: "REVIEW PROMPT BODY" },
     });
     const cwd = readFileSync(cwdPath, "utf8").trim();
-    expect(cwd.split("/").pop()?.startsWith("agent-tool-agy-")).toBe(true);
-    expect(cwd.split("/").pop()).not.toBe(stubDir.split("/").pop());
+    expect(path.basename(cwd)).toBe("cwd");
+    expect(path.basename(path.dirname(cwd)).startsWith("agent-tool-agy-")).toBe(true);
+    expect(cwd).not.toBe(stubDir);
     expect(readFileSync(argvPath, "utf8")).toContain("--disable-slash-commands");
     expect(readFileSync(argvPath, "utf8")).toContain("--effort high");
   });
@@ -148,8 +149,9 @@ describe("spawnAgyReview", () => {
     expect(await spawnAgyReview("prompt", "high", stubDir, stubEnv)).toBe(2);
   });
 
-  test("offloads oversized diffs to a read-only file allowed in --settings and cleans it up", async () => {
+  test("offloads oversized diffs to a sibling read-only file while keeping cwd empty and cleans up", async () => {
     const capturedDiffPath = path.join(stubDir, "captured-diff");
+    const cwdListingPath = path.join(stubDir, "cwd-listing");
     const ndjson = `${JSON.stringify({ event: "result", result: { status: "SUCCESS", response: "VERDICT: CLEAN\n" } })}\n`;
     const payloadPath = path.join(stubDir, "payload");
     writeFileSync(payloadPath, ndjson);
@@ -157,27 +159,42 @@ describe("spawnAgyReview", () => {
       "#!/bin/sh",
       `cat > ${JSON.stringify(stdinPath)}`,
       `pwd > ${JSON.stringify(cwdPath)}`,
+      `ls -A "$(pwd)" > ${JSON.stringify(cwdListingPath)}`,
       `printf '%s' "$*" > ${JSON.stringify(argvPath)}`,
-      `cp "$(pwd)/diff.patch" ${JSON.stringify(capturedDiffPath)}`,
+      `cp "$(dirname "$(pwd)")/diff.patch" ${JSON.stringify(capturedDiffPath)}`,
       `cat ${JSON.stringify(payloadPath)}`,
     ].join("\n");
     const stubPath = path.join(stubDir, "agy");
     writeFileSync(stubPath, script);
     chmodSync(stubPath, 0o755);
 
-    const bigDiff = `<BEGIN_UNTRUSTED_DIFF_big>\n${"+x\n".repeat(Math.ceil(AGY_MAX_INLINE_PROMPT_BYTES / 3))}\n<END_UNTRUSTED_DIFF_big>`;
-    const prompt = `## Review Guidelines\nrules\n${bigDiff}\n## Instructions\nEnd with VERDICT: X`;
+    const bigDiff = "<BEGIN_UNTRUSTED_DIFF_big>\n+x\n<END_UNTRUSTED_DIFF_big>";
+    const inlinePrompt = `## Review Guidelines\nrules\n${"a".repeat(300)}\n## Instructions\nEnd with VERDICT: X`;
 
-    expect(await spawnAgyReview(prompt, "high", stubDir, stubEnv)).toBe(0);
+    expect(
+      await spawnAgyReview(
+        inlinePrompt,
+        "high",
+        stubDir,
+        stubEnv,
+        (diffFile) => ({
+          prompt: `## Diff\nRead \`${diffFile}\`\n## Instructions\nEnd with VERDICT: X`,
+          diffContents: bigDiff,
+        }),
+        200,
+      ),
+    ).toBe(0);
     const stdinPayload = JSON.parse(readFileSync(stdinPath, "utf8").trim()) as {
       message: { content: string };
     };
     expect(stdinPayload.message.content).toContain("diff.patch");
     expect(stdinPayload.message.content).toContain("## Instructions\nEnd with VERDICT: X");
     expect(readFileSync(capturedDiffPath, "utf8")).toBe(bigDiff);
+    expect(readFileSync(cwdListingPath, "utf8").trim()).toBe("");
     const cwd = readFileSync(cwdPath, "utf8").trim();
-    expect(readFileSync(argvPath, "utf8")).toContain(`read_file(${path.join(cwd, "diff.patch")})`);
-    expect(existsSync(cwd)).toBe(false);
+    const workDir = path.dirname(cwd);
+    expect(readFileSync(argvPath, "utf8")).toContain(`read_file(${path.join(workDir, "diff.patch")})`);
+    expect(existsSync(workDir)).toBe(false);
   });
 
   test("reports failure when agy is missing from PATH", async () => {

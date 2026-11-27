@@ -5,8 +5,8 @@ import path from "node:path";
 import {
   buildAgyReviewArgs,
   buildAgyReviewSettings,
+  encodeAgyStreamUserMessage,
   extractAgyStreamResult,
-  offloadOversizedDiff,
 } from "./solicitAgyReview";
 
 const snapshotDir = mkdtempSync(path.join(tmpdir(), "agent-tool-agy-arg-"));
@@ -55,34 +55,13 @@ describe("buildAgyReviewSettings", () => {
   });
 });
 
-describe("offloadOversizedDiff", () => {
-  test("keeps prompts at or below the inline limit unchanged", () => {
-    const prompt = "header\n<BEGIN_UNTRUSTED_DIFF_t1>\ndiff\n<END_UNTRUSTED_DIFF_t1>\n## Instructions\nVERDICT: X";
-    expect(offloadOversizedDiff(prompt, "/tmp/diff.patch", Buffer.byteLength(prompt, "utf8"))).toEqual({
-      prompt,
-      diffContents: null,
-    });
-  });
-
-  test("extracts the untrusted diff envelope when the prompt exceeds the limit, preserving instructions", () => {
-    const body = "diff --git a/x b/x\n" + "+a".repeat(200);
-    const envelope = `<BEGIN_UNTRUSTED_DIFF_tok>\n${body}\n<END_UNTRUSTED_DIFF_tok>`;
-    const prompt = `## Review Guidelines\nrules\n## Diff\n${envelope}\n## Instructions\nEnd with VERDICT: X`;
-
-    const result = offloadOversizedDiff(prompt, "/tmp/diff.patch", 200);
-
-    expect(result.diffContents).toBe(envelope);
-    expect(result.prompt).toContain("## Review Guidelines\nrules");
-    expect(result.prompt).toContain("`/tmp/diff.patch`");
-    expect(result.prompt).toContain("## Instructions\nEnd with VERDICT: X");
-    expect(result.prompt).not.toContain("+a+a+a");
-  });
-
-  test("leaves prompts without a diff envelope unchanged", () => {
-    const prompt = "x".repeat(500);
-    expect(offloadOversizedDiff(prompt, "/tmp/diff.patch", 100)).toEqual({
-      prompt,
-      diffContents: null,
+describe("encodeAgyStreamUserMessage", () => {
+  test("encodes one NDJSON user turn line", () => {
+    const line = encodeAgyStreamUserMessage("hello\nworld");
+    expect(line.endsWith("\n")).toBe(true);
+    expect(JSON.parse(line)).toEqual({
+      event: "user",
+      message: { content: "hello\nworld" },
     });
   });
 });
