@@ -92,6 +92,29 @@ function readManifest(root: string): Recorded {
   return { raw, manifest: { ...value, ...(validVersion(agentToolVersion) ? { agentToolVersion } : {}) } };
 }
 
+/**
+ * The files holding rules the manifest records that match what this release generates, in harness
+ * order: for Claude its settings file (`whole: false`), only when `manifest.claude` equals the
+ * generated rules (so a forged manifest entry cannot shield a hand-added rule from review); and
+ * for each other harness its whole rules file (`whole: true`), only when the file's bytes equal
+ * the rendered rules. None without a manifest; throws as an install would on an unusable one.
+ */
+export function generatedPermissionFiles(rootDir: string): { path: string; whole: boolean }[] {
+  const root = realpathSync(rootDir);
+  const { manifest } = readManifest(root);
+  const project = projectCommands(root);
+  return HARNESSES.filter(harness => {
+    if (manifest[harness] === undefined) return false;
+    if (harness === "claude") return JSON.stringify(manifest.claude) === JSON.stringify(claudePermissions(project));
+    try {
+      const read = readRegularFile(destination(root, GENERATED[harness].relative));
+      return read.status === "file" && read.contents === GENERATED[harness].render(project);
+    } catch {
+      return false;
+    }
+  }).map(harness => (harness === "claude" ? { path: CLAUDE_SETTINGS, whole: false } : { path: GENERATED[harness].relative, whole: true }));
+}
+
 type Settings = Record<string, unknown> & { permissions?: Record<string, unknown> };
 function parseSettings(source: string | undefined): Settings {
   if (source === undefined) return {};

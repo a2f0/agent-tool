@@ -190,6 +190,7 @@ export function solicitCodexReview(
       reviewInstructions: input.reviewInstructions,
       accessNote: CODEX_ACCESS_NOTE,
       repositoryRoot: input.snapshotRoot,
+      generatedFiles: input.generatedFiles,
     });
 
     return spawnCodexReview(prompt, effort, input.snapshotRoot);

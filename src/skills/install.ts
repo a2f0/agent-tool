@@ -1,28 +1,12 @@
 import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { harnessNamed } from "../harnesses";
 import { readRegularFile } from "../system/files";
-import { AGENT_TOOL_VERSION, manifestVersionCheck, validVersion, type CheckStatus } from "../system/manifestVersion";
-import { BUNDLED_SKILL_REFERENCES, BUNDLED_SKILLS } from "./bundled";
+import { AGENT_TOOL_VERSION, manifestVersionCheck, type CheckStatus } from "../system/manifestVersion";
+import { bundledSkillFiles, DIRECTORY_HARNESSES, readSkillManifest, safeDestination, SKILLS_MANIFEST, type SkillManifest } from "./manifest";
 
-export const SKILLS_MANIFEST = ".agent-tool-skills.json";
 const hash = (source: string) => createHash("sha256").update(source).digest("hex");
-
-/** Refuse symlinks at every existing component, including dangling links. */
-function safeDestination(root: string, relative: string): string {
-  if (path.isAbsolute(relative) || relative.split("/").some(part => !part || part === "." || part === "..")) throw new Error(`Unsafe skill destination '${relative}'.`);
-  let current = root;
-  for (const part of relative.split("/")) {
-    current = path.join(current, part);
-    try {
-      if (lstatSync(current).isSymbolicLink()) throw new Error(`Refusing skill destination symlink: ${current}`);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-  }
-  return current;
-}
 
 function atomicWrite(file: string, contents: string): void {
   mkdirSync(path.dirname(file), { recursive: true });
@@ -36,31 +20,6 @@ function atomicWrite(file: string, contents: string): void {
 }
 
 export interface SkillChange { path: string; status: "create" | "update" | "unchanged" }
-
-/** Every file each bundled skill installs, relative to its skill directory: `SKILL.md`, then its references. */
-export function bundledSkillFiles(): [name: string, files: [relative: string, source: string][]][] {
-  return Object.entries(BUNDLED_SKILLS).map(([name, source]) => [name, [["SKILL.md", source], ...Object.entries(BUNDLED_SKILL_REFERENCES[name] ?? {})]]);
-}
-
-/**
- * One reading of the ownership manifest: its bytes (none without a manifest), each managed
- * file's hash, and the agent-tool version whose install wrote it. Manifests from releases
- * before the version field lack it and stay readable; the field is additive, so
- * `schemaVersion` stays 1 and older releases still read newer manifests.
- */
-interface SkillManifest { raw?: string; agentToolVersion?: string; files: Record<string, string> }
-
-function readManifest(root: string): SkillManifest {
-  // One descriptor, refusing links, FIFOs, and devices, so a hook or CI can be neither redirected nor stalled.
-  const read = readRegularFile(safeDestination(root, SKILLS_MANIFEST));
-  if (read.status === "missing") return { files: {} };
-  if (read.status === "irregular") throw new Error(`Managed skill manifest is not a regular file: ${SKILLS_MANIFEST}`);
-  const raw = read.contents;
-  const value = JSON.parse(raw);
-  if (!value || typeof value !== "object" || Array.isArray(value) || value.schemaVersion !== 1 || !value.files || typeof value.files !== "object" || Array.isArray(value.files) || Object.values(value.files).some(item => typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item))) throw new Error("Invalid managed skill manifest.");
-  // The version is provenance, not ownership: an unusable one counts as none, which the check reports and the install replaces.
-  return { raw, ...(validVersion(value.agentToolVersion) ? { agentToolVersion: value.agentToolVersion } : {}), files: value.files };
-}
 
 interface PlannedFile { file: string; relative: string; source: string; current?: string; change: SkillChange }
 interface Plan { files: PlannedFile[]; manifestFile: string; manifest: string; manifestChange: SkillChange }
@@ -97,7 +56,7 @@ function plan(root: string, target: string, recorded: SkillManifest): Plan {
 /** Each managed file's change, then the manifest's, which every new agent-tool release updates. */
 export function installSkills(rootDir: string, target: string, apply = false): SkillChange[] {
   const root = realpathSync(rootDir);
-  const planned = plan(root, target, readManifest(root));
+  const planned = plan(root, target, readSkillManifest(root));
   // Preflight every destination before writing any files.
   if (apply) {
     for (const item of planned.files) if (item.change.status !== "unchanged") atomicWrite(item.file, item.source);
@@ -105,8 +64,6 @@ export function installSkills(rootDir: string, target: string, apply = false): S
   }
   return [...planned.files.map(item => item.change), planned.manifestChange];
 }
-
-const DIRECTORY_HARNESSES: Record<string, string> = { ".claude/skills": "claude", ".agents/skills": "codex", ".opencode/skills": "opencode" };
 
 /** One entry per managed file, then the manifest's own entry with its recorded and running versions. */
 export interface SkillCheck { path: string; status: CheckStatus; recordedVersion?: string | null; currentVersion?: string }
@@ -127,7 +84,7 @@ const versionCheck = (recorded: SkillManifest): SkillCheck => manifestVersionChe
 /** Read-only CI gate: require current bundled bytes, their ownership records, and the installing version. */
 export function checkSkills(rootDir: string, target: string): SkillCheck[] {
   const root = realpathSync(rootDir);
-  const recorded = readManifest(root);
+  const recorded = readSkillManifest(root);
   return [...fileChecks(root, target, recorded), versionCheck(recorded)];
 }
 
@@ -139,7 +96,7 @@ export function checkSkills(rootDir: string, target: string): SkillCheck[] {
  */
 export function checkInstalledSkills(rootDir: string): { harnesses: string[]; changes: SkillCheck[] } | null {
   const root = realpathSync(rootDir);
-  const recorded = readManifest(root);
+  const recorded = readSkillManifest(root);
   if (recorded.raw === undefined) return null;
   const directories = new Set(Object.keys(recorded.files).map(file => file.split("/", 2).join("/")));
   const harnesses = [...new Set([...directories].map(directory => DIRECTORY_HARNESSES[directory] ?? "all"))].sort();

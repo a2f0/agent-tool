@@ -12,6 +12,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type { PrContext } from "../git/prContext";
+import { installPermissions } from "../permissions/install";
+import { installSkills } from "../skills/install";
+import { bundledSkillFiles } from "../skills/manifest";
 import { withPinnedReviewInput } from "./pinnedReviewInput";
 
 const repositories: string[] = [];
@@ -149,4 +152,32 @@ describe("withPinnedReviewInput", () => {
       expect(input.diff).not.toContain("Binary files");
     });
   });
+
+  test("names the generated files the reviewed commit changes, from its own manifests", async () => {
+    const { rootDir } = createRepository();
+    installSkills(rootDir, "claude", true);
+    installPermissions(rootDir, "codex", true);
+    git(rootDir, "add", ".");
+    git(rootDir, "commit", "--quiet", "-m", "test: install agent-tool files");
+    // Worktree edits never reach the review; the committed manifests decide.
+    rmSync(path.join(rootDir, ".agent-tool-skills.json"));
+
+    const context: PrContext = {
+      branch: "feature",
+      repo: "owner/repository",
+      prNumber: "",
+      title: "",
+      baseRef: "main",
+    };
+    await withPinnedReviewInput(rootDir, context, (input) => {
+      expect(input.generatedFiles.skills).toEqual(
+        bundledSkillFiles()
+          .flatMap(([name, files]) => files.map(([inside]) => `.claude/skills/${name}/${inside}`))
+          .sort(),
+      );
+      expect(input.generatedFiles.permissions).toEqual([
+        { path: ".codex/rules/agent-tool.rules", whole: true },
+      ]);
+    });
+  }, 30_000);
 });

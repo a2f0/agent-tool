@@ -46,6 +46,7 @@ export function review(rootDir: string, name: string, effortArg?: string, base?:
       reviewInstructions: input.reviewInstructions,
       accessNote: harness.accessNote,
       repositoryRoot: input.snapshotRoot,
+      generatedFiles: input.generatedFiles,
     }), effort, input.snapshotRoot);
     if (run("git", ["rev-parse", "HEAD"]) !== input.headCommit) throw new Error("HEAD changed during review; review the new commit again.");
     return exitCode;

@@ -252,6 +252,7 @@ export function solicitOpencodeReview(
       reviewInstructions: input.reviewInstructions,
       accessNote: OPENCODE_ACCESS_NOTE,
       repositoryRoot: input.snapshotRoot,
+      generatedFiles: input.generatedFiles,
     });
 
     return spawnOpencodeReview(prompt, effort, input.snapshotRoot);
