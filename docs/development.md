@@ -107,16 +107,8 @@ The package smoke installs an npm tarball into a temporary project. Compiled
 smoke runs all four review adapters through local stubs with Bun and Node absent
 from PATH; no live model calls are made. CI runs these checks on Linux/macOS,
 tests the minimum supported Bun runtime, and builds Debian packaging on Linux.
-A separate required `gemini-conformance` job runs
-`bun scripts/testing/gemini-conformance.ts`, which downloads the pinned Gemini
-CLI releases, the supported floor and a current one, verifies their npm
-integrity, and runs the Gemini conformance test against each. The job has no
-token permissions or persisted credentials and nothing runs after it, since
-the test imports Gemini's third-party bundle. The runner's sudo would let the
-bundle write an Actions cache entry, so no workflow here restores a cache:
-mise, setup-bun, and setup-node run with caching off, which
-`scripts/testing/workflows.test.ts` enforces. It needs the network, so it is
-not part of `verify.json`.
+No workflow here restores an Actions cache (mise, setup-bun, and setup-node run
+with caching off), which `scripts/testing/workflows.test.ts` enforces.
 Local source integration tests use disposable Git repositories, bare remotes,
 and API stubs to check guard behavior without mutating GitHub. Dependency-mode
 integration tests use real Bun installs against a loopback registry with real

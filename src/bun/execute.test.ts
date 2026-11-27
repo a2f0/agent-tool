@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -74,9 +75,8 @@ test("an executable that asks is refused while the generated rules predate its c
     expect(f.run(["x", "wrangler"]).stderr).toMatch(/Permission rules predate the current class of 'bun x wrangler'; regenerate them with approval \(agent-tool permissions install --apply\)/);
   }
   // An earlier manifest's harnesses get an install each, after `all`, which adds the harnesses it gained.
-  const fullFile = path.join(f.project, ".agent-tool-permissions.json"), { scope: _scope, gemini: _gemini, ...legacy } = JSON.parse(readFileSync(fullFile, "utf8"));
+  const fullFile = path.join(f.project, ".agent-tool-permissions.json"), { scope: _scope, ...legacy } = JSON.parse(readFileSync(fullFile, "utf8"));
   writeFileSync(fullFile, JSON.stringify(legacy));
-  rmSync(path.join(f.project, ".gemini"), { recursive: true });
   writeFileSync(path.join(f.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
   expect(f.run(["x", "wrangler"]).stderr).toContain("(agent-tool permissions install --apply, or to keep only the recorded harnesses, agent-tool permissions install --harness claude --apply, then agent-tool permissions install --harness codex --apply)");
   expect(spawnSync(process.execPath, [cli, "permissions", "install", "--apply"], { cwd: f.project, encoding: "utf8" }).status).toBe(0);
@@ -88,57 +88,77 @@ test("an executable that asks is refused while the generated rules predate its c
     expect(JSON.parse(f.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
   }
   // Only recorded harnesses are checked, as before: a manifest that records none requires no rule files.
-  for (const directory of [".claude", ".codex", ".gemini"]) rmSync(path.join(f.project, directory), { recursive: true });
+  for (const directory of [".claude", ".codex"]) rmSync(path.join(f.project, directory), { recursive: true });
   writeFileSync(manifestFile, JSON.stringify({ schemaVersion: 1 }));
   expect(JSON.parse(f.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
   // A recorded harness whose rules are gone is stale; an earlier manifest recording one harness never came from `all`,
   // and a bare install keeps that harness alone.
-  for (const harness of ["codex", "gemini"]) {
-    writeFileSync(manifestFile, JSON.stringify({ schemaVersion: 1, [harness]: manifest[harness] }));
-    expect(f.run(["x", "wrangler"]).stderr).toContain("Permission rules predate the current class of 'bun x wrangler'; regenerate them with approval (agent-tool permissions install --apply) before");
-  }
+  writeFileSync(manifestFile, JSON.stringify({ schemaVersion: 1, codex: manifest.codex }));
+  expect(f.run(["x", "wrangler"]).stderr).toContain("Permission rules predate the current class of 'bun x wrangler'; regenerate them with approval (agent-tool permissions install --apply) before");
   // A manifest link, even a dangling one, is refused rather than read as no manifest.
   rmSync(manifestFile); symlinkSync(path.join(f.project, "missing.json"), manifestFile);
   expect(f.run(["x", "wrangler"]).stderr).toMatch(/Refusing permissions destination symlink/);
 }, 30_000);
 
 test("the refusal advises regenerating only the recorded scope", () => {
-  // A Gemini policy alone is checked the same way: its old allow rule refuses the reclassified executable.
-  const gemini = fixture();
-  binary(gemini.project, "wrangler");
-  writeFileSync(path.join(gemini.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "local" } } }));
-  expect(spawnSync(process.execPath, [cli, "permissions", "install", "--harness", "gemini", "--apply"], { cwd: gemini.project, encoding: "utf8" }).status).toBe(0);
+  // A single-harness scope is checked on its own: its old allow rule refuses the reclassified executable.
+  const codex = fixture();
+  binary(codex.project, "wrangler");
+  writeFileSync(path.join(codex.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "local" } } }));
+  expect(spawnSync(process.execPath, [cli, "permissions", "install", "--harness", "codex", "--apply"], { cwd: codex.project, encoding: "utf8" }).status).toBe(0);
   // A bare check covers the recorded scope alone, as the push gate does; `--harness all` still covers every harness.
-  const check = (...args: string[]) => spawnSync(process.execPath, [cli, "permissions", "check", ...args], { cwd: gemini.project, encoding: "utf8" });
+  const check = (...args: string[]) => spawnSync(process.execPath, [cli, "permissions", "check", ...args], { cwd: codex.project, encoding: "utf8" });
   const bare = check();
   expect(bare.status).toBe(0);
-  expect(JSON.parse(bare.stdout)).toMatchObject({ ok: true, harnesses: ["gemini"] });
+  expect(JSON.parse(bare.stdout)).toMatchObject({ ok: true, harnesses: ["codex"] });
   expect(check("--harness", "all").status).toBe(1);
-  writeFileSync(path.join(gemini.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
+  writeFileSync(path.join(codex.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
   // The advice regenerates only the recorded scope, which a bare install keeps, never widening it to `all`.
-  expect(gemini.run(["x", "wrangler"]).stderr).toMatch(/Permission rules predate the current class of 'bun x wrangler'; regenerate them with approval \(agent-tool permissions install --apply\)/);
-  const regenerated = spawnSync(process.execPath, [cli, "permissions", "install", "--apply"], { cwd: gemini.project, encoding: "utf8" });
-  expect(JSON.parse(regenerated.stdout).changes.map((change: { path: string }) => change.path)).toEqual([".gemini/policies/agent-tool.toml", ".agent-tool-permissions.json"]);
-  expect(JSON.parse(readFileSync(path.join(gemini.project, ".agent-tool-permissions.json"), "utf8")).scope).toEqual(["gemini"]);
+  expect(codex.run(["x", "wrangler"]).stderr).toMatch(/Permission rules predate the current class of 'bun x wrangler'; regenerate them with approval \(agent-tool permissions install --apply\)/);
+  const regenerated = spawnSync(process.execPath, [cli, "permissions", "install", "--apply"], { cwd: codex.project, encoding: "utf8" });
+  expect(JSON.parse(regenerated.stdout).changes.map((change: { path: string }) => change.path)).toEqual([".codex/rules/agent-tool.rules", ".agent-tool-permissions.json"]);
+  expect(JSON.parse(readFileSync(path.join(codex.project, ".agent-tool-permissions.json"), "utf8")).scope).toEqual(["codex"]);
   // A scope of several harnesses gets the same advice.
   const pair = fixture();
   binary(pair.project, "wrangler");
   writeFileSync(path.join(pair.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "local" } } }));
-  for (const harness of ["claude", "gemini"]) expect(spawnSync(process.execPath, [cli, "permissions", "install", "--harness", harness, "--apply"], { cwd: pair.project, encoding: "utf8" }).status).toBe(0);
+  for (const harness of ["claude", "codex"]) expect(spawnSync(process.execPath, [cli, "permissions", "install", "--harness", harness, "--apply"], { cwd: pair.project, encoding: "utf8" }).status).toBe(0);
   writeFileSync(path.join(pair.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
   expect(pair.run(["x", "wrangler"]).stderr).toContain("(agent-tool permissions install --apply)");
   // A generated file left outside the recorded harnesses still loads in its harness, so its old allow rule refuses too.
   const narrowed = fixture();
   binary(narrowed.project, "wrangler");
   writeFileSync(path.join(narrowed.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "local" } } }));
-  for (const harness of ["codex", "gemini"]) expect(spawnSync(process.execPath, [cli, "permissions", "install", "--harness", harness, "--apply"], { cwd: narrowed.project, encoding: "utf8" }).status).toBe(0);
+  for (const harness of ["claude", "codex"]) expect(spawnSync(process.execPath, [cli, "permissions", "install", "--harness", harness, "--apply"], { cwd: narrowed.project, encoding: "utf8" }).status).toBe(0);
   const narrowedFile = path.join(narrowed.project, ".agent-tool-permissions.json"), { codex: _codex, ...withoutCodex } = JSON.parse(readFileSync(narrowedFile, "utf8"));
-  writeFileSync(narrowedFile, JSON.stringify({ ...withoutCodex, scope: ["gemini"] }));
+  writeFileSync(narrowedFile, JSON.stringify({ ...withoutCodex, scope: ["claude"] }));
   writeFileSync(path.join(narrowed.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
   expect(spawnSync(process.execPath, [cli, "permissions", "install", "--apply"], { cwd: narrowed.project, encoding: "utf8" }).status).toBe(0);
   expect(narrowed.run(["x", "wrangler"]).stderr).toContain("(agent-tool permissions install --apply) before running it. .codex/rules/agent-tool.rules is not recorded in the manifest, though codex loads it; delete it, then run agent-tool permissions install --harness codex --apply if codex should keep rules.");
   rmSync(path.join(narrowed.project, ".codex"), { recursive: true });
   expect(JSON.parse(narrowed.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
+  // A stray retired Gemini policy file on disk also blocks a reclassified executable until removed.
+  mkdirSync(path.join(narrowed.project, ".gemini/policies"), { recursive: true });
+  writeFileSync(path.join(narrowed.project, ".gemini/policies/agent-tool.toml"), "stale\n");
+  expect(narrowed.run(["x", "wrangler"]).stderr).toContain(".gemini/policies/agent-tool.toml is a retired Gemini CLI policy not recorded in the manifest; delete it.");
+  rmSync(path.join(narrowed.project, ".gemini"), { recursive: true });
+  expect(JSON.parse(narrowed.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
+  // A Gemini-only legacy manifest blocks a reclassified executable and names manual removal or explicit --harness install.
+  const geminiOnly = fixture();
+  binary(geminiOnly.project, "wrangler");
+  mkdirSync(path.join(geminiOnly.project, ".gemini/policies"), { recursive: true });
+  writeFileSync(path.join(geminiOnly.project, ".gemini/policies/agent-tool.toml"), "# old\n");
+  writeFileSync(
+    path.join(geminiOnly.project, ".agent-tool-permissions.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      agentToolVersion: "0.1.81",
+      scope: ["gemini"],
+      gemini: { file: ".gemini/policies/agent-tool.toml", sha256: createHash("sha256").update("# old\n").digest("hex") },
+    }),
+  );
+  writeFileSync(path.join(geminiOnly.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
+  expect(geminiOnly.run(["x", "wrangler"]).stderr).toContain("delete .gemini/policies/agent-tool.toml and .agent-tool-permissions.json, or run agent-tool permissions install --harness <all|claude|codex> --apply");
 }, 30_000);
 
 test("--cwd cannot reach another checkout, and options must precede --", () => {
