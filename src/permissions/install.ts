@@ -231,9 +231,9 @@ function checks(root: string, targets: Harness[], { raw, manifest }: Recorded): 
   return [...files, manifestVersionCheck(PERMISSIONS_MANIFEST, raw !== undefined, manifest.agentToolVersion)];
 }
 
-/** Read-only CI gate: generated rules are current, recorded as managed, and by the running version. */
 /**
- * `permissions check`: the named harnesses, or without a target the scope the manifest records,
+ * Read-only CI gate, `permissions check`: generated rules are current, recorded as managed, and by
+ * the running version, for the named harnesses, or without a target the scope the manifest records,
  * as the push gate checks it (every harness without a manifest or a recorded one).
  */
 export function checkPermissions(rootDir: string, target?: string): { harnesses: Harness[]; changes: PermissionCheck[] } {

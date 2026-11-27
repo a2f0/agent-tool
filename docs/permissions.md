@@ -269,9 +269,10 @@ the scope field have none and are read as scoped to the harnesses they
 record. Such a manifest gains a harness `all` added only through an `all`
 install, which is the default; until then `check`, which without `--harness`
 checks the recorded scope as the push gate does, reports the manifest
-`outdated`, and `check --harness all` also reports the harness `missing`. A single-harness install never narrows `all`:
-to keep a harness out, remove its generated rules and its manifest entry, set
-`scope` to the list of harnesses to keep, then install each of them. A scope
+`outdated`, and `check --harness all` also reports the harness `missing`. A
+single-harness install never narrows `all`: to keep a harness out, remove its
+generated rules and its manifest entry, set `scope` to the list of harnesses
+to keep, then install each of them. A scope
 list also covers every harness the manifest records, so a list that leaves one
 out, as an earlier release's install can after a rollback, still checks its
 rules, and the next install adds it to the list.
@@ -283,7 +284,8 @@ last entry is the manifest's, with `recordedVersion` and `currentVersion`, and
 is `outdated` when the manifest records another release or no usable one, as
 manifests from releases before the field do, until `install --apply` with the
 same `--harness` replaces it. `--harness` names one harness or `all`, so for
-a scope that names harnesses, run `install` and `check` once for each of them.
+a scope that names harnesses, run `install` once for each of them; a bare
+`check` covers the whole recorded scope.
 `agent-tool bun x` still refuses an executable only while the rules themselves
 are stale, so a manifest that records another release refuses nothing more
 there. The skills manifest records the version the same way
@@ -311,12 +313,16 @@ Each harness also has limits that the rules cannot change:
   `default` mode. The arguments stay unrestricted because a rule that matches
   the whole command is the stricter one: a rule that missed a redirected
   command would let Gemini approve its parts one by one, and outside `default`
-  skip the redirection check. The rules need Gemini CLI 0.37.0 or later, and
-  CI checks them with Gemini's own policy engine
+  skip the redirection check. The rules need Gemini CLI 0.37.0 or later, the
+  oldest release the conformance test can load, and CI checks them with
+  Gemini's own policy engine
   ([dependency upgrades](dependency-upgrades.md#current-compatibility-constraints)).
   Releases 0.31.0 to 0.36, the first to load project policies
-  (google-gemini/gemini-cli#18682), also keep the rules to `default`; earlier
-  releases ignore the file, so everything asks. Gemini's
+  (google-gemini/gemini-cli#18682), keep the rules to `default`, and their
+  source splits chains and asks for redirection there, but they are published
+  unbundled and untested: a gap in one would allow a command it should ask
+  about, never refuse one. Earlier releases ignore the file, so everything
+  asks. Gemini's
   [policy engine](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/docs/reference/policy-engine.md)
   documents the discovery, trust, and tiers above;
   [dependency upgrades](dependency-upgrades.md#current-compatibility-constraints)

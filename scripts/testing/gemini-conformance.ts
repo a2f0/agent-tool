@@ -13,9 +13,24 @@ const VERSION = "0.71.1";
 const INTEGRITY = "sha512-FYDTjU+9BFPYKBcFS3vCjJol8pFyV0iHVigUNr2wZqk4vYNFgacGB5ubyrySFGM5jWxCK+1EFdcDJiEQjNomaw==";
 
 const root = path.resolve(import.meta.dir, "../..");
-const response = await fetch(`https://registry.npmjs.org/@google/gemini-cli/-/gemini-cli-${VERSION}.tgz`);
-assert.ok(response.ok, `Gemini CLI ${VERSION} could not be downloaded: HTTP ${response.status}`);
-const bytes = new Uint8Array(await response.arrayBuffer());
+const url = `https://registry.npmjs.org/@google/gemini-cli/-/gemini-cli-${VERSION}.tgz`;
+
+/** The tarball, with one retry for a failed or stalled download; each attempt has a minute. */
+async function download(): Promise<Uint8Array> {
+  let failure = "";
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+      if (response.ok) return new Uint8Array(await response.arrayBuffer());
+      failure = `HTTP ${response.status}`;
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
+  }
+  throw new Error(`Gemini CLI ${VERSION} could not be downloaded: ${failure}`);
+}
+
+const bytes = await download();
 const digest = `sha512-${new Bun.CryptoHasher("sha512").update(bytes).digest("base64")}`;
 assert.equal(digest, INTEGRITY, `Gemini CLI ${VERSION} does not match its recorded integrity`);
 const directory = mkdtempSync(path.join(tmpdir(), "agent-tool-gemini-"));
@@ -29,8 +44,8 @@ try {
   });
   const output = `${result.stdout}${result.stderr}`;
   process.stdout.write(output);
-  // A skipped test passes too, so require that it ran.
-  assert.ok(result.status === 0 && /^\s*1 pass$/m.test(output) && !/^\s*[1-9]\d* skip$/m.test(output), `Gemini CLI ${VERSION} conformance did not pass`);
+  // A skipped test passes too, so require that tests ran and none was skipped.
+  assert.ok(result.status === 0 && /^\s*[1-9]\d* pass$/m.test(output) && !/^\s*[1-9]\d* (?:skip|fail)$/m.test(output), `Gemini CLI ${VERSION} conformance did not pass`);
 } finally {
   rmSync(directory, { recursive: true, force: true });
 }

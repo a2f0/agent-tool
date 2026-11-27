@@ -27,7 +27,9 @@ and `bun scripts/testing/smoke.ts dist/agent-tool`. The build regenerates
 embedded skills from `skills/*/SKILL.md`, `skills/*/references/*.md`, and
 `skills/*/agents/openai.yaml`; commit `src/skills/bundled.ts` with skill
 changes.
-CI also verifies Linux Debian packaging. Preserve the review snapshot,
+CI also verifies Linux Debian packaging and, on Linux, the generated Gemini
+rules with a pinned Gemini CLI (`scripts/testing/gemini-conformance.ts`, which
+needs the network and is not in `verify.json`). Preserve the review snapshot,
 read-only tool permissions, pinned-base checks, and exact-head merge behavior.
 
 When handling review feedback, reply in its original review thread with

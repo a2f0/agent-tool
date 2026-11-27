@@ -121,7 +121,9 @@ export function codexRules(project: CatalogEntry[] = []): string {
  * Gemini CLI's approval modes the rules apply in: `default` alone. A workspace allow would
  * outrank plan mode's read-only deny, YOLO allows every command already, and Gemini CLI before
  * 0.63.0 lets an allowed command redirect anywhere unprompted in `autoEdit`, so `autoEdit` keeps
- * the user's own rules; `default` asks for redirection in every release that loads the file.
+ * the user's own rules. In `default`, Gemini 0.31.0's engine, the first to load the file, already
+ * asks for redirection (`shouldDowngradeForRedirection` skips only `autoEdit` and YOLO); CI
+ * checks the release scripts/testing/gemini-conformance.ts pins.
  */
 export const GEMINI_MODES = ["default"] as const;
 /**
