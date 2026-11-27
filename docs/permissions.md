@@ -216,8 +216,8 @@ agent-tool permissions install --apply
 agent-tool permissions check              # CI: the recorded scope
 ```
 
-`install` writes three files and records what it owns in
-`.agent-tool-permissions.json`:
+`install` writes a file for each harness its scope covers, three for `all`,
+and records what it owns in `.agent-tool-permissions.json`:
 
 - `.claude/settings.json` gains `permissions.allow` entries for the classes that
   allow, for the `bun run agent-tool`, `node_modules/.bin/agent-tool`, and
@@ -244,10 +244,12 @@ agent-tool permissions check              # CI: the recorded scope
   refused rather than overwritten; other `.rules` files are left alone.
 - `.gemini/policies/agent-tool.toml` holds one Gemini CLI `allow` rule per
   routine command for the `run_shell_command` tool, for the same routine
-  commands as the Codex rules. Their arguments may expand variables, as
-  Claude's `*` allows and Codex's opaque-script rule (below) does not. Each is
-  a `commandRegex` naming the three invocations and
-  ending the command at a space or the end of the command. Gemini's own
+  commands as the Codex rules. Each is a `commandRegex` naming the three
+  invocations and ending the command at a space or the end of the command,
+  with arguments that may quote and escape but hold no backtick, `$`, `;`,
+  `&`, `|`, `<`, `>`, or line break; a command with any of them matches no
+  rule as a whole, as Codex treats such a script as one opaque command
+  (below). Gemini's own
   `commandPrefix` also ends at a quote, which the shell joins into the same
   word (`agent-tool bun x vite"-node"` runs `vite-node`), so the rules do not use
   it. A command whose `--apply` form asks gets no rule here either, since a
@@ -279,7 +281,8 @@ until an install writes the rules a scope covers:
 release adds. Until an install, `check` reports a manifest from an earlier
 release `outdated`, and `check --harness all` also reports a new harness
 `missing`. A scope check also reports a generated rules file outside the scope
-as `unmanaged`, since its harness still loads it. No install narrows `all`: to
+as `unmanaged`, since its harness still loads it, with a `detail` naming the
+fix: delete the file, or install that harness. No install narrows `all`: to
 keep a harness out, remove its generated rules and its manifest entry, set
 `scope` to the list of harnesses to keep, then run `install --apply`. A scope
 list also covers every harness the manifest records, so a list that leaves one
@@ -314,13 +317,15 @@ Each harness also has limits that the rules cannot change:
 - Gemini CLI loads `<cwd>/.gemini/policies/` only in a trusted folder, from the
   directory where the session starts, and asks the user once to accept a new or
   changed policy file in each such directory (headless runs accept it with a
-  warning). A chain joined by `&&`, `||`, `;`, `|`, `&`, or a newline is
-  allowed only when every command in it is; redirection, command substitution
-  (`$(…)` or backticks), and process substitution fall back to asking in
-  `default` mode. The arguments stay unrestricted because a rule that matches
-  the whole command is the stricter one: a rule that missed a redirected
-  command would let Gemini approve its parts one by one, and outside `default`
-  skip the redirection check. The rules need Gemini CLI 0.37.0 or later, the
+  warning). A command no rule matches as a whole, because its arguments hold
+  shell syntax, falls back to Gemini's own checks: redirection, variables, and
+  command or process substitution ask in `default` mode, and a chain joined by
+  `&&`, `||`, `;`, `|`, `&`, or a newline is allowed only when every command
+  in it is, in the releases that check a chain command by command (0.37.0 and
+  0.71.1 do; 0.40.0 to 0.63.0 ask). Those checks alone are not enough, which
+  is why the arguments are restricted: 0.37.0 to 0.63.0 allow
+  ``${X:-`rm x`}`` under a rule that leaves arguments open. The rules need
+  Gemini CLI 0.37.0 or later, the
   oldest release the conformance test can load, which the generated header
   states; CI checks that floor and a current release with Gemini's own policy
   engine

@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { CATALOG, CLASSES, GEMINI_NAME_END, GEMINI_MODES, INVOCATIONS, claudePermissions, codexRules, geminiPolicy, strictest, type PermissionClass } from "./catalog";
+import { CATALOG, CLASSES, GEMINI_ARGUMENTS, GEMINI_MODES, INVOCATIONS, claudePermissions, codexRules, geminiPolicy, strictest, type PermissionClass } from "./catalog";
 import { checkInstalledPermissions, checkPermissions, installPermissions, scopeState, scopeTransition, type ScopeState } from "./install";
 import metadata from "../../package.json";
 import { HELP } from "../cli";
@@ -45,9 +45,8 @@ function geminiRules(source: string): GeminiRule[] {
  * encoding, which ends in the closing quote; an embedded quote is encoded as `\"`. This models
  * Gemini CLI 0.71.1, whose policy utils build `\x00"command":"(?:<commandRegex>)` and test it
  * against the stable JSON of the tool's arguments (`buildArgsPatterns`). It models one command:
- * Gemini itself splits `&&`, `||`, `;`, `|`, `&`, and newline chains and asks for redirection
- * and command or process substitution before any rule applies, which this model does not repeat;
- * the rules rely on that splitting for everything after the command name.
+ * a command holding shell syntax matches no rule, and Gemini then checks each command of a chain
+ * on its own, which this model does not repeat (the conformance test runs Gemini's own engine).
  */
 function geminiAllows(source: string, command: string): boolean {
   const encoded = JSON.stringify(command).slice(1);
@@ -98,6 +97,10 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
   for (const command of ["agent-tool bun x a.b -- c", "agent-tool bun x c+d -- e"]) expect(geminiAllows(dotted, command)).toBe(true);
   for (const command of ["agent-tool bun x aXb -- c", "agent-tool bun x ccd -- e", "agent-tool bun x cd -- e", "node_modules/xbin/agent-tool pr checks", "bun run agent-toolX pr checks"]) expect({ command, allowed: geminiAllows(dotted, command) }).toEqual({ command, allowed: false });
   for (const command of ["gh pr merge 1", "npm publish", "bun add left-pad", "bunx cowsay", "npx cowsay"]) expect(geminiAllows(gemini, command)).toBe(false);
+  // Arguments may quote and escape, but shell syntax, a line break, or another JSON escape fails to match.
+  for (const command of ['agent-tool pr open "fix(api): x" --body-file b.md', "agent-tool pr checks a\\b", "agent-tool pr checks ~/x *", "agent-tool pr checks"]) expect({ command, allowed: geminiAllows(gemini, command) }).toEqual({ command, allowed: true });
+  for (const command of ["agent-tool pr checks $X", "agent-tool pr checks ${X:-`rm x`}", "agent-tool pr checks `rm x`", 'agent-tool pr checks "a" `rm x`', "agent-tool pr checks; rm x", "agent-tool pr checks && rm x", "agent-tool pr checks | sh", "agent-tool pr checks & rm x", "agent-tool pr checks > f", "agent-tool pr checks < f", "agent-tool pr checks x\nrm x", "agent-tool pr checks\t-x", "agent-tool pr checks \\$X"])
+    expect({ command, allowed: geminiAllows(gemini, command) }).toEqual({ command, allowed: false });
 });
 
 test("Gemini rules allow exactly what Codex's do, in the default approval mode only", () => {
@@ -110,7 +113,7 @@ test("Gemini rules allow exactly what Codex's do, in the default approval mode o
   expect(rules.length).toBe([...CATALOG, ...project].filter(entry => CLASSES[strictest(entry)].decision === "allow").length);
   for (const { commandRegex, ...rule } of rules) {
     expect(rule).toEqual({ toolName: "run_shell_command", decision: "allow", priority: 0, modes: ["default"] });
-    expect(commandRegex.endsWith(GEMINI_NAME_END)).toBe(true);
+    expect(commandRegex.endsWith(GEMINI_ARGUMENTS)).toBe(true);
     // Gemini CLI 0.71.1 refuses a pattern with a quantified group (its NESTED_QUANTIFIER check)
     // or longer than 2048 characters once wrapped as `\x00"command":"(?:…)`.
     expect(/\([^)]*[*+?{][^\n\r]*\)[*+?{]/.test(commandRegex)).toBe(false);
@@ -338,7 +341,7 @@ test("the push gate checks the recorded scope, or an earlier manifest's harnesse
   installPermissions(narrowed, "codex", true);
   mkdirSync(path.join(narrowed, ".gemini/policies"), { recursive: true });
   writeFileSync(path.join(narrowed, ".gemini/policies/agent-tool.toml"), "stale\n");
-  const stray = { path: ".gemini/policies/agent-tool.toml", status: "unmanaged" as const };
+  const stray = { path: ".gemini/policies/agent-tool.toml", status: "unmanaged" as const, detail: "outside the recorded scope; delete it, or run agent-tool permissions install --harness gemini --apply" };
   expect(checkPermissions(narrowed).changes).toContainEqual(stray);
   expect(checkInstalledPermissions(narrowed)!.changes).toContainEqual(stray);
   expect(checkPermissions(narrowed).changes.at(-1)!.path).toBe(".agent-tool-permissions.json");

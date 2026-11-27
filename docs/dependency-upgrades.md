@@ -93,10 +93,13 @@ apply the exact approved saved plan. Keep state and plans out of Git.
   project policies (0.31.0), and plan mode's read-only deny in the default
   tier;
   priorities 0–999, with the first match of a stable sort deciding; a ReDoS
-  guard that refuses quantified groups; chains split at `&&`, `||`, `;`, `|`,
-  `&`, and line breaks before rules apply; and redirection and substitution
-  asking in `default` (in `autoEdit` too since 0.63.0,
-  google-gemini/gemini-cli#29506, which the rules do not rely on). Gemini
+  guard that refuses a quantified group holding a quantifier, `(?:` included,
+  so the rules group with capturing parentheses; and, for a command no rule
+  matches as a whole, chains checked command by command in some releases and
+  redirection and substitution asking in `default` (in `autoEdit` too since
+  0.63.0, google-gemini/gemini-cli#29506, which the rules do not rely on).
+  The rules match each argument free of shell syntax themselves, since
+  0.37.0 to 0.63.0 allow ``${X:-`…`}`` under an argument-blind rule. Gemini
   is not a dependency here, but CI runs
   `src/permissions/gemini.conformance.test.ts` against the releases
   `scripts/testing/gemini-conformance.ts` pins, verified by their npm

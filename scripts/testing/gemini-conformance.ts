@@ -49,7 +49,8 @@ async function conform({ version, integrity }: { version: string; integrity: str
     execFileSync("tar", ["-xzf", "gemini-cli.tgz"], { cwd: directory });
     const result = spawnSync(process.execPath, ["test", "src/permissions/gemini.conformance.test.ts"], {
       cwd: root,
-      env: { ...process.env, AGENT_TOOL_GEMINI_BUNDLE: path.join(directory, "package", "bundle") },
+      // The bundle is third-party code, so the test gets only what Bun needs, never CI's tokens.
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, AGENT_TOOL_GEMINI_BUNDLE: path.join(directory, "package", "bundle") },
       encoding: "utf8",
     });
     const output = `${result.stdout}${result.stderr}`;

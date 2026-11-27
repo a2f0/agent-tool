@@ -9,8 +9,8 @@ import { CATALOG, CLASSES, geminiPolicy, strictest } from "./catalog";
  * only when AGENT_TOOL_GEMINI_BUNDLE names an installed Gemini CLI bundle directory, such as
  * `$(brew --prefix gemini-cli)/libexec/lib/node_modules/@google/gemini-cli/bundle`; run it when a
  * Gemini release changes what docs/dependency-upgrades.md lists. The unit tests model one
- * command's match; this checks the chain splitting and redirection and substitution prompts that
- * the unrestricted arguments rely on, in the real loader and engine. It assigns the tiers Gemini
+ * command's match; this checks the loader, the ReDoS guard, and how the engine treats a command
+ * no rule matches as a whole: chains, redirection, and substitution. It assigns the tiers Gemini
  * documents (defaults 1, workspace 3) rather than testing Gemini's discovery and trust gating.
  */
 const bundle = process.env.AGENT_TOOL_GEMINI_BUNDLE;
@@ -47,20 +47,23 @@ test.skipIf(!bundle)("Gemini CLI's engine allows routine commands in default mod
       return "error";
     }
   };
-  // Variables expand to arguments of the same command, as Claude's `*` allows. (Arithmetic expansion asks from some release on.)
-  const allowed = ["agent-tool pr checks $X", "agent-tool pr checks ${X}", 'agent-tool pr checks "$X"', "agent-tool bun x a.b+c -- --check", "agent-tool pr checks --wait --head abc", "bun run agent-tool repo base-health", "node_modules/.bin/agent-tool branch push abc --remote origin", 'agent-tool pr open "feat: x" --body-file b.md', "agent-tool pr checks && agent-tool repo context"];
-  const asked = ["agent-tool pr checks ${X:-$(rm x)}", "agent-tool bun x aXb+c", "agent-tool bun x a.bbc", "agent-tool pr checks && rm x", "agent-tool pr checks; rm x", "agent-tool pr checks | sh", "agent-tool pr checks & rm x", "agent-tool pr checks x\nrm x", "agent-tool pr checks > f", "agent-tool pr checks > ~/.zshrc 2>&1", "agent-tool pr checks && agent-tool repo context > f", "agent-tool pr checks $(rm x)", "agent-tool pr checks `rm x`", "agent-tool pr checks <(rm x)", 'agent-tool pr checks"X"', 'agent-tool bun x vite"-node"', "agent-tool pr merge x abc main", "agent-tool permissions install --apply", "node_modules/xbin/agent-tool pr checks",
+  const allowed = ['agent-tool pr open "fix(api): x" --body-file b.md', "agent-tool bun x a.b+c -- --check", "agent-tool pr checks --wait --head abc", "bun run agent-tool repo base-health", "node_modules/.bin/agent-tool branch push abc --remote origin", "agent-tool pr checks ~/x 'a b' a\\b"];
+  // A chain of routine commands matches no rule as a whole. Gemini 0.37.0 and 0.71.1 then allow
+  // it command by command; 0.40.0 to 0.63.0 ask, which fails closed.
+  const chained = ["agent-tool pr checks && agent-tool repo context", "agent-tool pr checks; bun run agent-tool repo context"];
+  // Arguments with shell syntax ask, expansion included: Gemini 0.37.0 to 0.63.0 alone would allow ${X:-`…`}.
+  const asked = ["agent-tool pr checks $X", "agent-tool pr checks ${X}", 'agent-tool pr checks "$X"', "agent-tool pr checks $((1+1))", "agent-tool pr checks ${X:-$(rm x)}", "agent-tool pr checks ${X:-`rm x`}", "agent-tool pr checks $((a[$(rm x)]))", "agent-tool pr checks $((`rm x`))", "agent-tool bun x aXb+c", "agent-tool bun x a.bbc", "agent-tool pr checks && rm x", "agent-tool pr checks; rm x", "agent-tool pr checks | sh", "agent-tool pr checks & rm x", "agent-tool pr checks x\nrm x", "agent-tool pr checks > f", "agent-tool pr checks > ~/.zshrc 2>&1", "agent-tool pr checks && agent-tool repo context > f", "agent-tool pr checks $(rm x)", "agent-tool pr checks `rm x`", "agent-tool pr checks <(rm x)", 'agent-tool pr checks"X"', 'agent-tool bun x vite"-node"', "agent-tool pr merge x abc main", "agent-tool permissions install --apply", "node_modules/xbin/agent-tool pr checks",
     'agent-tool pr checks "$(rm x)"', "agent-tool pr checks >(rm x)", "agent-tool pr checks |& sh", "{ agent-tool pr checks; rm x; }", "(agent-tool pr checks; rm x)",
     "agent-tool pr threads reply 1 --body-file - <<EOF\nx\nEOF", "agent-tool pr threads reply 1 --body-file - <<< x", "X=1 agent-tool pr checks", "env agent-tool pr checks"];
   const mismatches: string[] = [];
-  for (const command of [...allowed, ...asked]) {
-    const allow = allowed.includes(command);
+  for (const command of [...allowed, ...chained, ...asked]) {
+    const inDefault = allowed.includes(command) ? ["allow"] : chained.includes(command) ? ["allow", "ask_user"] : ["ask_user"];
     // The rules apply in `default` alone, so `autoEdit` asks for every shell command and plan mode denies them.
-    const expected: Record<string, string> = { default: allow ? "allow" : "ask_user", autoEdit: "ask_user", plan: "deny" };
-    for (const [mode, want] of Object.entries(expected)) {
+    const expected: Record<string, string[]> = { default: inDefault, autoEdit: ["ask_user"], plan: ["deny"] };
+    for (const [mode, wants] of Object.entries(expected)) {
       const got = await decide(mode, command);
       // Anything but allow is as safe as asking for a command that must not run unprompted.
-      if (got !== want && !(got === "error" && want !== "allow")) mismatches.push(`${mode} ${JSON.stringify(command)}: ${got}, expected ${want}`);
+      if (!wants.includes(got) && !(got === "error" && !wants.includes("allow"))) mismatches.push(`${mode} ${JSON.stringify(command)}: ${got}, expected ${wants.join(" or ")}`);
     }
   }
   expect(mismatches).toEqual([]);

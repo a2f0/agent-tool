@@ -31,7 +31,7 @@ interface Manifest { schemaVersion: 1; agentToolVersion?: string; scope?: Scope;
 interface Recorded { raw?: string; manifest: Manifest }
 export interface PermissionChange { path: string; status: "create" | "update" | "unchanged" }
 /** One entry per generated file, then the manifest's own entry with its recorded and running versions. */
-export interface PermissionCheck { path: string; status: CheckStatus; recordedVersion?: string | null; currentVersion?: string }
+export interface PermissionCheck { path: string; status: CheckStatus; recordedVersion?: string | null; currentVersion?: string; detail?: string }
 
 /** A `--harness` value: `all` or one known harness. */
 function harnessTarget(target: string): Harness | "all" {
@@ -248,7 +248,7 @@ function outsideScope(root: string, checked: Harness[]): PermissionCheck[] {
   const present = (file: string) => { try { lstatSync(file); return true; } catch { return false; } };
   return (Object.keys(GENERATED) as FileHarness[])
     .filter(harness => !checked.includes(harness) && present(path.join(root, GENERATED[harness].relative)))
-    .map(harness => ({ path: GENERATED[harness].relative, status: "unmanaged" }));
+    .map(harness => ({ path: GENERATED[harness].relative, status: "unmanaged", detail: `outside the recorded scope; delete it, or run agent-tool permissions install --harness ${harness} --apply` }));
 }
 
 /** Each generated file, then for a scope check any outside it, then the manifest's own entry, against one reading of the manifest. */
@@ -301,11 +301,11 @@ export function checkRecordedPermissions(rootDir: string): { changes: Permission
   return { changes: checks(root, HARNESSES.filter(harness => recorded.manifest[harness] !== undefined), recorded), install: installCommands(recorded.manifest) };
 }
 
-
 /**
- * The installs that regenerate a manifest's rules without widening its scope: `all`, or one per
- * harness it names. An inferred scope of Claude and Codex may come from an `all` install, which
- * should gain the harnesses `all` added, so `all` is offered first there.
+ * The installs that regenerate a manifest's rules without widening its scope: the bare install,
+ * which keeps the recorded scope. An inferred scope of Claude and Codex may come from an `all`
+ * install, which should gain the harnesses `all` added, so the bare install comes first there,
+ * then one install per recorded harness.
  */
 function installCommands(manifest: Manifest): string {
   const state = scopeState(manifest), all = "agent-tool permissions install --apply";

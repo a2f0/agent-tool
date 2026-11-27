@@ -134,39 +134,44 @@ const GEMINI_PRIORITY = 0;
 
 const regex = (text: string) => text.replace(/[.^$|?*+()[\]{}\\]/g, "\\$&");
 /**
- * What ends a command name in its JSON encoding: a space or the closing quote, never an escaped
- * quote. The arguments after it are not restricted, as Claude's and Codex's rules leave them to
- * their harness: Gemini splits chains and asks for redirection and substitution itself. Matching
- * the whole command is also the stricter choice there: Gemini 0.71.1 asks for a redirection that
- * a rule with an argument pattern matched in every mode, but approves a command no rule matched
- * part by part and, outside `default`, skips that check. Its ReDoS guard refuses any quantified
- * group as well, so no pattern could allow an escaped quote while refusing shell syntax.
+ * What may follow a command name in its JSON encoding, through the closing quote: nothing, or a
+ * space and arguments free of shell syntax. An argument may not hold a backtick, `$`, `;`, `&`,
+ * `|`, `<`, or `>`, or a JSON escape other than an escaped quote or backslash, so no raw newline
+ * or control character either. A command that does fails to match as a whole, and Gemini then
+ * checks each command of a chain on its own and asks for redirection in `default` mode, or asks
+ * outright, as Codex treats such a script as opaque. Gemini's own substitution checks are not
+ * enough: 0.37.0 to 0.63.0 allow ``${X:-`rm x`}`` under an argument-blind rule. Groups capture
+ * rather than use `(?:`, whose `?` Gemini's ReDoS guard reads as a quantifier inside a quantified
+ * group; no group here holds a quantifier before its `)`, so the guard accepts every pattern.
  */
-export const GEMINI_NAME_END = '(?: |")';
+export const GEMINI_ARGUMENTS = '( (\\\\["\\\\]|[^`$"\\\\;&|<>])*)?"';
 
 /**
  * Gemini CLI policy rules for `.gemini/policies/`: one allow rule per routine command,
- * as a `commandRegex` matched against the start of the command's JSON encoding. Gemini's
- * own `commandPrefix` also ends at an escaped quote, which the shell joins into the same
- * word (`agent-tool bun x vite"-node"` runs `vite-node`), so each regex ends the command
- * name at a space or at the closing quote of the encoding, as Codex's token prefixes do; a
- * command whose `--apply` form asks gets no rule. Gemini splits chains and asks for
- * redirection and substitution before rules apply (see GEMINI_NAME_END). Only allow rules are
- * generated, as for Claude and Codex, so other commands keep the user's approval mode and
- * policies, which outrank workspace rules. The rules name their one mode (GEMINI_MODES). One
- * rule per command keeps each pattern far below Gemini's pattern size limits.
+ * as a `commandRegex` matched against the command's JSON encoding through its closing quote.
+ * Gemini's own `commandPrefix` also ends at an escaped quote, which the shell joins into the
+ * same word (`agent-tool bun x vite"-node"` runs `vite-node`), so each regex ends the command
+ * name at a space or at the closing quote of the encoding, as Codex's token prefixes do, and
+ * then admits only arguments free of shell syntax (GEMINI_ARGUMENTS); a command whose `--apply`
+ * form asks gets no rule. Only allow rules are generated, as for Claude and Codex, so other
+ * commands keep the user's approval mode and policies, which outrank workspace rules. The rules
+ * name their one mode (GEMINI_MODES). One rule per command keeps each pattern far below Gemini's
+ * pattern size limits.
  */
 export function geminiPolicy(project: CatalogEntry[] = []): string {
   const lines = [
     "# Managed by agent-tool; regenerate with `agent-tool permissions install --apply`.",
     "# Only routine commands receive allow rules. Other commands keep the user's",
     "# approval mode and policies, which outrank these workspace rules.",
-    "# Each command ends at a space or the end of the command, never a quote, and a",
-    "# command whose --apply form asks gets no rule. The rules apply in the default",
+    "# Each command ends at a space or the end of the command, never a quote; its",
+    "# arguments hold no backtick, $, ;, &, |, <, >, or line break, so any shell",
+    "# syntax falls back to Gemini's own checks; and a command whose --apply form",
+    "# asks gets no rule. The rules apply in the default",
     "# approval mode only: plan mode stays read-only, autoEdit keeps the user's rules,",
     "# and YOLO already allows every command. Requires Gemini CLI 0.37.0 or later.",
   ];
-  const invocations = `(?:${INVOCATIONS.map(regex).join("|")})`;
+  // Capturing groups throughout: see GEMINI_ARGUMENTS for Gemini's ReDoS guard.
+  const invocations = `(${INVOCATIONS.map(regex).join("|")})`;
   for (const value of Object.keys(CLASSES) as PermissionClass[]) {
     if (CLASSES[value].decision !== "allow") continue;
     const entries = [...CATALOG, ...project].filter(entry => strictest(entry) === value);
@@ -174,7 +179,7 @@ export function geminiPolicy(project: CatalogEntry[] = []): string {
     lines.push("", `# ${value}: ${CLASSES[value].description}`);
     for (const entry of entries) {
       // A TOML literal string keeps the pattern readable; command names never hold its quote.
-      const pattern = `${invocations} ${regex(entry.command)}${GEMINI_NAME_END}`;
+      const pattern = `${invocations} ${regex(entry.command)}${GEMINI_ARGUMENTS}`;
       if (pattern.includes("'")) throw new Error(`Cannot write a Gemini rule for '${entry.command}'.`);
       lines.push("[[rule]]", 'toolName = "run_shell_command"', `commandRegex = '${pattern}'`, 'decision = "allow"', `priority = ${GEMINI_PRIORITY}`, `modes = [${GEMINI_MODES.map(quote).join(", ")}]`);
     }
