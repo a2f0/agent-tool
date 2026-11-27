@@ -246,7 +246,7 @@ and records what it owns in `.agent-tool-permissions.json`:
   refused rather than overwritten; other `.rules` files are left alone.
 
 Legacy Gemini CLI policy files (`.gemini/policies/agent-tool.toml`, generated
-by releases 0.1.78–0.1.81) are retired. When a repository upgrades from those
+by releases 0.1.78–0.1.82) are retired. When a repository upgrades from those
 releases, bare `permissions check` and `permissions check --harness all` report
 the retired policy file as `outdated` (or `unmanaged` if locally edited or
 unrecorded). Running a bare or

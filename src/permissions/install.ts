@@ -8,7 +8,7 @@ import { projectCommands } from "./project";
 
 export const PERMISSIONS_MANIFEST = ".agent-tool-permissions.json";
 const CLAUDE_SETTINGS = ".claude/settings.json";
-/** Retired Gemini CLI workspace policy file written by agent-tool 0.1.78–0.1.81. */
+/** Retired Gemini CLI workspace policy file written by agent-tool 0.1.78–0.1.82. */
 const RETIRED_GEMINI_POLICY = ".gemini/policies/agent-tool.toml";
 const HARNESSES = ["claude", "codex"] as const;
 type Harness = typeof HARNESSES[number];
@@ -24,12 +24,12 @@ interface OwnedFile { file: string; sha256: string }
 type Scope = "all" | Harness[];
 /**
  * What an install owns, the scope it was asked for, and the agent-tool version that wrote it.
- * Manifests from releases before the version or scope field, or from 0.1.78–0.1.81 with a
+ * Manifests from releases before the version or scope field, or from 0.1.78–0.1.82 with a
  * retired `gemini` entry, stay readable; `schemaVersion` stays 1.
  */
 interface Manifest { schemaVersion: 1; agentToolVersion?: string; scope?: Scope; claude?: ClaudePermissions; codex?: OwnedFile; gemini?: OwnedFile }
 /**
- * Retired Gemini CLI state in a manifest from 0.1.78–0.1.81:
+ * Retired Gemini CLI state in a manifest from 0.1.78–0.1.82:
  * - `none`: manifest records neither a `gemini` entry nor `"gemini"` in `scope`.
  * - `retired`: manifest also covers at least one current harness; a bare or `all` install
  *   removes the unmodified policy file and drops the legacy metadata.
@@ -92,14 +92,14 @@ function atomicWrite(file: string, contents: string): void {
   finally { try { unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; } }
 }
 
-/** Remove empty directories created for a retired policy file, stopping before the repository root. */
+/** Best-effort removal of empty directories left by a retired policy file, stopping before the repository root. */
 function removeEmptyParents(root: string, file: string): void {
   let dir = path.dirname(file);
   while (dir !== root && dir.startsWith(`${root}${path.sep}`)) {
     try { rmdirSync(dir); }
     catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ENOENT" || code === "ENOTEMPTY" || code === "EEXIST") return;
+      if (code === "ENOENT" || code === "ENOTEMPTY" || code === "EEXIST" || code === "ENOTDIR" || code === "EACCES" || code === "EPERM") return;
       throw error;
     }
     dir = path.dirname(dir);
@@ -347,6 +347,7 @@ export function installPermissions(rootDir: string, target?: string, apply = fal
   // Every destination is validated before any file is written or removed.
   if (apply) {
     for (const change of changes) if (change.status !== "unchanged") atomicWrite(change.file, change.contents);
+    let removedGemini = false;
     if (geminiRemoval) {
       const current = readRegularFile(destination(root, geminiRemoval.relative));
       if (current.status === "file") {
@@ -354,12 +355,13 @@ export function installPermissions(rootDir: string, target?: string, apply = fal
           throw new Error(`Locally edited or unmanaged rules: ${geminiRemoval.relative}. Preserve or delete them before installing.`);
         }
         unlinkSync(geminiRemoval.file);
-        removeEmptyParents(root, geminiRemoval.file);
+        removedGemini = true;
       } else if (current.status === "irregular") {
         throw new Error(`Permissions destination is not a regular file: ${geminiRemoval.relative}`);
       }
     }
     if (manifestStatus !== "unchanged") atomicWrite(manifestFile, contents);
+    if (removedGemini && geminiRemoval) removeEmptyParents(root, geminiRemoval.file);
   }
   // An existing manifest whose scope changes says so, since a widening adds a harness's allow rules.
   // A recorded scope shows as written, so a list that left out a recorded harness shows it added;
