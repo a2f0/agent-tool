@@ -136,9 +136,11 @@ const regex = (text: string) => text.replace(/[.^$|?*+()[\]{}\\]/g, "\\$&");
 /**
  * What may follow a command name in its JSON encoding, through the closing quote: nothing, or a
  * space and arguments free of shell syntax, for bash and for PowerShell, which Gemini runs on
- * Windows. An argument may not hold a backtick, `$`, `;`, `&`, `|`, `<`, `>`, `(`, `)`, or `@`,
- * or a JSON escape other than an escaped quote or backslash, so no raw newline or control
- * character either. PowerShell evaluates `(…)` and `@(…)` in an argument. A command that holds
+ * Windows. An argument may not hold a backtick, `$`, `;`, `&`, `|`, `<`, `>`, `(`, `)`, `{`, `}`,
+ * or `%`, or a JSON escape other than an escaped quote or backslash, so no raw newline or control
+ * character either. PowerShell evaluates `(…)`, `@(…)`, and the values in `@{…}` in an argument,
+ * and cmd.exe, which runs a `.cmd` shim, expands `%…%`; `@` alone only splats a variable, so
+ * `name@1.2.3` and `@scope/name` stay allowed. A command that holds
  * any of these fails to match as a whole and falls back to Gemini's own checks, as Codex treats
  * such a script as opaque; those checks alone miss nested substitution in some supported releases
  * (docs/dependency-upgrades.md lists which).
@@ -148,7 +150,7 @@ const regex = (text: string) => text.replace(/[.^$|?*+()[\]{}\\]/g, "\\$&");
  * empty alternative stands in for an outer `?`, and groups capture, since the `?` of a `(?:`
  * would trip the guard.
  */
-export const GEMINI_ARGUMENTS = '( (\\\\["\\\\]|[^`$"\\\\;&|<>()@])*|)"';
+export const GEMINI_ARGUMENTS = '( (\\\\["\\\\]|[^`$"\\\\;&|<>(){}%])*|)"';
 
 /**
  * Gemini CLI policy rules for `.gemini/policies/`: one allow rule per routine command,
@@ -168,7 +170,7 @@ export function geminiPolicy(project: CatalogEntry[] = []): string {
     "# Only routine commands receive allow rules. Other commands keep the user's",
     "# approval mode and policies, which outrank these workspace rules.",
     "# Each command ends at a space or the end of the command, never a quote; its",
-    "# arguments hold no backtick, $, ;, &, |, <, >, (, ), @, or line break, so",
+    "# arguments hold no backtick, $, ;, &, |, <, >, (, ), {, }, %, or line break, so",
     "# bash or PowerShell syntax falls back to Gemini's own checks; and a command",
     "# whose --apply form asks gets no rule. The rules apply in the default",
     "# approval mode only: plan mode stays read-only, autoEdit keeps the user's rules,",

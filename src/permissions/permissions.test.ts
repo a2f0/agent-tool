@@ -98,8 +98,8 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
   for (const command of ["agent-tool bun x aXb -- c", "agent-tool bun x ccd -- e", "agent-tool bun x cd -- e", "node_modules/xbin/agent-tool pr checks", "bun run agent-toolX pr checks"]) expect({ command, allowed: geminiAllows(dotted, command) }).toEqual({ command, allowed: false });
   for (const command of ["gh pr merge 1", "npm publish", "bun add left-pad", "bunx cowsay", "npx cowsay"]) expect(geminiAllows(gemini, command)).toBe(false);
   // Arguments may quote and escape, but bash or PowerShell syntax, a line break, or another JSON escape fails to match.
-  for (const command of ['agent-tool pr open "feat: x" --body-file b.md', "agent-tool pr checks a\\b", "agent-tool pr checks ~/x *", "agent-tool pr checks"]) expect({ command, allowed: geminiAllows(gemini, command) }).toEqual({ command, allowed: true });
-  for (const command of ["agent-tool pr checks $X", "agent-tool pr checks ${X:-`rm x`}", "agent-tool pr checks `rm x`", 'agent-tool pr checks "a" `rm x`', "agent-tool pr checks; rm x", "agent-tool pr checks && rm x", "agent-tool pr checks | sh", "agent-tool pr checks & rm x", "agent-tool pr checks > f", "agent-tool pr checks < f", "agent-tool pr checks x\nrm x", "agent-tool pr checks\t-x", "agent-tool pr checks \\$X", "agent-tool pr checks (Remove-Item x)", "agent-tool pr checks a(Remove-Item x)", "agent-tool pr checks @(Remove-Item x)", 'agent-tool pr open "fix(api): x"'])
+  for (const command of ['agent-tool pr open "feat: x" --body-file b.md', "agent-tool bun update left-pad@1.2.3", "agent-tool bun remove @types/node", "agent-tool pr checks a\\b", "agent-tool pr checks ~/x *", "agent-tool pr checks"]) expect({ command, allowed: geminiAllows(gemini, command) }).toEqual({ command, allowed: true });
+  for (const command of ["agent-tool pr checks $X", "agent-tool pr checks ${X:-`rm x`}", "agent-tool pr checks `rm x`", 'agent-tool pr checks "a" `rm x`', "agent-tool pr checks; rm x", "agent-tool pr checks && rm x", "agent-tool pr checks | sh", "agent-tool pr checks & rm x", "agent-tool pr checks > f", "agent-tool pr checks < f", "agent-tool pr checks x\nrm x", "agent-tool pr checks\t-x", "agent-tool pr checks \\$X", "agent-tool pr checks (Remove-Item x)", "agent-tool pr checks a(Remove-Item x)", "agent-tool pr checks @(Remove-Item x)", "agent-tool pr checks @{a=Remove-Item x}", "agent-tool pr checks %X%", "agent-tool pr checks {a,b}", 'agent-tool pr open "fix(api): x"'])
     expect({ command, allowed: geminiAllows(gemini, command) }).toEqual({ command, allowed: false });
 });
 
@@ -306,6 +306,9 @@ test("an install that widens an existing manifest's scope shows it on the manife
   const singleFile = path.join(single, ".agent-tool-permissions.json");
   writeFileSync(singleFile, JSON.stringify({ ...JSON.parse(readFileSync(singleFile, "utf8")), scope: ["codex"] }));
   expect(manifestEntry(installPermissions(single))).toMatchObject({ scope: { from: ["codex"], to: ["codex", "gemini"] } });
+  // A list that differs only in order is no change.
+  writeFileSync(singleFile, JSON.stringify({ ...JSON.parse(readFileSync(singleFile, "utf8")), scope: ["gemini", "codex"] }));
+  expect(manifestEntry(installPermissions(single))!.scope).toBeUndefined();
 });
 
 test("the push gate checks the recorded scope, or an earlier manifest's harnesses", () => {

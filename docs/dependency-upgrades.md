@@ -97,8 +97,9 @@ apply the exact approved saved plan. Keep state and plans out of Git.
     character before the next `)` and a later `)` is quantified, `(?:`
     included, so the rules use capturing groups and quantify only a group
     holding no quantifier.
-  - Bash on macOS and Linux, and PowerShell on Windows, whose `(…)` and `@(…)`
-    the rules exclude as well; the conformance test runs the bash path only.
+  - Bash on macOS and Linux, and PowerShell on Windows, whose `(…)`, `@(…)`,
+    and `@{…}`, and a `.cmd` shim's `%…%`, the rules exclude as well; the
+    conformance test runs the bash path only.
   - For a command no rule matches as a whole: chains checked command by
     command in some releases, and redirection and substitution asking in
     `default` (in `autoEdit` too since 0.63.0,
