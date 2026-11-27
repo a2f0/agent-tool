@@ -50,10 +50,10 @@ export function readSkillManifest(root: string): SkillManifest {
 }
 
 /**
- * The files the manifest records whose snapshot bytes match what this release installs: a bundled
- * skill's file under a skill directory. Any edited, missing, or unbundled entry is left out so a
- * hand-edited skill file never hides behind the generated-files prompt rule. Throws as an install
- * would on an unusable manifest.
+ * The files the manifest records whose snapshot bytes match what the running release installs: a
+ * bundled skill's file under a skill directory. Any edited, missing, unbundled, or older-release
+ * entry is left out so a hand-edited skill file never hides behind the generated-files prompt
+ * rule. Throws as an install would on an unusable manifest.
  */
 export function managedSkillFiles(rootDir: string): string[] {
   const root = realpathSync(rootDir);

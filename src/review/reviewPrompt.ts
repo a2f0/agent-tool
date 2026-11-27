@@ -71,7 +71,7 @@ function generatedFilesInstruction({ skills, permissions }: GeneratedFiles): str
   if (listed.length === 0) {
     return "";
   }
-  return `\n- These changed files are agent-tool's generated output, which this repository cannot edit: ${SERIES.format(listed)}. Findings about their contents belong to a2f0/agent-tool: list each under an \`Upstream (agent-tool):\` heading before the verdict, with no severity, and never let one raise the verdict. Still review this repository's own changes around them, such as docs that list them, linter excludes, CI path policies, and the agent-tool pin`;
+  return `\n- These changed files are agent-tool's generated output, which this repository cannot edit: ${SERIES.format(listed)}. Findings about their contents belong to a2f0/agent-tool: list each under an \`Upstream (agent-tool):\` heading before the verdict, with no severity, and never let one raise the verdict. Still review this repository's own changes around them, such as docs that list them, linter excludes, CI path policies, \`permissions.executables\` in \`agent-tool.json\`, and the agent-tool pin`;
 }
 
 export function buildReviewPrompt(params: {

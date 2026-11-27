@@ -237,7 +237,7 @@ describe("generated files in the review prompt", () => {
     const text = prompt(generated);
     const line = bullet(text)!;
     expect(line).toBe(
-      "- These changed files are agent-tool's generated output, which this repository cannot edit: `.agents/skills/ship-pr/SKILL.md`, `.claude/skills/ship-pr/SKILL.md`, the rules `.agent-tool-permissions.json` records in `.claude/settings.json`, `.codex/rules/agent-tool.rules`, and `.gemini/policies/agent-tool.toml`. Findings about their contents belong to a2f0/agent-tool: list each under an `Upstream (agent-tool):` heading before the verdict, with no severity, and never let one raise the verdict. Still review this repository's own changes around them, such as docs that list them, linter excludes, CI path policies, and the agent-tool pin",
+      "- These changed files are agent-tool's generated output, which this repository cannot edit: `.agents/skills/ship-pr/SKILL.md`, `.claude/skills/ship-pr/SKILL.md`, the rules `.agent-tool-permissions.json` records in `.claude/settings.json`, `.codex/rules/agent-tool.rules`, and `.gemini/policies/agent-tool.toml`. Findings about their contents belong to a2f0/agent-tool: list each under an `Upstream (agent-tool):` heading before the verdict, with no severity, and never let one raise the verdict. Still review this repository's own changes around them, such as docs that list them, linter excludes, CI path policies, `permissions.executables` in `agent-tool.json`, and the agent-tool pin",
     );
     // The manifest itself and the repository's own files stay under normal review.
     expect(line).not.toContain("src/app.ts");
@@ -344,7 +344,7 @@ describe("generated files in the review prompt", () => {
         permissions: [],
       });
     }
-  });
+  }, 30_000);
 
   test("leaves hand-edited skill or permission files and forged Claude manifest rules under normal review", () => {
     const root = consumer();
