@@ -5,10 +5,11 @@ import path from "node:path";
 import { CATALOG, CLASSES, geminiPolicy, strictest } from "./catalog";
 
 /**
- * Opt-in conformance with Gemini CLI's own policy engine. Gemini is not a dependency, so this runs
- * only when AGENT_TOOL_GEMINI_BUNDLE names an installed Gemini CLI bundle directory, such as
- * `$(brew --prefix gemini-cli)/libexec/lib/node_modules/@google/gemini-cli/bundle`; run it when a
- * Gemini release changes what docs/dependency-upgrades.md lists. The unit tests model one
+ * Conformance with Gemini CLI's own policy engine. Gemini is not a dependency, so this runs only
+ * when AGENT_TOOL_GEMINI_BUNDLE names a Gemini CLI bundle directory: CI's required
+ * gemini-conformance job sets it for each release scripts/testing/gemini-conformance.ts pins, and
+ * locally it can name an installed one, such as
+ * `$(brew --prefix gemini-cli)/libexec/lib/node_modules/@google/gemini-cli/bundle`. The unit tests model one
  * command's match; this checks the loader, the ReDoS guard, and how the engine treats a command
  * no rule matches as a whole: chains, redirection, and substitution. It assigns the tiers Gemini
  * documents (defaults 1, workspace 3) rather than testing Gemini's discovery and trust gating.
