@@ -51,7 +51,7 @@ test("Hermes shares Codex ownership without extra directories or skill aliases",
 });
 
 test("skill consumers do not register new review providers", () => {
-  expect(HARNESSES.map(harness => harness.name)).toEqual(["claude", "codex", "opencode"]);
+  expect(HARNESSES.map(harness => harness.name)).toEqual(["agy", "claude", "codex", "opencode"]);
   expect(() => harnessNamed("hermes")).toThrow("Unknown harness");
 });
 

@@ -1,13 +1,14 @@
 import { type PrContext, resolveReviewContext, run } from "./git/prContext";
 import { withPinnedReviewInput } from "./review/pinnedReviewInput";
 import { resolveReviewEffort, type ReviewEffort } from "./review/reviewEffort";
-import { buildReviewPrompt, CLAUDE_ACCESS_NOTE, CODEX_ACCESS_NOTE, OPENCODE_ACCESS_NOTE } from "./review/reviewPrompt";
+import { AGY_ACCESS_NOTE, buildReviewPrompt, CLAUDE_ACCESS_NOTE, CODEX_ACCESS_NOTE, OPENCODE_ACCESS_NOTE } from "./review/reviewPrompt";
+import { spawnAgyReview } from "./review/solicitAgyReview";
 import { spawnClaudeReview } from "./review/solicitClaudeCodeReview";
 import { spawnCodexReview } from "./review/solicitCodexReview";
 import { spawnOpencodeReview } from "./review/solicitOpencodeReview";
 
 export interface Harness {
-  name: "claude" | "codex" | "opencode";
+  name: "agy" | "claude" | "codex" | "opencode";
   executable: string;
   skillDirectory: string;
   defaultEffort: ReviewEffort;
@@ -17,6 +18,7 @@ export interface Harness {
 
 /** Harness-specific discovery and invocation stay behind this small boundary. */
 export const HARNESSES: readonly Harness[] = [
+  { name: "agy", executable: "agy", skillDirectory: ".agents/skills", defaultEffort: "high", accessNote: AGY_ACCESS_NOTE, review: spawnAgyReview },
   { name: "claude", executable: "claude", skillDirectory: ".claude/skills", defaultEffort: "xhigh", accessNote: CLAUDE_ACCESS_NOTE, review: spawnClaudeReview },
   { name: "codex", executable: "codex", skillDirectory: ".agents/skills", defaultEffort: "high", accessNote: CODEX_ACCESS_NOTE, review: spawnCodexReview },
   { name: "opencode", executable: "opencode", skillDirectory: ".opencode/skills", defaultEffort: "high", accessNote: OPENCODE_ACCESS_NOTE, review: spawnOpencodeReview },
@@ -24,7 +26,7 @@ export const HARNESSES: readonly Harness[] = [
 
 export function harnessNamed(name: string): Harness {
   const harness = HARNESSES.find(item => item.name === name);
-  if (!harness) throw new Error(`Unknown harness '${name}'; choose claude, codex, or opencode.`);
+  if (!harness) throw new Error(`Unknown harness '${name}'; choose agy, claude, codex, or opencode.`);
   return harness;
 }
 

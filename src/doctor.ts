@@ -4,6 +4,7 @@ import { loadConfig } from "./config";
 const specifications = [
   { name: "git", help: [] as string[], flags: [] as string[] },
   { name: "gh", help: ["pr", "checks", "--help"], flags: ["--json"] },
+  { name: "agy", help: ["--help"], flags: ["--input-format", "--output-format", "--disable-slash-commands", "--settings", "--effort"] },
   { name: "claude", help: ["--help"], flags: ["--safe-mode", "--permission-mode", "--effort"] },
   { name: "codex", help: ["exec", "--help"], flags: ["--ignore-user-config", "--ignore-rules", "--strict-config", "--ephemeral", "--output-last-message"] },
   // OpenCode 2: the variant rides in --model as provider/model#variant, and --standalone runs a private server.

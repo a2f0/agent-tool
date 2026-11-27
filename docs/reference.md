@@ -1,7 +1,8 @@
 # CLI reference
 
 A CLI for independent agent code reviews, guarded GitHub PR operations, package
-version management, and portable skills for Claude Code, Codex, OpenCode, and Hermes.
+version management, and portable skills for Antigravity CLI (`agy`), Claude Code,
+Codex, OpenCode, and Hermes.
 
 - **Review** a committed branch with a different agent than the one that wrote
   it, using a pinned, read-only snapshot.
@@ -82,8 +83,8 @@ platform archives, a Homebrew formula, and Debian packages.
 - An authenticated GitHub CLI (`gh`) for `pr` commands. `pr merge` needs a
   `gh` whose `pr checks` supports `--json`; gh 2.45, still shipped by some
   distributions, fails with `unknown flag: --json`.
-- An authenticated CLI for each agent you review with: `claude`, `codex`, or
-  `opencode`. OpenCode must be 2.0 or newer: its `run` takes the variant as
+- An authenticated CLI for each agent you review with: `agy`, `claude`, `codex`,
+  or `opencode`. OpenCode must be 2.0 or newer: its `run` takes the variant as
   `--model provider/model#variant` and runs a private server with
   `--standalone`, replacing 1.x's `--variant` and `--pure`, and `doctor`
   reports 1.x as incompatible.
@@ -126,7 +127,7 @@ For repository workflow commands added alongside these interfaces, see
 | `proc start [--label text] [--keep] -- <command> [args...]` | Start a long-running process in its own group, logged privately and recorded for the repository |
 | `proc list` / `proc stop <id...>\|--all [--grace-ms N]` | Show recorded processes with their members and ports; stop them, SIGKILL after the grace period |
 | `teardown [--apply]` | Report what the checkout still runs or holds, and list the agent session's background `-c` shells by pid, age and name, never their arguments (`sessionShells`, never failing or stopped); `--apply` stops recorded processes not started with `--keep` |
-| `review claude\|codex\|opencode [effort] [--base ref]` | Review committed HEAD using a pinned raw-file snapshot |
+| `review agy\|claude\|codex\|opencode [effort] [--base ref]` | Review committed HEAD using a pinned raw-file snapshot |
 | `review carry <reviewed-head> <new-head> [--base ref]` | Read-only: whether a clean review of the reviewed head still covers a new head that only merged the base and prepared versions; JSON, exit 1 when it does not |
 | `pr open [title] [--body-file file]` | Open a same-repository PR; body from the file or stdin; branch already pushed |
 | `pr checks [--wait] [--head oid] [--allow-behind] [--timeout seconds] [--interval seconds]` | Report or wait for the PR head's checks and whether the head is behind its live base; stop for that only under `merge.requireStrictBaseFreshness` |
@@ -143,8 +144,8 @@ For repository workflow commands added alongside these interfaces, see
 | `dependencies check-terraform-plan <json-file>` | Read-only screening for destructive or incomplete Terraform JSON plans |
 | `dependencies diff --base <ref>` | Declared dependencies added, removed, or changed in every tracked `package.json`, and the new third-party package names |
 | `skills list` | List embedded portable skills |
-| `skills install [--harness all\|claude\|codex\|opencode\|hermes] [--apply]` | Preview by default; install or update managed skills |
-| `skills check [--harness all\|claude\|codex\|opencode\|hermes]` | Read-only CI check for current managed skills and the agent-tool version their manifest records |
+| `skills install [--harness all\|agy\|claude\|codex\|opencode\|hermes] [--apply]` | Preview by default; install or update managed skills |
+| `skills check [--harness all\|agy\|claude\|codex\|opencode\|hermes]` | Read-only CI check for current managed skills and the agent-tool version their manifest records |
 | `bun install [--cwd dir]` | Frozen-lockfile install with the Bun that `.mise.toml` pins; requires an existing lockfile |
 | `bun update <name[@version]>... [--cwd dir]` | Change versions of declared registry dependencies only, keeping each one's section |
 | `bun update --catalog <default\|name> <name@version>... [--cwd dir]` | Change only existing root catalog entries to explicit registry specs; preserve references and catalog layout |
@@ -170,7 +171,7 @@ For repository workflow commands added alongside these interfaces, see
 
 Global options are `--repo <directory>` and `--config <file>`. Effort accepts
 `low`, `medium`, `high`, `xhigh`, and `max`; the default is `xhigh` for Claude
-and `high` for Codex and OpenCode. Legacy camelCase action names, listed in
+and `high` for Antigravity CLI (`agy`), Codex, and OpenCode. Legacy camelCase action names, listed in
 `--help`, remain available. The legacy `squashMerge` action was removed, since
 its manual form skipped the preflight gates; it exits non-zero and names
 `pr merge <subject-or-empty> <reviewed-head-oid> <base-branch>`.
@@ -508,6 +509,7 @@ feature checkout with policy from a trusted source.
     "budgetSeconds": 60
   },
   "review": {
+    "agyModel": null,
     "claudeModel": null,
     "codexModel": null,
     "opencodeModel": "deepseek/deepseek-v4-pro",
@@ -543,8 +545,9 @@ The policy is data only: no commitlint binary or JavaScript config runs.
 - **`pushGate`**: the steps the `pre-push` hook runs after the built-in trust
   guards, and the time budget it warns past (`budgetSeconds`, default 120).
   See [push gates](workflows.md#push-gates).
-- **`review`**: Claude and Codex use their CLI defaults unless a model is set.
-  Set `opencodeModel` to a model your account supports. `opencodeVariants`
+- **`review`**: Antigravity CLI (`agy`), Claude, and Codex use their CLI
+  defaults unless a model is set. Set `opencodeModel` to a model your account
+  supports. `opencodeVariants`
   replaces the default effort-to-variant map (`xhigh` to `max`); an effort
   level missing from the map is passed to OpenCode unchanged. A review passes
   `<opencodeModel>#<variant>` as OpenCode's `--model`, so neither may contain
@@ -736,11 +739,12 @@ writes the same bytes where each harness discovers them:
 
 | Target | Project discovery directory |
 | --- | --- |
+| Antigravity CLI (`agy`) | `.agents/skills` |
 | Claude Code | `.claude/skills` |
 | Codex | `.agents/skills` |
 | OpenCode alone | `.opencode/skills` |
 | Hermes | `.agents/skills` (trusted projects) |
-| All four | `.agents/skills` and `.claude/skills`; OpenCode discovers both |
+| All | `.agents/skills` and `.claude/skills`; OpenCode discovers both without adding a third directory |
 
 Discovery paths follow the [Codex](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills),
 [Claude Code](https://code.claude.com/docs/en/skills),
@@ -762,10 +766,11 @@ Hermes trust or global configuration. Start the session in the target checkout;
 changing a command's directory does not change the session's skill scope.
 
 Skill consumers and review providers are distinct. Hermes can coordinate every
-bundled workflow, but `review` and `doctor` still support Claude Code, Codex, and
-OpenCode as independent review providers. There is no `review hermes` adapter
-or Hermes permission installer. Existing read-only review and exact-commit
-guards apply regardless of which harness coordinates the work.
+bundled workflow, but `review` and `doctor` support Antigravity CLI (`agy`),
+Claude Code, Codex, and OpenCode as independent review providers. There is no
+`review hermes` adapter or Hermes permission installer. Existing read-only
+review and exact-commit guards apply regardless of which harness coordinates the
+work.
 
 The bundle provides `cross-agent-review`, `open-issue`, `open-pr`,
 `squash-merge`, `ship-pr`, `reset`, `update-dependencies`,
@@ -868,6 +873,14 @@ starts no retry, removes its snapshot, and then ends by the same signal.
 
 Each harness runs with its own read-only protections:
 
+- **Antigravity CLI (`agy`)**: a neutral empty working directory (so no
+  repository-controlled `AGENTS.md`, `GEMINI.md`, hooks, MCP configs, or skills
+  load), `--disable-slash-commands`, NDJSON `stream-json` stdin/stdout, and
+  session-only `--settings` (`agentMode: ""`, `toolPermission: "request-review"`,
+  `allowNonWorkspaceAccess: false`) allowing `read_file` on the snapshot alone
+  while denying commands, writes, URLs, and MCP tools. User-global rules,
+  skills, hooks, and plugins under `~/.gemini/` still load because `agy` has no
+  `--safe-mode` flag, though `--settings` denies still outrank user allow rules.
 - **Claude**: safe mode and read-only tools.
 - **Codex**: an ephemeral session, snapshot-scoped filesystem permissions, no
   inherited environment for model commands, hosted web search disabled, and
@@ -881,7 +894,7 @@ Each harness runs with its own read-only protections:
 
 Unknown or unsupported CLI flags fail the run instead of silently dropping a
 protection. These are harness-level protections, not uniform OS isolation:
-Claude and OpenCode rely on their own permission implementations, and every
+`agy`, Claude, and OpenCode rely on their own permission implementations, and every
 reviewer runs with local authentication in the host environment. A verdict
 shows that a review completed, not that its findings are correct.
 

@@ -104,7 +104,7 @@ After running `bun run generate`, the same six checks can run together with
 timings and receipts. Generation runs first so a build does not change the source
 fingerprint while validation is in progress.
 The package smoke installs an npm tarball into a temporary project. Compiled
-smoke runs all three review adapters through local stubs with Bun and Node absent
+smoke runs all four review adapters through local stubs with Bun and Node absent
 from PATH; no live model calls are made. CI runs these checks on Linux/macOS,
 tests the minimum supported Bun runtime, and builds Debian packaging on Linux.
 A separate required `gemini-conformance` job runs

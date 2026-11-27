@@ -4,9 +4,10 @@ import { assertMergeChecks } from "./pr/mergeChecks";
 
 describe("portable project policy", () => {
   test("merges partial data-only policy with independent defaults", () => {
-    const config = parseConfig('{"schemaVersion":1,"subject":{"maxLength":50},"review":{"opencodeModel":"provider/model"}}');
+    const config = parseConfig('{"schemaVersion":1,"subject":{"maxLength":50},"review":{"agyModel":"claude-sonnet-5-5","opencodeModel":"provider/model"}}');
     expect(config.subject.maxLength).toBe(50);
     expect(config.subject.conventional).toBe(true);
+    expect(config.review.agyModel).toBe("claude-sonnet-5-5");
     expect(config.review.opencodeModel).toBe("provider/model");
     config.subject.types.push("cleanup");
     expect(DEFAULT_CONFIG.subject.types).not.toContain("cleanup");
@@ -18,6 +19,7 @@ describe("portable project policy", () => {
       { schemaVersion: 1, merge: { requireChecks: "false" } },
       { schemaVersion: 1, merge: { requiredChecks: [{ name: "CI", worklfow: "CI" }] } },
       { schemaVersion: 1, review: { timeoutMs: 0 } },
+      { schemaVersion: 1, review: { agyModel: "claude sonnet" } },
       // OpenCode 2 takes provider/model#variant, so a '#' in either part would corrupt it.
       { schemaVersion: 1, review: { opencodeModel: "deepseek/deepseek-v4-pro#max" } },
       { schemaVersion: 1, review: { opencodeVariants: { xhigh: "max#1" } } },

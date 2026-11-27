@@ -27,6 +27,7 @@ try {
   const prompt = path.join(tools, "prompt.txt");
   // Paths are generated temporary paths, quoted for the shell with single quotes.
   const q = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  stub("agy", `cat > ${q(prompt)}\nprintf '%s\\n' '{"event":"result","result":{"status":"SUCCESS","response":"Compiled agy review\\nVERDICT: CLEAN\\n"}}'`);
   stub("claude", `cat > ${q(prompt)}\nprintf 'Compiled Claude review\\nVERDICT: CLEAN\\n'`);
   stub("opencode", `cat > ${q(prompt)}\nprintf 'Compiled OpenCode review\\nVERDICT: CLEAN\\n'`);
   stub("codex", `cat > ${q(prompt)}\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = '--output-last-message' ]; then shift; printf 'Compiled Codex review\\nVERDICT: CLEAN\\n' > "$1"; exit 0; fi\n  shift\ndone\nexit 92`);
@@ -40,11 +41,12 @@ try {
     assert.match(compact.stderr, /standalone output/);
     assert.match(run("logs", receipt.log).stdout, /standalone output/);
   } finally { rmSync(path.dirname(receipt.log), { recursive: true, force: true }); }
-  for (const name of ["claude", "codex", "opencode"]) {
+  for (const name of ["agy", "claude", "codex", "opencode"]) {
     const result = run("review", name, "--base", "main");
     assert.equal(result.status, 0, `${name}: ${result.stderr}`);
     assert.match(result.stdout, /VERDICT: CLEAN/);
-    const captured = readFileSync(prompt, "utf8");
+    const raw = readFileSync(prompt, "utf8");
+    const captured = name === "agy" ? JSON.parse(raw.trim()).message.content : raw;
     assert.match(captured, /TRUSTED BASE POLICY/);
     assert.match(captured, /\+changed/);
     assert.doesNotMatch(captured, /DO_NOT_REVIEW_UNTRACKED/);
@@ -118,7 +120,7 @@ try {
   const drifted = run("review", "claude", "--base", "main");
   assert.equal(drifted.status, 1);
   assert.match(drifted.stderr, /HEAD changed during review/);
-  console.log("Standalone executable passed reviews for all three harnesses, skill installation, image rendering, pixel diffs, disk cleanup previews, an SEO probe, cleanup, HEAD drift rejection, and failure handling without Bun or Node on PATH.");
+  console.log("Standalone executable passed reviews for all four harnesses, skill installation, image rendering, pixel diffs, disk cleanup previews, an SEO probe, cleanup, HEAD drift rejection, and failure handling without Bun or Node on PATH.");
 } finally {
   rmSync(temporary, { recursive: true, force: true });
 }

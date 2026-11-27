@@ -21,6 +21,7 @@ import {
 } from "./generatedFiles";
 import { REVIEW_VERDICTS } from "./reviewOutput";
 import {
+  AGY_ACCESS_NOTE,
   buildReviewPrompt,
   buildUntrustedDiffEnvelope,
   CLAUDE_ACCESS_NOTE,
@@ -129,7 +130,7 @@ describe("buildReviewPrompt", () => {
   });
 
   test("asks every reviewer to flag implicit state machines", () => {
-    for (const accessNote of [CLAUDE_ACCESS_NOTE, CODEX_ACCESS_NOTE]) {
+    for (const accessNote of [AGY_ACCESS_NOTE, CLAUDE_ACCESS_NOTE, CODEX_ACCESS_NOTE]) {
       const prompt = buildReviewPrompt({ ...params, accessNote });
       const instructions = prompt.slice(prompt.indexOf("## Instructions"));
 

@@ -50,7 +50,7 @@ try {
   run("skills", "install", "--apply");
   assert.equal(JSON.parse(check()).ok, true);
   const dependencySkill = readFileSync(path.join(root, "skills/update-dependencies/SKILL.md"), "utf8");
-  for (const [harness, directory] of [["claude", ".claude"], ["codex", ".agents"], ["opencode", ".opencode"], ["hermes", ".agents"]]) {
+  for (const [harness, directory] of [["agy", ".agents"], ["claude", ".claude"], ["codex", ".agents"], ["opencode", ".opencode"], ["hermes", ".agents"]]) {
     const selected = path.join(temporary, `consumer-${harness}`);
     mkdirSync(selected);
     execFileSync("git", ["init", "--quiet", selected], { env, stdio: "pipe" });

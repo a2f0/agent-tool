@@ -770,12 +770,12 @@ workspace, run it per checkout with `--repo <checkout>`.
 
 ### Session shells
 
-An agent harness (Claude Code, Codex, OpenCode and others) runs each command it
+An agent harness (Antigravity CLI, Claude Code, Codex, OpenCode and others) runs each command it
 is given, in the background or not, as a `-c` shell of its own process, and a
 wait loop or watcher started in the background stays one of those shells for as
 long as it runs, wherever its working directory is. `sessionShells` lists them:
 teardown walks up from itself to the nearest process whose program is a known
-harness (`claude`, `codex`, `opencode`, and a few others, including an
+harness (`agy`, `claude`, `codex`, `opencode`, and a few others, including an
 interpreter running a script of that name) and reports that process's other
 children that are shells given `-c`, including those it started through a
 sandbox that stays their parent (`bwrap`, `codex-linux-sandbox`,

@@ -107,8 +107,8 @@ test("finds the nearest harness above teardown, and none outside one", () => {
   // Outside a harness the list is empty and a note says why.
   expect(sessionReport(ci, new Set(), 12)).toEqual({ sessionShells: [], notes: [expect.stringContaining("No known agent harness")], covered: new Map() });
   expect(sessionReport(nested, new Set(), 202)).toEqual({ sessionShells: [], notes: [], covered: new Map() });
-  // In a container the harness may be PID 1.
-  const container = table(row(1, 0, "codex"), row(5, 1, "/bin/bash -lc agent-tool teardown"), row(6, 5, "agent-tool teardown"), row(7, 1, "/bin/bash -lc sleep 60; true"), row(8, 1, "sh -c bun run dev"));
+  // In a container the harness may be PID 1, including Antigravity CLI (agy).
+  const container = table(row(1, 0, "agy"), row(5, 1, "/bin/bash -lc agent-tool teardown"), row(6, 5, "agent-tool teardown"), row(7, 1, "/bin/bash -lc sleep 60; true"), row(8, 1, "sh -c bun run dev"));
   expect(harnessAbove(container, 6)?.pid).toBe(1);
   // A recorded process the harness adopted is reported as a record, not as a session shell.
   expect(sessionReport(container, new Set([8]), 6).sessionShells.map(item => item.pid)).toEqual([7]);

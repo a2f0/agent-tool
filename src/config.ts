@@ -19,7 +19,7 @@ export interface AgentToolConfig extends WorkflowConfig {
   schemaVersion: 1;
   subject: { conventional: boolean; maxLength: number; types: string[]; lowercaseInitial: boolean; rejectTerminalPeriod: boolean; ignoreGenerated: boolean };
   merge: { requireChecks: boolean; requiredChecks: RequiredCheck[]; requireStrictBaseFreshness: boolean; checksTimeoutSeconds: number };
-  review: { claudeModel: string | null; codexModel: string | null; opencodeModel: string; opencodeVariants: Record<string, string>; timeoutMs: number };
+  review: { agyModel: string | null; claudeModel: string | null; codexModel: string | null; opencodeModel: string; opencodeVariants: Record<string, string>; timeoutMs: number };
   versions: { packages: string[] | null; bundles: string[]; lockfile: "bun.lock" | null; validate: string[][]; commitMessage: string };
   pr: { rejectClaudeBranding: boolean };
   images: ImagesConfig;
@@ -42,7 +42,7 @@ export const DEFAULT_CONFIG: AgentToolConfig = {
     ignoreGenerated: false,
   },
   merge: { requireChecks: true, requiredChecks: [], requireStrictBaseFreshness: false, checksTimeoutSeconds: 900 },
-  review: { claudeModel: null, codexModel: null, opencodeModel: "deepseek/deepseek-v4-pro", opencodeVariants: { low: "low", medium: "medium", high: "high", xhigh: "max", max: "max" }, timeoutMs: 600_000 },
+  review: { agyModel: null, claudeModel: null, codexModel: null, opencodeModel: "deepseek/deepseek-v4-pro", opencodeVariants: { low: "low", medium: "medium", high: "high", xhigh: "max", max: "max" }, timeoutMs: 600_000 },
   versions: { packages: null, bundles: [], lockfile: "bun.lock", validate: [], commitMessage: "chore: bump package versions" },
   pr: { rejectClaudeBranding: false },
   images: { targets: {} },
@@ -127,7 +127,7 @@ export function parseConfig(source: string): AgentToolConfig {
     keys(entry, ["name", "workflow"], "merge.requiredChecks entry");
     if (typeof check.name !== "string" || !check.name.trim() || (check.workflow !== undefined && (typeof check.workflow !== "string" || !check.workflow.trim()))) invalid("merge.requiredChecks");
   }
-  for (const key of ["claudeModel", "codexModel"] as const) {
+  for (const key of ["agyModel", "claudeModel", "codexModel"] as const) {
     if (result.review[key] !== null && (typeof result.review[key] !== "string" || !/^[^\s]+$/.test(result.review[key]!))) invalid(`review.${key}`);
   }
   const variants = object(result.review.opencodeVariants, "review.opencodeVariants");
