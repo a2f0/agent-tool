@@ -299,15 +299,16 @@ export function checkInstalledPermissions(rootDir: string): { harnesses: Harness
 
 /**
  * `bun x`'s check, or null without a manifest: only the harnesses whose rules the manifest
- * records, none when it records none, then the manifest's own entry, from one reading of it.
- * Rules no manifest records are the user's by the installer's ownership contract (an install
- * keeps them), so they are not judged here, as before the version field.
+ * records, none when it records none, then any generated rules file outside them, which its
+ * harness still loads, then the manifest's own entry, from one reading of it. Other rules no
+ * manifest records are the user's by the installer's ownership contract (an install keeps
+ * them), so they are not judged here, as before the version field.
  */
 export function checkRecordedPermissions(rootDir: string): { changes: PermissionCheck[]; install: string } | null {
   const root = realpathSync(rootDir);
   const recorded = readManifest(root);
   if (recorded.raw === undefined) return null;
-  return { changes: checks(root, HARNESSES.filter(harness => recorded.manifest[harness] !== undefined), recorded), install: installCommands(recorded.manifest) };
+  return { changes: checks(root, HARNESSES.filter(harness => recorded.manifest[harness] !== undefined), recorded, true), install: installCommands(recorded.manifest) };
 }
 
 /**

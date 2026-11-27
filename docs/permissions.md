@@ -189,9 +189,10 @@ global cache can stand in for it; only executables that
 `permissions.executables` in `agent-tool.json` classifies get a rule; any other
 one keeps the harness default. Classify a whole executable by its riskiest
 subcommand, and use `exec` for one that runs whatever file or command it is
-given, such as `tsx`. While the recorded rules are stale, `bun x` refuses any
-executable that is not currently classified as allowed, since an old rule
-could still allow one that was reclassified or removed.
+given, such as `tsx`. While the recorded rules are stale, or a generated rules
+file outside the recorded harnesses remains, `bun x` refuses any executable
+that is not currently classified as allowed, since an old rule could still
+allow one that was reclassified or removed.
 
 ```json
 {

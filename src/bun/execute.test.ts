@@ -127,7 +127,19 @@ test("the refusal advises regenerating only the recorded scope", () => {
   for (const harness of ["claude", "gemini"]) expect(spawnSync(process.execPath, [cli, "permissions", "install", "--harness", harness, "--apply"], { cwd: pair.project, encoding: "utf8" }).status).toBe(0);
   writeFileSync(path.join(pair.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
   expect(pair.run(["x", "wrangler"]).stderr).toContain("(agent-tool permissions install --apply)");
-}, 20_000);
+  // A generated file left outside the recorded harnesses still loads in its harness, so its old allow rule refuses too.
+  const narrowed = fixture();
+  binary(narrowed.project, "wrangler");
+  writeFileSync(path.join(narrowed.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "local" } } }));
+  for (const harness of ["codex", "gemini"]) expect(spawnSync(process.execPath, [cli, "permissions", "install", "--harness", harness, "--apply"], { cwd: narrowed.project, encoding: "utf8" }).status).toBe(0);
+  const narrowedFile = path.join(narrowed.project, ".agent-tool-permissions.json"), { codex: _codex, ...withoutCodex } = JSON.parse(readFileSync(narrowedFile, "utf8"));
+  writeFileSync(narrowedFile, JSON.stringify({ ...withoutCodex, scope: ["gemini"] }));
+  writeFileSync(path.join(narrowed.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
+  expect(spawnSync(process.execPath, [cli, "permissions", "install", "--apply"], { cwd: narrowed.project, encoding: "utf8" }).status).toBe(0);
+  expect(narrowed.run(["x", "wrangler"]).stderr).toContain("(agent-tool permissions install --apply) before running it. .codex/rules/agent-tool.rules is outside the recorded scope; delete it, or run agent-tool permissions install --harness codex --apply.");
+  rmSync(path.join(narrowed.project, ".codex"), { recursive: true });
+  expect(JSON.parse(narrowed.run(["x", "wrangler", "--", "deploy"]).stdout).args).toBe("deploy");
+}, 30_000);
 
 test("--cwd cannot reach another checkout, and options must precede --", () => {
   const f = fixture(), other = fixture();
