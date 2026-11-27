@@ -301,6 +301,11 @@ test("an install that widens an existing manifest's scope shows it on the manife
   const single = project();
   installPermissions(single, "codex", true);
   expect(manifestEntry(installPermissions(single, "gemini"))).toMatchObject({ scope: { from: ["codex"], to: ["codex", "gemini"] } });
+  // A recorded list that left out a recorded harness, as after a rollback, shows the harness added back.
+  installPermissions(single, "gemini", true);
+  const singleFile = path.join(single, ".agent-tool-permissions.json");
+  writeFileSync(singleFile, JSON.stringify({ ...JSON.parse(readFileSync(singleFile, "utf8")), scope: ["codex"] }));
+  expect(manifestEntry(installPermissions(single))).toMatchObject({ scope: { from: ["codex"], to: ["codex", "gemini"] } });
 });
 
 test("the push gate checks the recorded scope, or an earlier manifest's harnesses", () => {

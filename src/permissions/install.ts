@@ -241,8 +241,9 @@ export function installPermissions(rootDir: string, target?: string, apply = fal
     if (manifestStatus !== "unchanged") atomicWrite(manifestFile, contents);
   }
   // An existing manifest whose scope changes says so, since a widening adds a harness's allow rules.
+  // A recorded scope shows as written, so a list that left out a recorded harness shows it added.
   const view = (state: ScopeState): ScopeView => (state.status === "all" ? "all" : state.status === "none" ? null : state.harnesses);
-  const from = view(scopeState(manifest)), to = view(scope);
+  const from = manifest.scope ?? view(scopeState(manifest)), to = view(scope);
   const widened = recorded !== undefined && JSON.stringify(from) !== JSON.stringify(to) ? { scope: { from, to } } : {};
   return [...changes.map(({ relative, status }) => ({ path: relative, status })), { path: PERMISSIONS_MANIFEST, status: manifestStatus, ...widened }];
 }

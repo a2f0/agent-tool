@@ -114,7 +114,8 @@ integrity, and runs the Gemini conformance test against each. The job has no
 token permissions or persisted credentials and nothing runs after it, since
 the test imports Gemini's third-party bundle. The runner's sudo would let the
 bundle write an Actions cache entry, so no workflow here restores a cache:
-mise and setup-bun run with caching off. It needs the network, so it is
+mise, setup-bun, and setup-node run with caching off, which
+`scripts/testing/workflows.test.ts` enforces. It needs the network, so it is
 not part of `verify.json`.
 Local source integration tests use disposable Git repositories, bare remotes,
 and API stubs to check guard behavior without mutating GitHub. Dependency-mode
