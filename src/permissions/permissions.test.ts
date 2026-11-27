@@ -180,14 +180,14 @@ test("install keeps unrelated Claude settings and replaces only managed rules", 
   mkdirSync(path.join(root, ".claude"));
   writeFileSync(path.join(root, ".claude/settings.json"), JSON.stringify({ env: { A: "1" }, permissions: { allow: ["Bash(make test)"], deny: ["Read(.secrets/**)"] } }));
   expect(installPermissions(root, "all")).toEqual([{ path: ".claude/settings.json", status: "update" }, { path: ".codex/rules/agent-tool.rules", status: "create" }, { path: ".gemini/policies/agent-tool.toml", status: "create" }, { path: ".agent-tool-permissions.json", status: "create" }]);
-  expect(checkPermissions(root, "all").map(item => item.status)).toEqual(["outdated", "missing", "missing", "missing"]);
+  expect(checkPermissions(root, "all").changes.map(item => item.status)).toEqual(["outdated", "missing", "missing", "missing"]);
   installPermissions(root, "all", true);
   const settings = JSON.parse(readFileSync(path.join(root, ".claude/settings.json"), "utf8"));
   expect(settings.env).toEqual({ A: "1" });
   expect(settings.permissions.deny).toEqual(["Read(.secrets/**)"]);
   expect(settings.permissions.allow[0]).toBe("Bash(make test)");
   expect(settings.permissions.allow.slice(1)).toEqual(claudePermissions().allow);
-  expect(checkPermissions(root, "all").map(item => item.status)).toEqual(["unchanged", "unchanged", "unchanged", "unchanged"]);
+  expect(checkPermissions(root, "all").changes.map(item => item.status)).toEqual(["unchanged", "unchanged", "unchanged", "unchanged"]);
   // A rule dropped from the catalog is removed on reinstall; user rules stay.
   const manifestFile = path.join(root, ".agent-tool-permissions.json");
   const manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
@@ -195,7 +195,7 @@ test("install keeps unrelated Claude settings and replaces only managed rules", 
   writeFileSync(manifestFile, JSON.stringify(manifest));
   settings.permissions.allow.push("Bash(agent-tool retired *)");
   writeFileSync(path.join(root, ".claude/settings.json"), JSON.stringify(settings));
-  expect(checkPermissions(root, "claude")[0]!.status).toBe("outdated");
+  expect(checkPermissions(root, "claude").changes[0]!.status).toBe("outdated");
   installPermissions(root, "claude", true);
   const updated = JSON.parse(readFileSync(path.join(root, ".claude/settings.json"), "utf8"));
   expect(updated.permissions.allow).not.toContain("Bash(agent-tool retired *)");
@@ -208,10 +208,10 @@ test("reinstalling removes the ask rules earlier versions wrote and keeps user o
   mkdirSync(path.join(root, ".claude"));
   writeFileSync(path.join(root, ".claude/settings.json"), JSON.stringify({ permissions: { allow: [], ask: [...earlier] } }));
   writeFileSync(path.join(root, ".agent-tool-permissions.json"), JSON.stringify({ schemaVersion: 1, claude: { allow: [], ask: earlier } }));
-  expect(checkPermissions(root, "claude")[0]!.status).toBe("outdated");
+  expect(checkPermissions(root, "claude").changes[0]!.status).toBe("outdated");
   installPermissions(root, "claude", true);
   expect(JSON.parse(readFileSync(path.join(root, ".claude/settings.json"), "utf8")).permissions.ask).toBeUndefined();
-  expect(checkPermissions(root, "claude")[0]!.status).toBe("unchanged");
+  expect(checkPermissions(root, "claude").changes[0]!.status).toBe("unchanged");
   const settings = JSON.parse(readFileSync(path.join(root, ".claude/settings.json"), "utf8"));
   settings.permissions.ask = ["Bash(git push *)"];
   writeFileSync(path.join(root, ".claude/settings.json"), JSON.stringify(settings));
@@ -236,7 +236,7 @@ test("edited or unmanaged Codex rules are preserved", () => {
   installPermissions(root, "codex", true);
   writeFileSync(path.join(root, ".codex/rules/agent-tool.rules"), codexRules());
   writeFileSync(path.join(root, ".agent-tool-permissions.json"), JSON.stringify({ schemaVersion: 1 }));
-  expect(checkPermissions(root, "codex")[0]!.status).toBe("unmanaged");
+  expect(checkPermissions(root, "codex").changes[0]!.status).toBe("unmanaged");
 });
 
 test("edited or unmanaged Gemini policies are preserved, and other policy files are left alone", () => {
@@ -249,14 +249,14 @@ test("edited or unmanaged Gemini policies are preserved, and other policy files 
   rmSync(file);
   expect(installPermissions(root, "gemini", true)).toEqual([{ path: ".gemini/policies/agent-tool.toml", status: "create" }, { path: ".agent-tool-permissions.json", status: "create" }]);
   expect(readFileSync(file, "utf8")).toBe(geminiPolicy());
-  expect(checkPermissions(root, "gemini")[0]!.status).toBe("unchanged");
+  expect(checkPermissions(root, "gemini").changes[0]!.status).toBe("unchanged");
   // A local edit fails the check and blocks reinstalling over it, as for Codex.
   writeFileSync(file, `${geminiPolicy()}[[rule]]\ntoolName = "*"\ndecision = "allow"\npriority = 999\n`);
-  expect(() => checkPermissions(root, "gemini")).toThrow(/Locally edited or unmanaged rules/);
+  expect(() => checkPermissions(root, "gemini").changes).toThrow(/Locally edited or unmanaged rules/);
   expect(() => installPermissions(root, "gemini", true)).toThrow(/Locally edited or unmanaged rules/);
   writeFileSync(file, geminiPolicy());
   writeFileSync(path.join(root, ".agent-tool-permissions.json"), JSON.stringify({ schemaVersion: 1 }));
-  expect(checkPermissions(root, "gemini")[0]!.status).toBe("unmanaged");
+  expect(checkPermissions(root, "gemini").changes[0]!.status).toBe("unmanaged");
   expect(readFileSync(user, "utf8")).toContain('commandPrefix = "make"');
 });
 
@@ -299,7 +299,7 @@ test("the push gate checks the recorded scope, or an earlier manifest's harnesse
   // Reinstalling one harness keeps those harnesses; `all`, the default install, adds Gemini.
   installPermissions(root, "claude", true);
   expect(JSON.parse(readFileSync(manifestFile, "utf8")).scope).toEqual(["claude", "codex"]);
-  expect(checkPermissions(root, "all").find(item => item.path === ".gemini/policies/agent-tool.toml")?.status).toBe("missing");
+  expect(checkPermissions(root, "all").changes.find(item => item.path === ".gemini/policies/agent-tool.toml")?.status).toBe("missing");
   installPermissions(root, "all", true);
   expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex", "gemini"] });
   expect(checkInstalledPermissions(root)?.changes.every(item => item.status === "unchanged")).toBe(true);
@@ -326,6 +326,10 @@ test("the push gate checks the recorded scope, or an earlier manifest's harnesse
   const only = project();
   installPermissions(only, "gemini", true);
   expect(checkInstalledPermissions(only)).toMatchObject({ harnesses: ["gemini"], changes: [{ path: ".gemini/policies/agent-tool.toml", status: "unchanged" }, { status: "unchanged" }] });
+  // A bare `permissions check` follows the recorded scope, as the push gate does; a named harness is checked as named.
+  expect(checkPermissions(only)).toMatchObject({ harnesses: ["gemini"], changes: [{ status: "unchanged" }, { status: "unchanged" }] });
+  expect(checkPermissions(only, "all").harnesses).toEqual(["claude", "codex", "gemini"]);
+  expect(checkPermissions(project()).harnesses).toEqual(["claude", "codex", "gemini"]);
   // A scope list that omits a recorded harness, as an earlier release's install leaves after a rollback,
   // still covers it: its rules stay checked, and the next install records it in the scope.
   const both = project();
@@ -364,7 +368,7 @@ test("Codex migration removes managed prompts while preserving separate user rul
   writeFileSync(file, earlier);
   writeFileSync(userFile, user);
   writeFileSync(path.join(root, ".agent-tool-permissions.json"), JSON.stringify({ schemaVersion: 1, codex: { file: ".codex/rules/agent-tool.rules", sha256: createHash("sha256").update(earlier).digest("hex") } }));
-  expect(checkPermissions(root, "codex")[0]!.status).toBe("outdated");
+  expect(checkPermissions(root, "codex").changes[0]!.status).toBe("outdated");
   expect(installPermissions(root, "codex")).toEqual([{ path: ".codex/rules/agent-tool.rules", status: "update" }, { path: ".agent-tool-permissions.json", status: "update" }]);
   expect(readFileSync(file, "utf8")).toBe(earlier);
   // Refuse locally edited managed rules before replacing anything.
@@ -375,7 +379,7 @@ test("Codex migration removes managed prompts while preserving separate user rul
   installPermissions(root, "codex", true);
   expect(readFileSync(file, "utf8")).not.toContain('decision="prompt"');
   expect(readFileSync(userFile, "utf8")).toBe(user);
-  expect(checkPermissions(root, "codex")[0]!.status).toBe("unchanged");
+  expect(checkPermissions(root, "codex").changes[0]!.status).toBe("unchanged");
   expect(installPermissions(root, "codex", true)[0]!.status).toBe("unchanged");
 });
 
@@ -388,7 +392,7 @@ test("install records the agent-tool version, and check requires the running one
   expect(Object.keys(manifest)).toEqual(["schemaVersion", "agentToolVersion", "scope", "claude", "codex", "gemini"]);
   expect(manifest.scope).toBe("all");
   expect(manifest).toMatchObject({ schemaVersion: 1, agentToolVersion: metadata.version });
-  expect(checkPermissions(root, "all").at(-1)).toEqual({ path: ".agent-tool-permissions.json", status: "unchanged", recordedVersion: metadata.version, currentVersion: metadata.version });
+  expect(checkPermissions(root, "all").changes.at(-1)).toEqual({ path: ".agent-tool-permissions.json", status: "unchanged", recordedVersion: metadata.version, currentVersion: metadata.version });
   const settings = readFileSync(path.join(root, ".claude/settings.json"), "utf8"), rules = readFileSync(path.join(root, ".codex/rules/agent-tool.rules"), "utf8");
 
   // A manifest from another release, or from one before the field, fails until the install runs,
@@ -396,7 +400,7 @@ test("install records the agent-tool version, and check requires the running one
   for (const recorded of ["0.0.1", undefined]) {
     writeFileSync(manifestFile, `${JSON.stringify({ ...manifest, agentToolVersion: recorded }, null, 2)}\n`);
     for (const harness of ["all", "claude", "codex", "gemini"]) {
-      const checks = checkPermissions(root, harness);
+      const checks = checkPermissions(root, harness).changes;
       expect(checks.slice(0, -1).every(item => item.status === "unchanged")).toBe(true);
       expect(checks.at(-1)).toEqual({ path: ".agent-tool-permissions.json", status: "outdated", recordedVersion: recorded ?? null, currentVersion: metadata.version });
     }
@@ -404,23 +408,23 @@ test("install records the agent-tool version, and check requires the running one
     // Reinstalling one harness keeps the other's ownership record.
     expect(installPermissions(root, "claude", true).filter(item => item.status !== "unchanged")).toEqual([{ path: ".agent-tool-permissions.json", status: "update" }]);
     expect(JSON.parse(readFileSync(manifestFile, "utf8"))).toEqual(manifest);
-    expect(checkPermissions(root, "all").every(item => item.status === "unchanged")).toBe(true);
+    expect(checkPermissions(root, "all").changes.every(item => item.status === "unchanged")).toBe(true);
     expect(readFileSync(path.join(root, ".claude/settings.json"), "utf8")).toBe(settings);
     expect(readFileSync(path.join(root, ".codex/rules/agent-tool.rules"), "utf8")).toBe(rules);
   }
   // An unusable version is provenance lost, not ownership: it reads as none, and the install replaces it.
   for (const invalid of [1, "", "0.1 beta", "banana", "1..0", "01.2.3", null, { version: metadata.version }]) {
     writeFileSync(manifestFile, JSON.stringify({ ...manifest, agentToolVersion: invalid }));
-    expect(checkPermissions(root, "all").at(-1)).toEqual({ path: ".agent-tool-permissions.json", status: "outdated", recordedVersion: null, currentVersion: metadata.version });
+    expect(checkPermissions(root, "all").changes.at(-1)).toEqual({ path: ".agent-tool-permissions.json", status: "outdated", recordedVersion: null, currentVersion: metadata.version });
     expect(installPermissions(root, "all", true).filter(item => item.status !== "unchanged")).toEqual([{ path: ".agent-tool-permissions.json", status: "update" }]);
     expect(JSON.parse(readFileSync(manifestFile, "utf8"))).toEqual(manifest);
   }
   // A harness a newer release added names that release instead of reading as corruption.
-  expect(() => { writeFileSync(manifestFile, JSON.stringify({ ...manifest, scope: ["claude", "opencode"] })); checkPermissions(root, "all"); }).toThrow(/scope names "opencode", which this agent-tool release does not know; use the release that wrote it \(/);
+  expect(() => { writeFileSync(manifestFile, JSON.stringify({ ...manifest, scope: ["claude", "opencode"] })); checkPermissions(root, "all").changes; }).toThrow(/scope names "opencode", which this agent-tool release does not know; use the release that wrote it \(/);
   // Ownership entries that are present must be well formed, so a falsy one cannot drop its harness.
   for (const invalid of [{ ...manifest, schemaVersion: 2 }, { ...manifest, scope: "some" }, { ...manifest, scope: [] }, { ...manifest, scope: [1] }, { ...manifest, scope: null }, { ...manifest, claude: false }, { ...manifest, codex: null }, { ...manifest, gemini: null }, { ...manifest, claude: { allow: "Bash(x)", ask: [] } }, { ...manifest, codex: { file: 1, sha256: manifest.codex.sha256 } }, { ...manifest, gemini: { file: manifest.gemini.file, sha256: "x" } }, [], null]) {
     writeFileSync(manifestFile, JSON.stringify(invalid));
-    expect(() => checkPermissions(root, "all")).toThrow("Invalid managed permissions manifest.");
+    expect(() => checkPermissions(root, "all").changes).toThrow("Invalid managed permissions manifest.");
     expect(() => checkInstalledPermissions(root)).toThrow("Invalid managed permissions manifest.");
     expect(() => installPermissions(root, "all", true)).toThrow("Invalid managed permissions manifest.");
   }

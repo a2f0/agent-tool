@@ -22,6 +22,9 @@ jobs:
       - run: bun run typecheck
       - run: bun src/index.ts graph check
       - run: bun test --parallel=2
+      - if: runner.os == 'Linux'
+        name: Check the generated Gemini rules with Gemini CLI's own policy engine
+        run: bun scripts/testing/gemini-conformance.ts
       - run: bun scripts/testing/smoke-package.ts
       - run: bun run build
       - run: git diff --exit-code -- src/skills/bundled.ts

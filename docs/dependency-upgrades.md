@@ -97,11 +97,16 @@ apply the exact approved saved plan. Keep state and plans out of Git.
   `&`, and line breaks before rules apply; and redirection and substitution
   asking in `default` (in `autoEdit` too since 0.63.0,
   google-gemini/gemini-cli#29506, which the rules do not rely on). Gemini
-  is not a dependency here, so nothing upgrades it. When a Gemini release
-  changes any of these, recheck `geminiPolicy` and the `geminiAllows` test model
-  with `AGENT_TOOL_GEMINI_BUNDLE=<bundle> bun test src/permissions/gemini.conformance.test.ts`,
-  where `<bundle>` is the installed `@google/gemini-cli/bundle` directory (for
-  Homebrew, under `$(brew --prefix gemini-cli)/libexec/lib/node_modules`). See
+  is not a dependency here, but CI runs
+  `src/permissions/gemini.conformance.test.ts` against the release
+  `scripts/testing/gemini-conformance.ts` pins, verified by its npm integrity.
+  Move that pin, and its integrity from
+  `npm view @google/gemini-cli@<version> dist.integrity`, to a new Gemini release
+  when updating dependencies; when the test fails, recheck `geminiPolicy` and
+  the `geminiAllows` test model. To check another release locally, run
+  `AGENT_TOOL_GEMINI_BUNDLE=<bundle> bun test src/permissions/gemini.conformance.test.ts`,
+  where `<bundle>` is its `@google/gemini-cli/bundle` directory (for Homebrew,
+  under `$(brew --prefix gemini-cli)/libexec/lib/node_modules`). See
   the [policy engine](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/docs/reference/policy-engine.md)
   and [TOML loader](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/packages/core/src/policy/toml-loader.ts).
 

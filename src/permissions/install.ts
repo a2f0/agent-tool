@@ -33,10 +33,15 @@ export interface PermissionChange { path: string; status: "create" | "update" | 
 /** One entry per generated file, then the manifest's own entry with its recorded and running versions. */
 export interface PermissionCheck { path: string; status: CheckStatus; recordedVersion?: string | null; currentVersion?: string }
 
+/** A `--harness` value: `all` or one known harness. */
+function harnessTarget(target: string): Harness | "all" {
+  if (target === "all" || (HARNESSES as readonly string[]).includes(target)) return target as Harness | "all";
+  throw new Error(`Unknown permissions harness '${target}'; use all, claude, codex, or gemini.`);
+}
+
 export function harnesses(target: string): Harness[] {
-  if (target === "all") return [...HARNESSES];
-  if (!(HARNESSES as readonly string[]).includes(target)) throw new Error(`Unknown permissions harness '${target}'; use all, claude, codex, or gemini.`);
-  return [target as Harness];
+  const parsed = harnessTarget(target);
+  return parsed === "all" ? [...HARNESSES] : [parsed];
 }
 
 function destination(root: string, relative: string): string {
@@ -166,11 +171,22 @@ export type ScopeEvent = { type: "install"; target: Harness | "all" };
  * harnesses, so a later push gate checks each.
  */
 export function scopeTransition(state: ScopeState, event: ScopeEvent): Extract<ScopeState, { status: "all" | "listed" }> {
-  if (state.status === "all") return state;
-  if (event.target === "all") return { status: "all" };
-  if (state.status === "listed" && state.harnesses.includes(event.target)) return state;
-  const previous = state.status === "none" ? [] : state.harnesses;
-  return { status: "listed", harnesses: HARNESSES.filter(harness => harness === event.target || previous.includes(harness)) };
+  switch (state.status) {
+    case "all":
+      return state;
+    case "none":
+    case "listed":
+    case "inferred": {
+      if (event.target === "all") return { status: "all" };
+      if (state.status === "listed" && state.harnesses.includes(event.target)) return state;
+      const previous = state.status === "none" ? [] : state.harnesses;
+      return { status: "listed", harnesses: HARNESSES.filter(harness => harness === event.target || previous.includes(harness)) };
+    }
+    default: {
+      const unknown: never = state;
+      return unknown;
+    }
+  }
 }
 
 /** The harnesses a push gate checks for a scope state: every current one for `all` or none. */
@@ -187,7 +203,7 @@ export function installPermissions(rootDir: string, target: string, apply = fals
   const changes = pending(root, targets, manifest, project);
   // Recording the version makes every upgrade change the manifest, so a committed sync is visible.
   const { schemaVersion: _schema, agentToolVersion: _version, scope: _scope, ...owned } = manifest;
-  const scope = scopeTransition(scopeState(manifest), { type: "install", target: target === "all" ? "all" : targets[0]! });
+  const scope = scopeTransition(scopeState(manifest), { type: "install", target: harnessTarget(target) });
   const next: Manifest = { schemaVersion: 1, agentToolVersion: AGENT_TOOL_VERSION, scope: scope.status === "all" ? "all" : scope.harnesses, ...owned };
   for (const change of changes) {
     if (change.harness === "claude") next.claude = claudePermissions(project);
@@ -216,9 +232,15 @@ function checks(root: string, targets: Harness[], { raw, manifest }: Recorded): 
 }
 
 /** Read-only CI gate: generated rules are current, recorded as managed, and by the running version. */
-export function checkPermissions(rootDir: string, target: string): PermissionCheck[] {
+/**
+ * `permissions check`: the named harnesses, or without a target the scope the manifest records,
+ * as the push gate checks it (every harness without a manifest or a recorded one).
+ */
+export function checkPermissions(rootDir: string, target?: string): { harnesses: Harness[]; changes: PermissionCheck[] } {
   const root = realpathSync(rootDir);
-  return checks(root, harnesses(target), readManifest(root));
+  const recorded = readManifest(root);
+  const checked = target === undefined ? scopeHarnesses(scopeState(recorded.manifest)) : harnesses(target);
+  return { harnesses: checked, changes: checks(root, checked, recorded) };
 }
 
 /**

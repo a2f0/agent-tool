@@ -213,7 +213,7 @@ be trusted. `bun run` and `agent:run` therefore keep the harness default.
 agent-tool permissions show --harness claude
 agent-tool permissions install            # preview
 agent-tool permissions install --apply
-agent-tool permissions check              # CI
+agent-tool permissions check              # CI: the recorded scope
 ```
 
 `install` writes three files and records what it owns in
@@ -267,8 +267,9 @@ push gate checks that scope, so `all` covers each harness a newer release adds
 and fails until `install --apply` writes its rules. Manifests written before
 the scope field have none and are read as scoped to the harnesses they
 record. Such a manifest gains a harness `all` added only through an `all`
-install, which is the default; `check`, also `all` by default, reports that
-harness `missing` until then. A single-harness install never narrows `all`:
+install, which is the default; until then `check`, which without `--harness`
+checks the recorded scope as the push gate does, reports the manifest
+`outdated`, and `check --harness all` also reports the harness `missing`. A single-harness install never narrows `all`:
 to keep a harness out, remove its generated rules and its manifest entry, set
 `scope` to the list of harnesses to keep, then install each of them. A scope
 list also covers every harness the manifest records, so a list that leaves one
@@ -310,13 +311,12 @@ Each harness also has limits that the rules cannot change:
   `default` mode. The arguments stay unrestricted because a rule that matches
   the whole command is the stricter one: a rule that missed a redirected
   command would let Gemini approve its parts one by one, and outside `default`
-  skip the redirection check. The opt-in conformance test
-  (`src/permissions/gemini.conformance.test.ts`) passes against Gemini CLI
-  0.37.0, the first release published as a bundle, and 0.40.0, 0.50.0, 0.62.0,
-  0.63.0, and 0.71.1. Releases 0.31.0 to 0.36, the first to load project
-  policies (google-gemini/gemini-cli#18682), enforce `modes` in their source
-  but are published unbundled, so the test cannot load them; earlier releases
-  ignore the file, so everything asks. Gemini's
+  skip the redirection check. The rules need Gemini CLI 0.37.0 or later, and
+  CI checks them with Gemini's own policy engine
+  ([dependency upgrades](dependency-upgrades.md#current-compatibility-constraints)).
+  Releases 0.31.0 to 0.36, the first to load project policies
+  (google-gemini/gemini-cli#18682), also keep the rules to `default`; earlier
+  releases ignore the file, so everything asks. Gemini's
   [policy engine](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/docs/reference/policy-engine.md)
   documents the discovery, trust, and tiers above;
   [dependency upgrades](dependency-upgrades.md#current-compatibility-constraints)
