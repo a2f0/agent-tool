@@ -138,11 +138,10 @@ const regex = (text: string) => text.replace(/[.^$|?*+()[\]{}\\]/g, "\\$&");
  * space and arguments free of shell syntax, for bash and for PowerShell, which Gemini runs on
  * Windows. An argument may not hold a backtick, `$`, `;`, `&`, `|`, `<`, `>`, `(`, `)`, or `@`,
  * or a JSON escape other than an escaped quote or backslash, so no raw newline or control
- * character either. PowerShell evaluates `(…)` and `@(…)` in an argument, and Gemini 0.37.0 has
- * no check for them. A command that holds any of these fails to match as a whole, and Gemini then
- * checks each command of a chain on its own and asks for redirection in `default` mode, or asks
- * outright, as Codex treats such a script as opaque. Gemini's own substitution checks are not
- * enough: 0.37.0 to 0.63.0 allow ``${X:-`rm x`}`` under an argument-blind rule.
+ * character either. PowerShell evaluates `(…)` and `@(…)` in an argument. A command that holds
+ * any of these fails to match as a whole and falls back to Gemini's own checks, as Codex treats
+ * such a script as opaque; those checks alone miss nested substitution in some supported releases
+ * (docs/dependency-upgrades.md lists which).
  *
  * Gemini's ReDoS guard refuses a pattern in which a `(` has a quantifier character before the
  * next `)` and any later `)` is quantified. So the one quantified group holds no quantifier, an

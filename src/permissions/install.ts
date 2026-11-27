@@ -149,8 +149,9 @@ export type ScopeState =
   | { status: "inferred"; harnesses: Harness[] };
 
 /**
- * The manifest's scope state. An inferred scope means an upgrade adds a harness `all` gained only
- * when it installs `all`, as the default install and `check` do.
+ * The manifest's scope state. An inferred scope, from a manifest written before the field, covers
+ * the harnesses it records; a bare install widens it to `all` only when those are Claude and Codex,
+ * what `all` wrote then (scopeTransition), and a bare `check` checks the recorded harnesses alone.
  */
 export function scopeState(manifest: Pick<Manifest, "scope" | Harness>): ScopeState {
   const { scope } = manifest;
@@ -210,8 +211,9 @@ function scopeHarnesses(state: ScopeState): Harness[] {
 
 /**
  * Each generated file's change, then the manifest's, which every new agent-tool release updates.
- * Without a target it installs the recorded scope: a list keeps the harnesses it names, and `all`,
- * an earlier manifest's inferred harnesses, or none install `all`, so they gain new harnesses.
+ * Without a target it installs the scope scopeTransition gives a bare install: a list, or an earlier
+ * manifest recording harnesses other than Claude and Codex, keeps its harnesses, while `all`, an
+ * earlier manifest recording Claude and Codex, or none install `all`, so they gain new harnesses.
  */
 export function installPermissions(rootDir: string, target?: string, apply = false): PermissionChange[] {
   const root = realpathSync(rootDir);
