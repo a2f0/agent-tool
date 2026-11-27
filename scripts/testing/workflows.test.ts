@@ -5,7 +5,7 @@ import path from "node:path";
 const workflows = path.resolve(import.meta.dir, "../../.github/workflows");
 
 interface Step { uses?: string; with?: Record<string, unknown> }
-interface Workflow { jobs: Record<string, { steps?: Step[] }> }
+interface Workflow { jobs: Record<string, { uses?: string; steps?: Step[] }> }
 
 /**
  * Every action a workflow may use, each reviewed for caching: the input that turns caching off,
@@ -26,7 +26,9 @@ test("no workflow restores an Actions cache", () => {
   const offending: string[] = [];
   for (const file of readdirSync(workflows).filter(name => /\.ya?ml$/.test(name)).sort()) {
     const workflow = Bun.YAML.parse(readFileSync(path.join(workflows, file), "utf8")) as Workflow;
-    for (const [job, { steps = [] }] of Object.entries(workflow.jobs)) {
+    for (const [job, { uses, steps = [] }] of Object.entries(workflow.jobs)) {
+      // A reusable workflow brings steps this test cannot see.
+      if (uses) offending.push(`${file} ${job}: reusable workflow ${uses} is not classified for caching`);
       for (const step of steps) {
         const action = step.uses?.split("@")[0];
         if (!action) continue;

@@ -268,7 +268,8 @@ function outsideScope(root: string, checked: Harness[]): PermissionCheck[] {
   };
   return (Object.keys(GENERATED) as FileHarness[])
     .filter(harness => !checked.includes(harness) && present(path.join(root, GENERATED[harness].relative)))
-    // Every checked set covers the recorded harnesses, so such a file is unrecorded, which an install refuses to overwrite.
+    // Every checked set covers the recorded harnesses, so such a file is unrecorded: an install records it only when it
+    // already matches the current rules and otherwise refuses to overwrite it, so deleting it is the fix that always works.
     .map(harness => ({ path: GENERATED[harness].relative, status: "unmanaged", detail: `not recorded in the manifest, though ${harness} loads it; delete it, then run agent-tool permissions install --harness ${harness} --apply if ${harness} should keep rules` }));
 }
 

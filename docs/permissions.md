@@ -290,7 +290,8 @@ recording no harness. Until an install, `check` reports a manifest from an earli
 release `outdated`, and `check --harness all` also reports a new harness
 `missing`. A scope check also reports a generated rules file outside the scope
 as `unmanaged`, since its harness still loads it, with a `detail` naming the
-fix: such a file is never recorded, which an install refuses to overwrite, so
+fix: such a file is never recorded, and an install records it only when it
+already matches the current rules and otherwise refuses to overwrite it, so
 delete it, then install that harness if it should keep rules. No install
 narrows `all`: to
 keep a harness out, remove its generated rules and its manifest entry, set

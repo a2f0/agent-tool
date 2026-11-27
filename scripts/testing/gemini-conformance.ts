@@ -21,7 +21,7 @@ const RELEASES = [
 
 const root = path.resolve(import.meta.dir, "../..");
 
-/** The tarball, with two retries after 10 and 30 seconds for a network error, stall, or server error; each attempt has a minute. */
+/** The tarball, with two retries after 10 and 30 seconds for a network error, stall, timeout, rate limit, or server error; each attempt has a minute. */
 async function download(version: string): Promise<Uint8Array> {
   const url = `https://registry.npmjs.org/@google/gemini-cli/-/gemini-cli-${version}.tgz`;
   let failure = "";
@@ -31,8 +31,8 @@ async function download(version: string): Promise<Uint8Array> {
       const response = await fetch(url, { signal: AbortSignal.timeout(60_000) });
       if (response.ok) return new Uint8Array(await response.arrayBuffer());
       failure = `HTTP ${response.status}`;
-      // A client error, such as a mistyped pin's 404, will not change on a retry.
-      if (response.status < 500) break;
+      // A client error, such as a mistyped pin's 404, will not change on a retry; a timeout or rate limit may.
+      if (response.status < 500 && response.status !== 408 && response.status !== 429) break;
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
     }
