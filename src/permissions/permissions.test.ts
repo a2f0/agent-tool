@@ -5,7 +5,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writ
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CATALOG, CLASSES, GEMINI_ARGUMENTS, GEMINI_MODES, INVOCATIONS, claudePermissions, codexRules, geminiPolicy, strictest, type PermissionClass } from "./catalog";
-import { checkInstalledPermissions, checkPermissions, installPermissions, scopeState, scopeTransition, type ScopeState } from "./install";
+import { checkInstalledPermissions, checkPermissions, installPermissions, scopeState, scopeTransition, type PermissionChange, type ScopeState } from "./install";
 import metadata from "../../package.json";
 import { HELP } from "../cli";
 import { parseConfig } from "../config";
@@ -284,6 +284,23 @@ test("the scope moves only through its transition: `all` absorbs, single install
   expect(scopeTransition(all, { type: "install", target: "codex" })).toBe(all);
   expect(scopeTransition(listed, { type: "install", target: "codex" })).toBe(listed);
   expect(scopeTransition(listed, { type: "install", target: "recorded" })).toBe(listed);
+});
+
+test("an install that widens an existing manifest's scope shows it on the manifest's entry", () => {
+  const manifestEntry = (changes: PermissionChange[]) => changes.find(change => change.path === ".agent-tool-permissions.json");
+  // A first install, and one that keeps the scope, show none.
+  const root = project();
+  expect(manifestEntry(installPermissions(root, undefined, true))).toEqual({ path: ".agent-tool-permissions.json", status: "create" });
+  expect(manifestEntry(installPermissions(root, undefined, true))).toEqual({ path: ".agent-tool-permissions.json", status: "unchanged" });
+  // An earlier manifest from an `all` install gains Gemini through a bare install, which the preview shows.
+  const file = path.join(root, ".agent-tool-permissions.json"), { scope: _scope, gemini: _gemini, ...legacy } = JSON.parse(readFileSync(file, "utf8"));
+  writeFileSync(file, JSON.stringify(legacy));
+  rmSync(path.join(root, ".gemini"), { recursive: true });
+  expect(manifestEntry(installPermissions(root))).toEqual({ path: ".agent-tool-permissions.json", status: "update", scope: { from: ["claude", "codex"], to: "all" } });
+  // A single install adds its harness to a list.
+  const single = project();
+  installPermissions(single, "codex", true);
+  expect(manifestEntry(installPermissions(single, "gemini"))).toMatchObject({ scope: { from: ["codex"], to: ["codex", "gemini"] } });
 });
 
 test("the push gate checks the recorded scope, or an earlier manifest's harnesses", () => {

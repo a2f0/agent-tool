@@ -29,7 +29,9 @@ type Scope = "all" | Harness[];
 interface Manifest { schemaVersion: 1; agentToolVersion?: string; scope?: Scope; claude?: ClaudePermissions; codex?: OwnedFile; gemini?: OwnedFile }
 /** One reading of the manifest: its bytes, none without one, and its parsed contents. */
 interface Recorded { raw?: string; manifest: Manifest }
-export interface PermissionChange { path: string; status: "create" | "update" | "unchanged" }
+/** A scope as the output shows it: `all`, the harnesses a list or an earlier manifest covers, or null for none. */
+type ScopeView = "all" | Harness[] | null;
+export interface PermissionChange { path: string; status: "create" | "update" | "unchanged"; scope?: { from: ScopeView; to: ScopeView } }
 /** One entry per generated file, then the manifest's own entry with its recorded and running versions. */
 export interface PermissionCheck { path: string; status: CheckStatus; recordedVersion?: string | null; currentVersion?: string; detail?: string }
 
@@ -238,7 +240,11 @@ export function installPermissions(rootDir: string, target?: string, apply = fal
     for (const change of changes) if (change.status !== "unchanged") atomicWrite(change.file, change.contents);
     if (manifestStatus !== "unchanged") atomicWrite(manifestFile, contents);
   }
-  return [...changes.map(({ relative, status }) => ({ path: relative, status })), { path: PERMISSIONS_MANIFEST, status: manifestStatus }];
+  // An existing manifest whose scope changes says so, since a widening adds a harness's allow rules.
+  const view = (state: ScopeState): ScopeView => (state.status === "all" ? "all" : state.status === "none" ? null : state.harnesses);
+  const from = view(scopeState(manifest)), to = view(scope);
+  const widened = recorded !== undefined && JSON.stringify(from) !== JSON.stringify(to) ? { scope: { from, to } } : {};
+  return [...changes.map(({ relative, status }) => ({ path: relative, status })), { path: PERMISSIONS_MANIFEST, status: manifestStatus, ...widened }];
 }
 
 /**

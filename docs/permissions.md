@@ -281,12 +281,16 @@ until an install writes the rules a scope covers:
 | None, recording no harness | `all` | that harness | every current harness |
 
 `install --harness all` always gives `all`, so `all` covers each harness a newer
-release adds. Until an install, `check` reports a manifest from an earlier
+release adds. When an install changes an existing manifest's scope, its
+output's manifest entry shows `scope: { from, to }`, so a preview shows a
+widening before it adds a harness's rules; `from` is `null` for a manifest
+recording no harness. Until an install, `check` reports a manifest from an earlier
 release `outdated`, and `check --harness all` also reports a new harness
 `missing`. A scope check also reports a generated rules file outside the scope
 as `unmanaged`, since its harness still loads it, with a `detail` naming the
 fix: such a file is never recorded, which an install refuses to overwrite, so
-delete it, then install that harness if it should keep rules. No install narrows `all`: to
+delete it, then install that harness if it should keep rules. No install
+narrows `all`: to
 keep a harness out, remove its generated rules and its manifest entry, set
 `scope` to the list of harnesses to keep, then run `install --apply`. A scope
 list also covers every harness the manifest records, so a list that leaves one

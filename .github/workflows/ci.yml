@@ -54,7 +54,7 @@ jobs:
   # here restores a cache, and a hung import cannot hold the required check.
   gemini-conformance:
     runs-on: ubuntu-latest
-    # Each release may take about nine minutes: three one-minute downloads, their waits, and the test.
+    # Each release may take about seven minutes: three one-minute downloads, their waits, and the test.
     timeout-minutes: 20
     permissions: {}
     steps:
