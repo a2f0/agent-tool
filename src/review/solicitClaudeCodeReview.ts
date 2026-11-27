@@ -133,6 +133,7 @@ export function solicitClaudeCodeReview(
       reviewInstructions: input.reviewInstructions,
       accessNote: CLAUDE_ACCESS_NOTE,
       repositoryRoot: input.snapshotRoot,
+      generatedFiles: input.generatedFiles,
     });
 
     return spawnClaudeReview(prompt, effort, input.snapshotRoot);

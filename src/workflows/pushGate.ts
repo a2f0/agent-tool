@@ -7,7 +7,8 @@ import { executeGroup, reraiseGroupSignal, type GroupRecord } from "../commands/
 import { loadConfig, PUSH_GATE_BUDGET_SECONDS, type AgentToolConfig } from "../config";
 import { gitEnvironment } from "../git/environment";
 import { checkInstalledPermissions, PERMISSIONS_MANIFEST } from "../permissions/install";
-import { checkInstalledSkills, SKILLS_MANIFEST } from "../skills/install";
+import { checkInstalledSkills } from "../skills/install";
+import { SKILLS_MANIFEST } from "../skills/manifest";
 import { branchErrors, parsePrePushInput, pushedBranches, zeroOid, type PushTuple } from "./branch";
 import { binariesAddedByCommits, commitFindings, rejectedBinaries } from "./checks";
 import { assert, checkoutRoot, git, output } from "./core";

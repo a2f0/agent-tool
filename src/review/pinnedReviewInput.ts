@@ -2,6 +2,7 @@ import { gitEnvironment } from "../git/environment";
 import { execFileSync, spawnSync } from "node:child_process";
 
 import { type PrContext } from "../git/prContext";
+import { changedGeneratedFiles, type GeneratedFiles } from "./generatedFiles";
 import { readReviewInstructions } from "./reviewPrompt";
 import { withReviewInterrupts } from "./reviewerProcess";
 import { withReviewSnapshot } from "./reviewSnapshot";
@@ -12,18 +13,24 @@ interface PinnedReviewInput {
   readonly diff: string;
   readonly reviewInstructions: string;
   readonly snapshotRoot: string;
+  /** Changed files agent-tool generated, from the snapshot's manifests. */
+  readonly generatedFiles: GeneratedFiles;
 }
 
 const gitEnv = gitEnvironment();
 
-function git(rootDir: string, args: string[]): string {
+function gitOutput(rootDir: string, args: string[]): string {
   return execFileSync("git", args, {
     cwd: rootDir,
     env: gitEnv,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     maxBuffer: 8 * 1024 * 1024,
-  }).trim();
+  });
+}
+
+function git(rootDir: string, args: string[]): string {
+  return gitOutput(rootDir, args).trim();
 }
 
 function resolveCommit(rootDir: string, ref: string): string {
@@ -91,6 +98,16 @@ async function pinnedReviewInput<T>(
     "--no-ext-diff",
     `${baseCommit}...${headCommit}`,
   ]);
+  // NUL-separated and untrimmed, so a path is never quoted or altered; a rename counts as both paths.
+  const changedPaths = gitOutput(rootDir, [
+    "diff",
+    "--name-only",
+    "-z",
+    "--no-renames",
+    `${baseCommit}...${headCommit}`,
+  ])
+    .split("\0")
+    .filter((file) => file.length > 0);
   const reviewInstructions = readReviewInstructions(rootDir, baseCommit);
   return withReviewSnapshot(rootDir, headCommit, (snapshotRoot) =>
     callback({
@@ -99,6 +116,7 @@ async function pinnedReviewInput<T>(
       diff,
       reviewInstructions,
       snapshotRoot,
+      generatedFiles: changedGeneratedFiles(snapshotRoot, changedPaths),
     }),
   );
 }

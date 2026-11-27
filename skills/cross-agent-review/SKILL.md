@@ -40,6 +40,9 @@ returned; it does not mean the findings are non-blocking. Read the final
 `VERDICT: BLOCKER|MAJOR|MINOR|SUGGESTION|CLEAN` and the findings. A reviewer
 that labels findings `[P0]` through `[P3]` uses the same scale: `[P0]` and
 `[P1]` are BLOCKER and MAJOR, `[P2]` and `[P3]` are MINOR and SUGGESTION.
+Observations under `Upstream (agent-tool):` concern files agent-tool generated
+in the repository; they carry no severity and do not block. Report them for
+agent-tool instead of editing those files.
 
 If a CLI is unavailable, out of credits, or returns an unusable review, try another
 available reviewer and disclose the fallback. Do not silently convert a failed

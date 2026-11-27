@@ -7,7 +7,8 @@ import { spawnSync } from "node:child_process";
 import metadata from "../../package.json";
 import { harnessNamed, HARNESSES } from "../harnesses";
 import { BUNDLED_SKILL_REFERENCES, BUNDLED_SKILLS } from "./bundled";
-import { bundledSkillFiles, checkSkills, installSkills } from "./install";
+import { checkSkills, installSkills } from "./install";
+import { bundledSkillFiles } from "./manifest";
 
 const MANIFEST = ".agent-tool-skills.json";
 

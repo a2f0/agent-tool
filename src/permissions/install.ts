@@ -92,6 +92,18 @@ function readManifest(root: string): Recorded {
   return { raw, manifest: { ...value, ...(validVersion(agentToolVersion) ? { agentToolVersion } : {}) } };
 }
 
+/**
+ * The files holding rules the manifest records, in harness order: for Claude its settings file,
+ * where only the recorded `allow` and `ask` rules are generated (`whole: false`), and for each
+ * other harness its whole rules file. None without a manifest; throws as an install would on an
+ * unusable one.
+ */
+export function generatedPermissionFiles(rootDir: string): { path: string; whole: boolean }[] {
+  const { manifest } = readManifest(realpathSync(rootDir));
+  return HARNESSES.filter(harness => manifest[harness] !== undefined)
+    .map(harness => (harness === "claude" ? { path: CLAUDE_SETTINGS, whole: false } : { path: GENERATED[harness].relative, whole: true }));
+}
+
 type Settings = Record<string, unknown> & { permissions?: Record<string, unknown> };
 function parseSettings(source: string | undefined): Settings {
   if (source === undefined) return {};

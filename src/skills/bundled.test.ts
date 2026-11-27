@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import path from "node:path";
-import { bundledSkillFiles } from "./install";
+import { bundledSkillFiles } from "./manifest";
 
 // An installed skill has only the files the bundle ships, so a relative link to
 // anything else (a script, a repository doc) would be broken in every consumer.
