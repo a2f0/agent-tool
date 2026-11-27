@@ -2,6 +2,7 @@ import { gitEnvironment } from "./environment";
 import { spawnSync } from "node:child_process";
 import { boundedExecFileSync } from "../system/boundedCalls";
 import { retryGitHubRead } from "../system/githubRetry";
+import { outputTail } from "../system/outputTail";
 import { randomUUID } from "node:crypto";
 
 import { viewCurrentBranchPr } from "./currentBranchPr";
@@ -41,8 +42,10 @@ export function run(command: string, args: string[]): string {
 }
 
 /**
- * `run` for a read-only GitHub call: a transient network or server failure is
- * repeated within `retryGitHubRead`'s budget. Never use it for a mutation.
+ * `run` for a read-only GitHub call, through `gh` or Git's transport
+ * (`ls-remote`, `fetch`): a transient network, SSH, or server failure is
+ * repeated within `retryGitHubRead`'s budget. Never use it for a mutation,
+ * such as a push or a merge.
  */
 export function runRead(command: string, args: string[]): string {
   return retryGitHubRead(() => run(command, args));
@@ -168,13 +171,16 @@ export function parseRemoteBranchHead(
   return null;
 }
 
-/** The commit a branch points to on the repository, or null when absent. */
+/**
+ * The commit a branch points to on the repository, or null when absent. The
+ * listing is read-only, so a transient SSH or network failure is retried.
+ */
 export function remoteBranchHead(
   repositoryUrl: string,
   branch: string,
 ): string | null {
   return parseRemoteBranchHead(
-    run("git", ["ls-remote", "--heads", repositoryUrl, `refs/heads/${branch}`]),
+    runRead("git", ["ls-remote", "--heads", repositoryUrl, `refs/heads/${branch}`]),
     branch,
   );
 }
@@ -194,19 +200,28 @@ export function buildBaseFetchArgs(
   ];
 }
 
-function fetchBase(repositoryUrl: string, target: string): string {
+/**
+ * Fetch `target` into a private ref and return its commit. The fetch only
+ * reads the repository, so a transient SSH or network failure is retried
+ * within `retryGitHubRead`'s budget; Git's stderr explains a final failure.
+ */
+export function fetchBase(repositoryUrl: string, target: string): string {
   const temporaryRef = `refs/codex/review-base/${process.pid}-${randomUUID()}`;
   try {
-    const result = spawnSync(
-      "git",
-      buildBaseFetchArgs(repositoryUrl, target, temporaryRef),
-      { stdio: "ignore", env: gitEnvironment() },
-    );
-    if (spawnExitCode("git fetch", result) !== 0) {
-      throw new Error(
-        `Could not fetch base '${target}' from '${repositoryUrl}'.`,
+    retryGitHubRead(() => {
+      const result = spawnSync(
+        "git",
+        buildBaseFetchArgs(repositoryUrl, target, temporaryRef),
+        { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8", env: gitEnvironment() },
       );
-    }
+      if (spawnExitCode("git fetch", result) === 0) return;
+      const stderr = result.stderr ?? "";
+      const detail = outputTail(stderr);
+      // The retry classifies Git's whole stderr when there is any, rather than this bounded message.
+      throw Object.assign(new Error(
+        `Could not fetch base '${target}' from '${repositoryUrl}'${detail ? `: ${detail}` : "."}`,
+      ), { stderr });
+    });
     return run("git", ["rev-parse", `${temporaryRef}^{commit}`]);
   } finally {
     spawnSync("git", ["update-ref", "-d", temporaryRef], {

@@ -73,6 +73,7 @@ export function repoCommand(args: string[]): number {
         // REST avoids pre-push hooks. GitHub has no expected-OID delete guard.
         retryCheckedGitHubMutation(() => { read("gh", ["api", "--method", "DELETE", `repos/${repo.nameWithOwner}/git/refs/heads/${encodeURIComponent(pr.headRefName)}`]); }, () => {
           // A delete that failed in transit may have landed: confirm the merge and the ref again before resending it.
+          // These reads retry on their own too, so a recheck can add its own bounded backoff to the delete's.
           const current = pullRequest(args[0], repo.nameWithOwner);
           assert(current.state === "MERGED" && current.headRefOid === shipped && current.mergeCommit?.oid === mergeOid, "PR is no longer confirmed MERGED at the shipped HEAD; not retrying the remote branch deletion.");
           const remote = remoteBranchHead(url, pr.headRefName);

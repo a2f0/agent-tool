@@ -8,12 +8,17 @@ import { callDeadline } from "./boundedCalls";
 export const GITHUB_RETRY = { attempts: 4, initialDelayMs: 1_000, maxDelayMs: 8_000 };
 
 // The same request would fail the same way: authentication, permissions,
-// validation, absent objects, and rate limits. These win over any transient match.
-const PERMANENT = /\bHTTP 4\d\d\b|gh auth login|authentication|bad credentials|not found|could not resolve to|rate limit/i;
+// validation, absent objects, and rate limits, as `gh` reports them and as
+// OpenSSH and GitHub's SSH endpoint report them to Git ("git@github.com:
+// Permission denied (publickey).", "Host key verification failed.", "ERROR:
+// Repository not found."). These win over any transient match.
+const PERMANENT = /\bHTTP 4\d\d\b|gh auth login|authentication|bad credentials|not found|could not resolve to|rate limit|permission denied|host key verification failed/i;
 // Network failures and server errors that a later call commonly survives, as
-// Go's HTTP client and GitHub report them through `gh`.
+// Go's HTTP client and GitHub report them through `gh`, and as OpenSSH reports
+// them to Git.
 const TRANSIENT = [
   /i\/o timeout/i,
+  // Also OpenSSH's "read: Connection reset by peer" and "Connection reset by <ip> port <n>".
   /connection reset/i,
   /broken pipe/i,
   /\bEOF\b/,
@@ -22,6 +27,21 @@ const TRANSIENT = [
   /\bHTTP 50[234]\b/,
   // GraphQL's own server-side timeout, reported with HTTP 200.
   /Something went wrong while executing your query/i,
+  // OpenSSH (sshconnect.c, kex.c, packet.c, clientloop.c, ssh.c): a connect or
+  // banner exchange that timed out ("ssh: connect to host <host> port <n>:
+  // Operation timed out", strerror(ETIMEDOUT) on macOS and the BSDs, which
+  // Linux spells "Connection timed out"; "Connection timed out during banner
+  // exchange"; "Connection to <ip> port <n> timed out"), a server that closed
+  // the connection ("kex_exchange_identification: Connection closed by remote
+  // host", "Connection closed by <ip> port <n>", "Connection to <host> closed
+  // by remote host."), and a name lookup the resolver calls temporary. Git then
+  // prints "Could not read from remote repository." after every SSH failure, so
+  // that line decides nothing on its own: a permission or absence error before
+  // it stays permanent.
+  /\b(?:Operation|Connection) timed out\b/i,
+  /\bConnection to \S+ port \d+ timed out\b/,
+  /\bConnection (?:to \S+ )?closed by (?:remote host|\S+ port \d+)/,
+  /\bTemporary failure in name resolution\b/i,
 ];
 
 /** The failure output to classify: a command's stderr when it has any, else the error's message. */
@@ -73,10 +93,11 @@ function repeat<T>(call: () => T, transient: (outcome: Outcome<T>) => boolean): 
 }
 
 /**
- * Run a read-only GitHub call, repeating it after a transient failure within
- * the budget. A client error is thrown at once; a transient failure that
- * outlasts the budget is thrown as `TransientGitHubError`. Never pass a
- * mutation: a request that failed in transit may still have taken effect.
+ * Run a read-only GitHub call, through `gh` or Git's transport (`ls-remote`,
+ * `fetch`), repeating it after a transient failure within the budget. A
+ * client error is thrown at once; a transient failure that outlasts the
+ * budget is thrown as `TransientGitHubError`. Never pass a mutation, such as
+ * a push: a request that failed in transit may still have taken effect.
  */
 export function retryGitHubRead<T>(read: () => T): T {
   const { outcome, attempts } = repeat(read, result => !result.ok && transientGitHubFailure(result.error));

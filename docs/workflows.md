@@ -496,18 +496,37 @@ deadline does that error end the wait, so the timeout stays the bound.
 Every read-only `gh` call, in these commands and the rest of agent-tool, is
 retried after a transient failure: a network error (`i/o timeout`,
 `connection reset`, `broken pipe`, `EOF`, `TLS handshake timeout`, a client
-deadline), HTTP 502, 503, or 504, or GraphQL's own query timeout. It makes at
-most four attempts, pausing 1, 2, then 4 seconds, and inside a wait never
-pauses past its deadline. Authentication, rate-limit, not-found, and other 4xx
-failures are never retried. When the budget runs out the command fails with
-GitHub's last error and the number of attempts; rerun it once GitHub is
-reachable. Mutations are never repeated blindly: `pr merge` sends its
-mutation once and, when it fails, reads the PR's state again to say whether
-it merged anyway (`MERGED` means do not merge again); replies, thread
-resolution, run cancellation, and `pr open` are sent once and can be rerun.
-`repo cleanup` is the one mutation retried, as described under
-[checkout cleanup](#checkout-cleanup). Git's own transport (`ls-remote`,
-`fetch`) is not retried.
+deadline), HTTP 502, 503, or 504, or GraphQL's own query timeout. So is every
+read over Git's own transport: the `git ls-remote` of a branch that
+`pr checks`, `pr preflight`, `pr merge`, `pr open`, `repo context`,
+`repo cleanup`, `branch create`, and `branch push` use, and the base fetch
+behind `repo context --fetch`, `repo cleanup`, `pr merge`, reviews, and
+`branch create`. One classification serves every retried call, `gh` reads
+and `repo cleanup`'s checked delete included, and it also counts as transient
+an SSH connection failure that OpenSSH reports: a connect or banner exchange
+that timed out (`ssh: connect to host <host> port <n>: Operation timed out`,
+`Connection timed out` on Linux, or `connect: operation timed out` from `gh`),
+a server that closed or reset the connection
+(`kex_exchange_identification: ...`, `Connection closed by <ip> port <n>`,
+`Connection reset by peer`), or a name lookup the resolver calls temporary.
+It makes at most four attempts, pausing 1, 2, then 4 seconds, and inside a
+wait never pauses past its deadline. Authentication, rate-limit, not-found,
+and other 4xx failures are never retried, and neither is any output with
+`Permission denied`, such as SSH's `Permission denied (publickey)`, or with
+`Host key verification failed` or GitHub's `Repository not found`; a
+permanent match wins over a transient one in the same output. Git ends every
+SSH failure with `Could not read from remote repository`, so that line alone
+decides nothing. When the budget runs out the command fails with GitHub's last
+error and the number of attempts; rerun it once GitHub is reachable. Mutations
+are never repeated blindly: `branch push` pushes once; `pr merge` sends its
+mutation once and, when it fails, reads the PR's state again to say whether it
+merged anyway (`MERGED` means do not merge again); replies, thread resolution,
+run cancellation, and `pr open` are sent once and can be rerun.
+`repo cleanup`'s REST deletion of the remote branch is the one mutation
+retried, only after rechecking it, as described under
+[checkout cleanup](#checkout-cleanup). The [push gate](#push-gates)'s own
+`git ls-remote` is not retried: when it fails, the gate falls back to the old
+tip Git reported.
 
 Every observation also compares the head with the live tip of the PR's base
 branch through GitHub's compare API, asking again only after the base moves,
