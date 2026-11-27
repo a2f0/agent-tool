@@ -1,7 +1,8 @@
 # agent-tool
 
 agent-tool is a command-line tool and a set of portable skills for repositories
-where Claude Code, Codex, OpenCode, or Hermes make the changes. It provides shared Git,
+where Antigravity CLI (`agy`), Claude Code, Codex, OpenCode, or Hermes make the
+changes. It provides shared Git,
 GitHub, review, validation, and release workflows: independent agent reviews of
 a committed branch, guarded pushes and squash merges of the exact reviewed
 commit, package versioning, brand image rendering, screenshot capture into a
@@ -34,7 +35,7 @@ npm install --save-dev --save-exact @a2f0/agent-tool
 
 Version preparation needs Bun 1.4 or newer. GitHub operations require an
 authenticated `gh` supporting `pr checks --json`, and independent reviews require
-an authenticated Claude Code, Codex, or OpenCode CLI. A compiled standalone
+an authenticated Antigravity CLI (`agy`), Claude Code, Codex, or OpenCode CLI. A compiled standalone
 executable needs no Bun or Node at runtime.
 
 Add `"agent-tool": "agent-tool"` to package scripts, or invoke

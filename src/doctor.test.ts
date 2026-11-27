@@ -21,6 +21,7 @@ beforeEach(() => {
   originalPath = process.env.PATH;
   process.env.PATH = binDir;
   stub("git", "git version 2.50.0", "usage: git");
+  stub("agy", "1.5.18", "--input-format --output-format --disable-slash-commands --settings --effort");
   stub("claude", "2.1.0", "--safe-mode --permission-mode --effort");
   stub("codex", "codex-cli 0.160.0", "--ignore-user-config --ignore-rules --strict-config --ephemeral --output-last-message");
   stub("opencode", "opencode v2.3.2", "--model, -m string  Model to use in the format provider/model#variant --agent --archived --standalone");
@@ -52,4 +53,15 @@ test("reports OpenCode 2, whose run takes provider/model#variant and --standalon
 test("flags OpenCode 1, whose run has --pure and --variant instead", () => {
   stub("opencode", "1.17.0", "--model provider/model --variant --agent --pure");
   expect(opencode(binDir)).toEqual({ name: "opencode", version: "1.17.0", compatible: false, missingFlags: ["--standalone", "--archived", "provider/model#variant"] });
+});
+
+const agy = (rootDir: string) => doctor(rootDir).tools.find((tool) => tool.name === "agy");
+
+test("reports Antigravity CLI (agy) with headless stream-json and --settings flags as compatible", () => {
+  expect(agy(binDir)).toEqual({ name: "agy", version: "1.5.18", compatible: true, missingFlags: [] });
+});
+
+test("flags an agy build missing stream-json or --settings flags", () => {
+  stub("agy", "1.0.0", "--print --model");
+  expect(agy(binDir)).toEqual({ name: "agy", version: "1.0.0", compatible: false, missingFlags: ["--input-format", "--output-format", "--disable-slash-commands", "--settings", "--effort"] });
 });

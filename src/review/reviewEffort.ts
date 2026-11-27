@@ -1,7 +1,9 @@
 /**
- * Reasoning-effort levels accepted by the reviewer CLIs. `claude --effort`
- * documents exactly this set; `codex` takes the same names via its
- * `model_reasoning_effort` config key.
+ * Reasoning-effort levels accepted by the reviewer CLIs. `claude --effort` and
+ * `agy --effort` document this exact set (`low|medium|high|xhigh|max`, with
+ * `agy` failing loudly if the selected model does not support the requested
+ * level); `codex` takes the same names via its `model_reasoning_effort` config
+ * key.
  */
 export const REVIEW_EFFORT_LEVELS = [
   "low",
@@ -14,11 +16,14 @@ export const REVIEW_EFFORT_LEVELS = [
 export type ReviewEffort = (typeof REVIEW_EFFORT_LEVELS)[number];
 
 /**
- * Per-agent defaults. Claude reviews at `xhigh`; Codex reviews at `high`, which
- * also pins the level rather than inheriting whatever `~/.codex/config.toml`
- * happens to set. Opencode reviews at `high` too: it is the cheap fallback
- * reviewer, and its deepseek-v4-pro model pays per thinking token.
+ * Per-agent defaults. Antigravity CLI (`agy`) reviews at `high`, supported across
+ * its Claude and Gemini models; Claude reviews at `xhigh`; Codex reviews at
+ * `high`, which also pins the level rather than inheriting whatever
+ * `~/.codex/config.toml` happens to set. Opencode reviews at `high` too: it is
+ * the cheap fallback reviewer, and its deepseek-v4-pro model pays per thinking
+ * token.
  */
+export const DEFAULT_AGY_EFFORT: ReviewEffort = "high";
 export const DEFAULT_CLAUDE_EFFORT: ReviewEffort = "xhigh";
 export const DEFAULT_CODEX_EFFORT: ReviewEffort = "high";
 export const DEFAULT_OPENCODE_EFFORT: ReviewEffort = "high";

@@ -9,7 +9,7 @@ import { ancestors, type ProcessRow } from "./table";
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ash", "ksh", "mksh", "pdksh", "oksh", "lksh", "yash", "posh", "osh", "ysh", "csh", "tcsh", "fish", "nu", "elvish", "xonsh"]);
 // Agent harnesses by program name.
-const HARNESSES = new Set(["claude", "codex", "opencode", "hermes", "omp", "gemini", "cursor-agent", "amp", "goose", "aider", "crush", "qwen"]);
+const HARNESSES = new Set(["agy", "claude", "codex", "opencode", "hermes", "omp", "gemini", "cursor-agent", "amp", "goose", "aider", "crush", "qwen"]);
 // Sandboxes a harness may start a shell through, which stay running as the shell's parent.
 const SANDBOXES = new Set(["bwrap", "sandbox-exec", "codex-linux-sandbox"]);
 const INTERPRETER = /^(?:node|nodejs|bun|deno|python[0-9.]*|ruby|perl)$/;

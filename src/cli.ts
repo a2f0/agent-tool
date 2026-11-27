@@ -65,7 +65,7 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   release plan <package.json> [--github-output] [--allow-private-source]
   release verify <package> <version> <merge-oid> --workflow name [--timeout seconds]
   logs <file> [--max-bytes N] [--tail-lines N]  Bounded local log tail
-  review <claude|codex|opencode> [effort] [--base <local-ref>]
+  review <agy|claude|codex|opencode> [effort] [--base <local-ref>]
   review carry <reviewed-head> <new-head> [--base <ref>]  Whether a clean review covers a base-merge and versions-only head
   pr open [title] [--body-file file]    Body from the file or stdin; branch already pushed
   pr merge <subject-or-empty> <head-oid> <base-branch>
@@ -79,8 +79,8 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   dependencies check-terraform-plan <json-file>  Read-only destructive-plan check
   dependencies diff --base <ref>        Declared dependencies added, removed, or changed since base
   skills list
-  skills install [--harness <all|claude|codex|opencode|hermes>] [--apply]
-  skills check [--harness <all|claude|codex|opencode|hermes>]
+  skills install [--harness <all|agy|claude|codex|opencode|hermes>] [--apply]
+  skills check [--harness <all|agy|claude|codex|opencode|hermes>]
   bun install [--cwd <dir>]             Frozen-lockfile install with the pinned Bun
   bun add <name@version>... [--dev|--optional|--peer] [--exact] [--cwd <dir>]
   bun update <name[@version]>... [--cwd <dir>]  Change versions of declared dependencies only
@@ -169,7 +169,7 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
   if (command === "doctor") {
     usage(args.length === 0, "Usage: agent-tool doctor");
     const result = doctor(process.cwd()); output(result);
-    return result.tools.find(item => item.name === "git")?.compatible && result.tools.some(item => ["claude", "codex", "opencode"].includes(item.name) && item.compatible) ? 0 : 1;
+    return result.tools.find(item => item.name === "git")?.compatible && result.tools.some(item => ["agy", "claude", "codex", "opencode"].includes(item.name) && item.compatible) ? 0 : 1;
   }
   if (command === "images") {
     const action = args.shift();
@@ -266,7 +266,7 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
   if (command === "checks") { usage(args.shift() === "binaries", "Usage: checks binaries [--staged|--all|--range range|--from-upstream]"); return binariesCommand(args); }
   if (command === "review" && args[0] === "carry") return carryReviewCommand(root, args.slice(1));
   if (command === "review") {
-    const name = args.shift(); usage(!!name, "Usage: agent-tool review <claude|codex|opencode> [effort] [--base ref]");
+    const name = args.shift(); usage(!!name, "Usage: agent-tool review <agy|claude|codex|opencode> [effort] [--base ref]");
     let effort: string | undefined, base: string | undefined;
     while (args.length) {
       const value = args.shift()!;

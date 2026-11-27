@@ -26,6 +26,8 @@ function runGit(rootDir: string, args: string[]): string {
  * tools and no shell, while Codex reads the repo *through* its shell — telling
  * Codex "you cannot run commands" would talk it out of reading files at all.
  */
+export const AGY_ACCESS_NOTE =
+  "Read the surrounding files in the immutable repository snapshot when a finding depends on code the diff does not show; your read_file tool is confined to that snapshot, and you have no shell, edit, or network access";
 export const CLAUDE_ACCESS_NOTE =
   "Read the surrounding files in the immutable repository snapshot when a finding depends on code the diff does not show; you have Read, Grep, and Glob for that. You cannot run commands, so do not plan to build, typecheck, or execute tests";
 export const CODEX_ACCESS_NOTE =
