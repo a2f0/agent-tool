@@ -9,9 +9,8 @@ interface Workflow { jobs: Record<string, { uses?: string; steps?: Step[] }> }
 
 /**
  * Every action a workflow may use, each reviewed for caching: the input that turns caching off,
- * which the step must set, or null for an action that restores no cache. The required
- * gemini-conformance job runs Gemini CLI's third-party bundle on a runner that gives it sudo,
- * which reaches the Actions cache, so no workflow here may restore a cache it could write; a new
+ * which the step must set, or null for an action that restores no cache. Workflows here avoid
+ * restoring Actions caches so untrusted PR runs cannot poison release or publish caches; a new
  * action must be classified here before it lands.
  */
 const ACTIONS: Record<string, [input: string, off: unknown] | null> = {

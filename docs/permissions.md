@@ -2,9 +2,10 @@
 
 agent-tool assigns each of its commands a permission class and generates allow
 rules for routine commands. Consequential commands keep the user's chosen
-approval mode and sandbox policy. The same classification drives Claude Code,
-Codex, and Gemini CLI; generated project rules do not force extra prompts or
-grant blanket approval.
+approval mode and sandbox policy. The same classification drives Claude Code
+and Codex; generated project rules do not force extra prompts or grant blanket
+approval. Antigravity CLI (`agy`) uses its own native terminal sandbox and
+user-global `/permissions` rules rather than committed repository policy files.
 
 ## What the rules protect
 
@@ -217,7 +218,7 @@ agent-tool permissions install --apply
 agent-tool permissions check              # CI: the recorded scope
 ```
 
-`install` writes a file for each harness its scope covers, three for `all`,
+`install` writes a file for each harness its scope covers, two for `all`,
 and records what it owns in `.agent-tool-permissions.json`:
 
 - `.claude/settings.json` gains `permissions.allow` entries for the classes that
@@ -243,32 +244,18 @@ and records what it owns in `.agent-tool-permissions.json`:
   permission ranks. Reinstalling replaces the managed file and removes the
   forced prompts written by older versions. A locally edited rules file is
   refused rather than overwritten; other `.rules` files are left alone.
-- `.gemini/policies/agent-tool.toml` holds one Gemini CLI `allow` rule per
-  routine command for the `run_shell_command` tool, for the same routine
-  commands as the Codex rules. Each is a `commandRegex` naming the three
-  invocations and ending the command at a space or the end of the command,
-  with arguments that may quote and escape but hold no backtick, `$`, `;`,
-  `&`, `|`, `<`, `>`, `(`, `)`, `{`, `}`, `%`, or line break; a command with
-  any of them matches no rule as a whole, as Codex treats such a script as one
-  opaque command (below). Parentheses, braces, and `%` are excluded because
-  Gemini runs commands through PowerShell on Windows, which evaluates `(…)`,
-  `@(…)`, and `@{…}` in an argument, and cmd.exe, which runs a `.cmd` shim,
-  expands `%…%`. So a title such as `pr open "fix(api): x"` asks, while
-  `bun update name@1.2.3` and `bun remove @scope/name` stay allowed. Gemini's own
-  `commandPrefix` also ends at a quote, which the shell joins into the same
-  word (`agent-tool bun x vite"-node"` runs `vite-node`), so the rules do not use
-  it. A command whose `--apply` form asks gets no rule here either, since a
-  rule also matches the command with arguments. The rules apply only in the
-  `default` approval mode: a workspace allow would outrank plan mode's
-  read-only deny, YOLO allows every command already, and `autoEdit` keeps the
-  user's own rules, since Gemini CLI before 0.63.0 lets an allowed command
-  redirect there unprompted, as google-gemini/gemini-cli#26542 chose, until
-  google-gemini/gemini-cli#29506 changed it. Only allow
-  rules are written, and user and admin policies outrank workspace ones. The
-  rules take priority 0, the lowest Gemini accepts, so a project's own rule in
-  `.gemini/policies/` outranks them at any higher priority; at 0 as well,
-  Gemini's file load order decides. A locally edited policy file is refused
-  rather than overwritten; other files in `.gemini/policies/` are left alone.
+
+Legacy Gemini CLI policy files (`.gemini/policies/agent-tool.toml`, generated
+by releases 0.1.78–0.1.81) are retired. When a repository upgrades from those
+releases, `permissions check` reports the retired policy file as `outdated`
+(or `unmanaged` if locally edited or unrecorded). Running a bare or
+`--harness all` `permissions install --apply` verifies the recorded hash,
+removes an unmodified `.gemini/policies/agent-tool.toml` and any empty parent
+directories it leaves behind (preserving sibling files such as
+`.gemini/config.yaml`), and drops the legacy `gemini` entry from
+`.agent-tool-permissions.json`. A locally edited policy is never deleted, and a
+manifest that covered Gemini alone refuses a bare install so it never widens to
+Claude and Codex unasked.
 
 The manifest also records the `scope` installs asked for. `install` and
 `check` without `--harness` follow it, as the push gate does, so a check fails
@@ -325,36 +312,9 @@ Each harness also has limits that the rules cannot change:
   commands only when it is a plain chain joined by `&&`, `||`, `;`, or `|`;
   redirection (including `2>&1`), substitution, variables, and control flow make
   the whole script one opaque command subject to the harness default.
-- Gemini CLI loads `<cwd>/.gemini/policies/` only in a trusted folder, from the
-  directory where the session starts, and asks the user once to accept a new or
-  changed policy file in each such directory (headless runs accept it with a
-  warning). A command no rule matches as a whole, because its arguments hold
-  shell syntax, falls back to Gemini's own checks: redirection, variables, and
-  command or process substitution ask in `default` mode, and a chain joined by
-  `&&`, `||`, `;`, `|`, `&`, or a newline is allowed only when every command
-  in it is, in the releases that check a chain command by command (0.37.0 and
-  0.71.1 do; 0.40.0 to 0.63.0 ask). Those checks alone are not enough, which
-  is why the arguments are restricted: 0.37.0 to 0.63.0 allow
-  ``${X:-`rm x`}`` under a rule that leaves arguments open. The rules need
-  Gemini CLI 0.37.0 or later, the
-  oldest release the conformance test can load, which the generated header
-  states; CI checks that floor and a current release with Gemini's own policy
-  engine
-  ([dependency upgrades](dependency-upgrades.md#current-compatibility-constraints)).
-  Releases 0.31.0 to 0.36, the first to load project policies
-  (google-gemini/gemini-cli#18682), keep the rules to `default`, and their
-  source splits chains and asks for redirection there, but they are published
-  unbundled and untested: a gap in one would allow a command it should ask
-  about, never refuse one. Earlier releases ignore the file, so everything
-  asks. Gemini's
-  [policy engine](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/docs/reference/policy-engine.md)
-  documents the discovery, trust, and tiers above;
-  [dependency upgrades](dependency-upgrades.md#current-compatibility-constraints)
-  lists what to recheck for a newer release.
 
 After upgrading agent-tool, regenerate the managed permissions and start a new
-Codex or Gemini CLI session so it loads the updated rules; Gemini then asks
-once to accept the changed policy file. Removing a generated prompt does
+Codex session so it loads the updated rules. Removing a generated prompt does
 not change the active session's approval policy, sandbox, or user/managed rules.
 With `never` plus a restrictive sandbox, commands that need an escalation can
 still fail; with `danger-full-access`, they can run within the user's authorized
@@ -392,7 +352,7 @@ default, or the directory `CLAUDE_CONFIG_DIR` names:
       "$defaults",
       "Release: merging a pull request, publishing a package, or deleting remote state, including `agent-tool pr merge`, `gh pr merge`, `npm publish`, and `bun publish`",
       "Dependency intake: adding a third-party package with `agent-tool bun add`, `bun add`, `npm install <name>`, `pnpm add`, or `yarn add`, or running `bunx`, `bun x`, or `npx`, which can download one",
-      "Permission changes: `agent-tool permissions install --apply`, or edits to `.claude/settings.json`, `.codex/rules/`, `.gemini/policies/`, or `permissions` in `agent-tool.json`",
+      "Permission changes: `agent-tool permissions install --apply`, or edits to `.claude/settings.json`, `.codex/rules/`, or `permissions` in `agent-tool.json`",
       "Arbitrary execution: `agent-tool bun x` with an executable that runs whatever file or command it is given, such as `tsx`"
     ]
   }

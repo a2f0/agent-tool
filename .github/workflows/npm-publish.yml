@@ -39,7 +39,7 @@ jobs:
         with:
           version: 2026.11.8
           install_args: bun
-          # No workflow here restores an Actions cache (see ci.yml's gemini-conformance job).
+          # No workflow here restores an Actions cache (enforced by scripts/testing/workflows.test.ts).
           cache: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:

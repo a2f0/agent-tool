@@ -89,9 +89,9 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   bun remove <name>... [--cwd <dir>]    Remove declared dependencies only
   bun test [--cwd <dir>] [--log] [-- args...]
   bun x <executable> [--cwd <dir>] [--log] [-- args...]  Installed executables only, never fetched
-  permissions show [--harness <all|claude|codex|gemini>]
-  permissions install [--harness <all|claude|codex|gemini>] [--apply]  Without --harness, the recorded scope (docs/permissions.md)
-  permissions check [--harness <all|claude|codex|gemini>]  Without --harness, the recorded scope
+  permissions show [--harness <all|claude|codex>]
+  permissions install [--harness <all|claude|codex>] [--apply]  Without --harness, the recorded scope (docs/permissions.md)
+  permissions check [--harness <all|claude|codex>]  Without --harness, the recorded scope
   images list [target...]               JSON files each image target writes
   images build [target...] [--out <dir>]  Render assets/brand/*.svg per agent-tool.json
   screenshots build [target...] [--out <dir>] [--json]  Stage guarded captures and a gallery manifest
@@ -235,7 +235,7 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
   if (command === "push-gate") return pushGateCommand(args);
   if (command === "permissions") {
     const action = args.shift();
-    usage(action === "show" || action === "install" || action === "check", "Usage: agent-tool permissions <show|install|check> [--harness <all|claude|codex|gemini>] [--apply]");
+    usage(action === "show" || action === "install" || action === "check", "Usage: agent-tool permissions <show|install|check> [--harness <all|claude|codex>] [--apply]");
     let target: string | undefined, apply = false;
     while (args.length) {
       const flag = args.shift();

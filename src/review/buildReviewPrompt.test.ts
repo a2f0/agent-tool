@@ -189,7 +189,6 @@ describe("generated files in the review prompt", () => {
   ];
   const RULE_FILES = [
     ".codex/rules/agent-tool.rules",
-    ".gemini/policies/agent-tool.toml",
   ];
   const CHANGED = [
     ...SKILL_FILES,
@@ -232,13 +231,12 @@ describe("generated files in the review prompt", () => {
       permissions: [
         { path: ".claude/settings.json", whole: false },
         { path: RULE_FILES[0]!, whole: true },
-        { path: RULE_FILES[1]!, whole: true },
       ],
     });
     const text = prompt(generated);
     const line = bullet(text)!;
     expect(line).toBe(
-      "- These changed files are agent-tool's generated output, which this repository cannot edit: `.agents/skills/ship-pr/SKILL.md`, `.claude/skills/ship-pr/SKILL.md`, the rules `.agent-tool-permissions.json` records in `.claude/settings.json`, `.codex/rules/agent-tool.rules`, and `.gemini/policies/agent-tool.toml`. Findings about their contents belong to a2f0/agent-tool: list each under an `Upstream (agent-tool):` heading before the verdict, with no severity, and never let one raise the verdict. Still review this repository's own changes around them, such as docs that list them, linter excludes, CI path policies, `permissions.executables` in `agent-tool.json`, and the agent-tool pin",
+      "- These changed files are agent-tool's generated output, which this repository cannot edit: `.agents/skills/ship-pr/SKILL.md`, `.claude/skills/ship-pr/SKILL.md`, the rules `.agent-tool-permissions.json` records in `.claude/settings.json`, and `.codex/rules/agent-tool.rules`. Findings about their contents belong to a2f0/agent-tool: list each under an `Upstream (agent-tool):` heading before the verdict, with no severity, and never let one raise the verdict. Still review this repository's own changes around them, such as docs that list them, linter excludes, CI path policies, `permissions.executables` in `agent-tool.json`, and the agent-tool pin",
     );
     // The manifest itself and the repository's own files stay under normal review.
     expect(line).not.toContain("src/app.ts");
@@ -361,7 +359,7 @@ describe("generated files in the review prompt", () => {
 
     expect(generated).toEqual({
       skills: [SKILL_FILES[1]!],
-      permissions: [{ path: RULE_FILES[1]!, whole: true }],
+      permissions: [],
     });
   });
 

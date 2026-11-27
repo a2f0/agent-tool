@@ -7,8 +7,7 @@
   "merge": {
     "requiredChecks": [
       {"name": "verify (ubuntu-latest)", "workflow": "CI"},
-      {"name": "verify (macos-latest)", "workflow": "CI"},
-      {"name": "gemini-conformance", "workflow": "CI"}
+      {"name": "verify (macos-latest)", "workflow": "CI"}
     ]
   },
   "versions": {

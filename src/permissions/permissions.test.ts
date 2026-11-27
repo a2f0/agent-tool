@@ -1,11 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { CATALOG, CLASSES, GEMINI_ARGUMENTS, GEMINI_MODES, INVOCATIONS, claudePermissions, codexRules, geminiPolicy, strictest, type PermissionClass } from "./catalog";
-import { checkInstalledPermissions, checkPermissions, installPermissions, scopeState, scopeTransition, type PermissionChange, type ScopeState } from "./install";
+import { CATALOG, CLASSES, INVOCATIONS, claudePermissions, codexRules, strictest, type PermissionClass } from "./catalog";
+import { checkInstalledPermissions, checkPermissions, installPermissions, legacyGeminiState, scopeState, scopeTransition, type PermissionChange, type ScopeState } from "./install";
 import metadata from "../../package.json";
 import { HELP } from "../cli";
 import { parseConfig } from "../config";
@@ -32,25 +32,6 @@ function codexPrefixes(source: string): string[][] {
 function codexAllows(source: string, command: string): boolean {
   const words = command.split(" ");
   return codexPrefixes(source).some(prefix => prefix.every((word, index) => words[index] === word));
-}
-
-interface GeminiRule { toolName: string; commandRegex: string; decision: string; priority: number; modes: string[] }
-/** The generated policy's `[[rule]]` tables, parsed as TOML so a malformed policy fails here, not in Gemini. */
-function geminiRules(source: string): GeminiRule[] {
-  return (Bun.TOML.parse(source) as { rule: GeminiRule[] }).rule;
-}
-
-/**
- * Gemini CLI's commandRegex match: the pattern, anchored at the start of the command's JSON
- * encoding, which ends in the closing quote; an embedded quote is encoded as `\"`. This models
- * Gemini CLI 0.71.1, whose policy utils build `\x00"command":"(?:<commandRegex>)` and test it
- * against the stable JSON of the tool's arguments (`buildArgsPatterns`). It models one command:
- * a command holding shell syntax matches no rule, and Gemini then checks each command of a chain
- * on its own, which this model does not repeat (the conformance test runs Gemini's own engine).
- */
-function geminiAllows(source: string, command: string): boolean {
-  const encoded = JSON.stringify(command).slice(1);
-  return geminiRules(source).some(rule => rule.decision === "allow" && new RegExp(`^(?:${rule.commandRegex})`).test(encoded));
 }
 
 test("dependency verbs split by class: add asks, update and remove run", () => {
@@ -83,56 +64,6 @@ test("dependency verbs split by class: add asks, update and remove run", () => {
     expect(codexAllows(codex, `${invocation} screenshots status --all --json`)).toBe(true);
   }
   for (const command of ["gh pr merge 1", "npm publish", "bun publish", "bun add left-pad", "npm install left-pad", "pnpm add left-pad", "yarn add left-pad", "bunx cowsay", "bun x cowsay", "npx cowsay"]) expect(codexAllows(codex, command)).toBe(false);
-  // Gemini's prefixes match like Codex's, so the same commands stay with the user's mode.
-  const gemini = geminiPolicy();
-  for (const invocation of INVOCATIONS) {
-    // A quote joins the next text into the same shell word, so it never ends a command name.
-    for (const command of ["pr merge '' abc main", "bun add left-pad", "permissions install", "permissions install --apply", "run --label x -- command", "run-group checks.json", "proc start -- command", "seo probe example.com", "space --apply", "screenshots capture", "pr checksX", 'pr checks"X"', 'review"carry" a b', "pr checks\tX"]) {
-      expect({ command: `${invocation} ${command}`, allowed: geminiAllows(gemini, `${invocation} ${command}`) }).toEqual({ command: `${invocation} ${command}`, allowed: false });
-    }
-    for (const command of ["repo cleanup 12 abc --apply", "pr checks --wait", "--version", "skills install --apply", 'pr checks "a b"', "pr checks 'a b'", "pr open 'feat: x' --body-file f.md"]) expect(geminiAllows(gemini, `${invocation} ${command}`)).toBe(true);
-  }
-  // Escaped names match only themselves: `.` in an invocation or executable is literal.
-  const dotted = geminiPolicy([{ command: "bun x a.b", class: "local" }, { command: "bun x c+d", class: "local" }]);
-  for (const command of ["agent-tool bun x a.b -- c", "agent-tool bun x c+d -- e"]) expect(geminiAllows(dotted, command)).toBe(true);
-  for (const command of ["agent-tool bun x aXb -- c", "agent-tool bun x ccd -- e", "agent-tool bun x cd -- e", "node_modules/xbin/agent-tool pr checks", "bun run agent-toolX pr checks"]) expect({ command, allowed: geminiAllows(dotted, command) }).toEqual({ command, allowed: false });
-  for (const command of ["gh pr merge 1", "npm publish", "bun add left-pad", "bunx cowsay", "npx cowsay"]) expect(geminiAllows(gemini, command)).toBe(false);
-  // Arguments may quote and escape, but bash or PowerShell syntax, a line break, or another JSON escape fails to match.
-  for (const command of ['agent-tool pr open "feat: x" --body-file b.md', "agent-tool bun update left-pad@1.2.3", "agent-tool bun remove @types/node", "agent-tool pr checks a\\b", "agent-tool pr checks ~/x *", "agent-tool pr checks"]) expect({ command, allowed: geminiAllows(gemini, command) }).toEqual({ command, allowed: true });
-  for (const command of ["agent-tool pr checks $X", "agent-tool pr checks ${X:-`rm x`}", "agent-tool pr checks `rm x`", 'agent-tool pr checks "a" `rm x`', "agent-tool pr checks; rm x", "agent-tool pr checks && rm x", "agent-tool pr checks | sh", "agent-tool pr checks & rm x", "agent-tool pr checks > f", "agent-tool pr checks < f", "agent-tool pr checks x\nrm x", "agent-tool pr checks\t-x", "agent-tool pr checks \\$X", "agent-tool pr checks (Remove-Item x)", "agent-tool pr checks a(Remove-Item x)", "agent-tool pr checks @(Remove-Item x)", "agent-tool pr checks @{a=Remove-Item x}", "agent-tool pr checks %X%", "agent-tool pr checks {a,b}", 'agent-tool pr open "fix(api): x"'])
-    expect({ command, allowed: geminiAllows(gemini, command) }).toEqual({ command, allowed: false });
-});
-
-test("Gemini rules allow exactly what Codex's do, in the default approval mode only", () => {
-  const project = [{ command: "bun x biome", class: "local" as const }, { command: "bun x tsx", class: "exec" as const }];
-  const rules = geminiRules(geminiPolicy(project));
-  // Every rule is an allow for the shell tool, limited to `default`: in plan mode it would outrank
-  // the read-only deny, autoEdit before Gemini CLI 0.63.0 lets an allowed command redirect, and
-  // YOLO allows every command already.
-  // One rule per routine command, each naming every invocation.
-  expect(rules.length).toBe([...CATALOG, ...project].filter(entry => CLASSES[strictest(entry)].decision === "allow").length);
-  for (const { commandRegex, ...rule } of rules) {
-    expect(rule).toEqual({ toolName: "run_shell_command", decision: "allow", priority: 0, modes: ["default"] });
-    expect(commandRegex.endsWith(GEMINI_ARGUMENTS)).toBe(true);
-    // Gemini CLI 0.71.1 refuses a pattern with a quantified group (its NESTED_QUANTIFIER check)
-    // or longer than 2048 characters once wrapped as `\x00"command":"(?:…)`.
-    expect(/\([^)]*[*+?{][^\n\r]*\)[*+?{]/.test(commandRegex)).toBe(false);
-    expect(`\\x00"command":"(?:${commandRegex})`.length).toBeLessThan(2048);
-  }
-  expect(GEMINI_MODES).toEqual(["default"]);
-  const expand = (tokens: (string | string[])[]): string[] => tokens.reduce<string[][]>((rows, token) => rows.flatMap(row => (Array.isArray(token) ? token : [token]).map(value => [...row, value])), [[]]).map(words => words.join(" "));
-  const codex = codexRules(project).split("\n").flatMap(line => { const rule = /^prefix_rule\(pattern=(\[.*\]), decision="allow"/.exec(line); return rule ? expand(JSON.parse(rule[1]!)) : []; });
-  const policy = geminiPolicy(project), codexSource = codexRules(project);
-  // Every Codex prefix is allowed alone or with arguments. Text a quote or letter adds to its last
-  // word makes another command, allowed only when Codex allows it too, as `review carry"x"` is by `review`.
-  for (const prefix of codex) {
-    const joined = `${prefix}"x"`, extended = `${prefix}x`;
-    expect({ prefix, alone: geminiAllows(policy, prefix), argued: geminiAllows(policy, `${prefix} x`), joined: geminiAllows(policy, joined), extended: geminiAllows(policy, extended) })
-      .toEqual({ prefix, alone: true, argued: true, joined: codexAllows(codexSource, joined), extended: codexAllows(codexSource, extended) });
-  }
-  expect(geminiAllows(policy, "agent-tool bun x biome -- check src")).toBe(true);
-  expect(geminiAllows(policy, 'agent-tool bun x biome"-x" -- a.ts')).toBe(false);
-  expect(geminiAllows(policy, "agent-tool bun x tsx -- a.ts")).toBe(false);
 });
 
 test("apply semantics label routine groups while preserving every allow prefix", () => {
@@ -182,15 +113,15 @@ test("install keeps unrelated Claude settings and replaces only managed rules", 
   const root = project();
   mkdirSync(path.join(root, ".claude"));
   writeFileSync(path.join(root, ".claude/settings.json"), JSON.stringify({ env: { A: "1" }, permissions: { allow: ["Bash(make test)"], deny: ["Read(.secrets/**)"] } }));
-  expect(installPermissions(root, "all")).toEqual([{ path: ".claude/settings.json", status: "update" }, { path: ".codex/rules/agent-tool.rules", status: "create" }, { path: ".gemini/policies/agent-tool.toml", status: "create" }, { path: ".agent-tool-permissions.json", status: "create" }]);
-  expect(checkPermissions(root, "all").changes.map(item => item.status)).toEqual(["outdated", "missing", "missing", "missing"]);
+  expect(installPermissions(root, "all")).toEqual([{ path: ".claude/settings.json", status: "update" }, { path: ".codex/rules/agent-tool.rules", status: "create" }, { path: ".agent-tool-permissions.json", status: "create" }]);
+  expect(checkPermissions(root, "all").changes.map(item => item.status)).toEqual(["outdated", "missing", "missing"]);
   installPermissions(root, "all", true);
   const settings = JSON.parse(readFileSync(path.join(root, ".claude/settings.json"), "utf8"));
   expect(settings.env).toEqual({ A: "1" });
   expect(settings.permissions.deny).toEqual(["Read(.secrets/**)"]);
   expect(settings.permissions.allow[0]).toBe("Bash(make test)");
   expect(settings.permissions.allow.slice(1)).toEqual(claudePermissions().allow);
-  expect(checkPermissions(root, "all").changes.map(item => item.status)).toEqual(["unchanged", "unchanged", "unchanged", "unchanged"]);
+  expect(checkPermissions(root, "all").changes.map(item => item.status)).toEqual(["unchanged", "unchanged", "unchanged"]);
   // A rule dropped from the catalog is removed on reinstall; user rules stay.
   const manifestFile = path.join(root, ".agent-tool-permissions.json");
   const manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
@@ -242,42 +173,117 @@ test("edited or unmanaged Codex rules are preserved", () => {
   expect(checkPermissions(root, "codex").changes[0]!.status).toBe("unmanaged");
 });
 
-test("edited or unmanaged Gemini policies are preserved, and other policy files are left alone", () => {
+test("retired Gemini CLI policies are classified, removed cleanly, and never overwritten when edited", () => {
+  const entry = { file: ".gemini/policies/agent-tool.toml", sha256: createHash("sha256").update("# old\n").digest("hex") };
+  expect(legacyGeminiState("all", {})).toEqual({ status: "none" });
+  expect(legacyGeminiState(["claude"], { claude: { allow: [], ask: [] } })).toEqual({ status: "none" });
+  expect(legacyGeminiState("all", { gemini: entry })).toEqual({ status: "retired", record: entry });
+  expect(legacyGeminiState(["claude", "gemini"], { claude: { allow: [], ask: [] }, gemini: entry })).toEqual({ status: "retired", record: entry });
+  expect(legacyGeminiState(["gemini"], { gemini: entry })).toEqual({ status: "retired-only", record: entry });
+  expect(legacyGeminiState(undefined, { gemini: entry })).toEqual({ status: "retired-only", record: entry });
+
+  // Normal upgrade from `all` removes an unmodified policy and empty `.gemini` directories, keeping sibling files.
   const root = project();
-  const file = path.join(root, ".gemini/policies/agent-tool.toml"), user = path.join(root, ".gemini/policies/user.toml");
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, '[[rule]]\ntoolName = "*"\ndecision = "allow"\npriority = 999\n');
-  writeFileSync(user, '[[rule]]\ntoolName = "run_shell_command"\ncommandPrefix = "make"\ndecision = "allow"\npriority = 1\n');
-  expect(() => installPermissions(root, "gemini", true)).toThrow(/Locally edited or unmanaged rules: \.gemini\/policies\/agent-tool\.toml/);
-  rmSync(file);
-  expect(installPermissions(root, "gemini", true)).toEqual([{ path: ".gemini/policies/agent-tool.toml", status: "create" }, { path: ".agent-tool-permissions.json", status: "create" }]);
-  expect(readFileSync(file, "utf8")).toBe(geminiPolicy());
-  expect(checkPermissions(root, "gemini").changes[0]!.status).toBe("unchanged");
-  // A local edit fails the check and blocks reinstalling over it, as for Codex.
-  writeFileSync(file, `${geminiPolicy()}[[rule]]\ntoolName = "*"\ndecision = "allow"\npriority = 999\n`);
-  expect(() => checkPermissions(root, "gemini").changes).toThrow(/Locally edited or unmanaged rules/);
-  expect(() => installPermissions(root, "gemini", true)).toThrow(/Locally edited or unmanaged rules/);
-  writeFileSync(file, geminiPolicy());
-  writeFileSync(path.join(root, ".agent-tool-permissions.json"), JSON.stringify({ schemaVersion: 1 }));
-  expect(checkPermissions(root, "gemini").changes[0]!.status).toBe("unmanaged");
-  expect(readFileSync(user, "utf8")).toContain('commandPrefix = "make"');
+  installPermissions(root, "all", true);
+  const policyFile = path.join(root, ".gemini/policies/agent-tool.toml");
+  const configFile = path.join(root, ".gemini/config.yaml");
+  mkdirSync(path.dirname(policyFile), { recursive: true });
+  writeFileSync(policyFile, "# old\n");
+  writeFileSync(configFile, "have_fun: false\n");
+  const manifestFile = path.join(root, ".agent-tool-permissions.json");
+  const current = JSON.parse(readFileSync(manifestFile, "utf8"));
+  writeFileSync(manifestFile, JSON.stringify({ ...current, agentToolVersion: "0.1.81", gemini: entry }));
+
+  // Check flags the retired file as outdated without throwing.
+  expect(checkPermissions(root).changes).toContainEqual({
+    path: ".gemini/policies/agent-tool.toml",
+    status: "outdated",
+    detail: "a retired Gemini CLI policy; run agent-tool permissions install --apply to remove it",
+  });
+  expect(checkInstalledPermissions(root)!.changes).toContainEqual(expect.objectContaining({ path: ".gemini/policies/agent-tool.toml", status: "outdated" }));
+  expect(checkPermissions(root, "all").changes).toContainEqual(expect.objectContaining({ path: ".gemini/policies/agent-tool.toml", status: "outdated" }));
+
+  // Single-harness install preserves the legacy Gemini record and leaves the file untouched.
+  installPermissions(root, "claude", true);
+  expect(existsSync(policyFile)).toBe(true);
+  expect(JSON.parse(readFileSync(manifestFile, "utf8")).gemini).toEqual(entry);
+
+  // Preview reports removal without deleting the file; apply removes it and empty `policies/`, keeping `.gemini/config.yaml`.
+  expect(installPermissions(root)).toContainEqual({ path: ".gemini/policies/agent-tool.toml", status: "remove" });
+  expect(existsSync(policyFile)).toBe(true);
+  expect(installPermissions(root, undefined, true)).toContainEqual({ path: ".gemini/policies/agent-tool.toml", status: "remove" });
+  expect(existsSync(policyFile)).toBe(false);
+  expect(existsSync(path.join(root, ".gemini/policies"))).toBe(false);
+  expect(readFileSync(configFile, "utf8")).toBe("have_fun: false\n");
+  expect(JSON.parse(readFileSync(manifestFile, "utf8")).gemini).toBeUndefined();
+  expect(checkPermissions(root).changes.every(change => change.status === "unchanged")).toBe(true);
+
+  // When `.gemini` holds only the retired policy, the empty `.gemini` directory itself is removed.
+  const emptyDir = project();
+  installPermissions(emptyDir, "all", true);
+  mkdirSync(path.join(emptyDir, ".gemini/policies"), { recursive: true });
+  writeFileSync(path.join(emptyDir, ".gemini/policies/agent-tool.toml"), "# old\n");
+  writeFileSync(path.join(emptyDir, ".agent-tool-permissions.json"), JSON.stringify({ ...JSON.parse(readFileSync(path.join(emptyDir, ".agent-tool-permissions.json"), "utf8")), gemini: entry }));
+  installPermissions(emptyDir, undefined, true);
+  expect(existsSync(path.join(emptyDir, ".gemini"))).toBe(false);
+
+  // A locally edited retired policy fails check as `unmanaged` and blocks install from deleting it.
+  const edited = project();
+  installPermissions(edited, "all", true);
+  mkdirSync(path.join(edited, ".gemini/policies"), { recursive: true });
+  writeFileSync(path.join(edited, ".gemini/policies/agent-tool.toml"), "# user edited\n");
+  writeFileSync(path.join(edited, ".agent-tool-permissions.json"), JSON.stringify({ ...JSON.parse(readFileSync(path.join(edited, ".agent-tool-permissions.json"), "utf8")), gemini: entry }));
+  expect(checkPermissions(edited).changes).toContainEqual({
+    path: ".gemini/policies/agent-tool.toml",
+    status: "unmanaged",
+    detail: "a locally edited or unrecorded retired Gemini CLI policy; preserve or delete it",
+  });
+  expect(() => installPermissions(edited, undefined, true)).toThrow(/Locally edited or unmanaged rules: \.gemini\/policies\/agent-tool\.toml/);
+  expect(readFileSync(path.join(edited, ".gemini/policies/agent-tool.toml"), "utf8")).toBe("# user edited\n");
+
+  // A Gemini-only manifest never widens to Claude and Codex on a bare install, and checks report `harnesses: []`.
+  const geminiOnly = project();
+  mkdirSync(path.join(geminiOnly, ".gemini/policies"), { recursive: true });
+  writeFileSync(path.join(geminiOnly, ".gemini/policies/agent-tool.toml"), "# old\n");
+  writeFileSync(path.join(geminiOnly, ".agent-tool-permissions.json"), JSON.stringify({ schemaVersion: 1, agentToolVersion: "0.1.81", scope: ["gemini"], gemini: entry }));
+  expect(checkPermissions(geminiOnly)).toMatchObject({ harnesses: [] });
+  expect(checkPermissions(geminiOnly).changes).toContainEqual(expect.objectContaining({ path: ".gemini/policies/agent-tool.toml", status: "outdated" }));
+  expect(checkInstalledPermissions(geminiOnly)).toMatchObject({ harnesses: [] });
+  expect(() => installPermissions(geminiOnly)).toThrow(/covers only retired Gemini CLI rules/);
+  expect(() => installPermissions(geminiOnly, undefined, true)).toThrow(/covers only retired Gemini CLI rules/);
+  expect(existsSync(path.join(geminiOnly, ".claude"))).toBe(false);
+  expect(existsSync(path.join(geminiOnly, ".codex"))).toBe(false);
+  // Explicit `--harness all --apply` installs Claude + Codex and removes the unmodified Gemini policy.
+  expect(installPermissions(geminiOnly, "all", true)).toContainEqual({ path: ".gemini/policies/agent-tool.toml", status: "remove" });
+  expect(existsSync(path.join(geminiOnly, ".gemini"))).toBe(false);
+  expect(checkPermissions(geminiOnly).changes.every(change => change.status === "unchanged")).toBe(true);
+
+  // A stray unrecorded `.gemini/policies/agent-tool.toml` on disk is still flagged as `unmanaged`.
+  const stray = project();
+  installPermissions(stray, "all", true);
+  mkdirSync(path.join(stray, ".gemini/policies"), { recursive: true });
+  writeFileSync(path.join(stray, ".gemini/policies/agent-tool.toml"), "stale\n");
+  const expectedStray = { path: ".gemini/policies/agent-tool.toml", status: "unmanaged" as const, detail: "a retired Gemini CLI policy not recorded in the manifest; delete it" };
+  expect(checkPermissions(stray).changes).toContainEqual(expectedStray);
+  expect(checkInstalledPermissions(stray)!.changes).toContainEqual(expectedStray);
+  expect(checkPermissions(stray, "all").changes).toContainEqual(expectedStray);
 });
 
 test("the scope moves only through its transition: `all` absorbs, single installs add up", () => {
   const entry = { file: "x", sha256: "0".repeat(64) };
   expect(scopeState({})).toEqual({ status: "none" });
   expect(scopeState({ scope: "all" })).toEqual({ status: "all" });
-  expect(scopeState({ scope: ["gemini", "claude", "gemini"] })).toEqual({ status: "listed", harnesses: ["claude", "gemini"] });
+  expect(scopeState({ scope: ["codex", "claude", "codex"] })).toEqual({ status: "listed", harnesses: ["claude", "codex"] });
   expect(scopeState({ codex: entry, claude: { allow: [], ask: [] } })).toEqual({ status: "inferred", harnesses: ["claude", "codex"] });
   const states: ScopeState[] = [{ status: "none" }, { status: "all" }, { status: "listed", harnesses: ["codex"] }, { status: "inferred", harnesses: ["claude", "codex"] }, { status: "inferred", harnesses: ["codex"] }];
-  const table = states.map(state => [state.status, ...(["all", "claude", "gemini", "recorded"] as const).map(target => scopeTransition(state, { type: "install", target }))]);
+  const table = states.map(state => [state.status, ...(["all", "claude", "codex", "recorded"] as const).map(target => scopeTransition(state, { type: "install", target }))]);
   expect(table).toEqual([
-    ["none", { status: "all" }, { status: "listed", harnesses: ["claude"] }, { status: "listed", harnesses: ["gemini"] }, { status: "all" }],
+    ["none", { status: "all" }, { status: "listed", harnesses: ["claude"] }, { status: "listed", harnesses: ["codex"] }, { status: "all" }],
     ["all", { status: "all" }, { status: "all" }, { status: "all" }, { status: "all" }],
-    ["listed", { status: "all" }, { status: "listed", harnesses: ["claude", "codex"] }, { status: "listed", harnesses: ["codex", "gemini"] }, { status: "listed", harnesses: ["codex"] }],
-    ["inferred", { status: "all" }, { status: "listed", harnesses: ["claude", "codex"] }, { status: "listed", harnesses: ["claude", "codex", "gemini"] }, { status: "all" }],
+    ["listed", { status: "all" }, { status: "listed", harnesses: ["claude", "codex"] }, { status: "listed", harnesses: ["codex"] }, { status: "listed", harnesses: ["codex"] }],
+    ["inferred", { status: "all" }, { status: "listed", harnesses: ["claude", "codex"] }, { status: "listed", harnesses: ["claude", "codex"] }, { status: "all" }],
     // An earlier manifest recording one harness came from a single install, which a bare install keeps.
-    ["inferred", { status: "all" }, { status: "listed", harnesses: ["claude", "codex"] }, { status: "listed", harnesses: ["codex", "gemini"] }, { status: "listed", harnesses: ["codex"] }],
+    ["inferred", { status: "all" }, { status: "listed", harnesses: ["claude", "codex"] }, { status: "listed", harnesses: ["codex"] }, { status: "listed", harnesses: ["codex"] }],
   ]);
   // An event that changes nothing returns the same state.
   const all: ScopeState = { status: "all" }, listed: ScopeState = { status: "listed", harnesses: ["codex"] };
@@ -292,22 +298,21 @@ test("an install that widens an existing manifest's scope shows it on the manife
   const root = project();
   expect(manifestEntry(installPermissions(root, undefined, true))).toEqual({ path: ".agent-tool-permissions.json", status: "create" });
   expect(manifestEntry(installPermissions(root, undefined, true))).toEqual({ path: ".agent-tool-permissions.json", status: "unchanged" });
-  // An earlier manifest from an `all` install gains Gemini through a bare install, which the preview shows.
-  const file = path.join(root, ".agent-tool-permissions.json"), { scope: _scope, gemini: _gemini, ...legacy } = JSON.parse(readFileSync(file, "utf8"));
+  // An earlier manifest from an `all` install widens to `all` on a bare install, which the preview shows.
+  const file = path.join(root, ".agent-tool-permissions.json"), { scope: _scope, ...legacy } = JSON.parse(readFileSync(file, "utf8"));
   writeFileSync(file, JSON.stringify(legacy));
-  rmSync(path.join(root, ".gemini"), { recursive: true });
   expect(manifestEntry(installPermissions(root))).toEqual({ path: ".agent-tool-permissions.json", status: "update", scope: { from: ["claude", "codex"], to: "all" } });
   // A single install adds its harness to a list.
   const single = project();
   installPermissions(single, "codex", true);
-  expect(manifestEntry(installPermissions(single, "gemini"))).toMatchObject({ scope: { from: ["codex"], to: ["codex", "gemini"] } });
+  expect(manifestEntry(installPermissions(single, "claude"))).toMatchObject({ scope: { from: ["codex"], to: ["claude", "codex"] } });
   // A recorded list that left out a recorded harness, as after a rollback, shows the harness added back.
-  installPermissions(single, "gemini", true);
+  installPermissions(single, "claude", true);
   const singleFile = path.join(single, ".agent-tool-permissions.json");
   writeFileSync(singleFile, JSON.stringify({ ...JSON.parse(readFileSync(singleFile, "utf8")), scope: ["codex"] }));
-  expect(manifestEntry(installPermissions(single))).toMatchObject({ scope: { from: ["codex"], to: ["codex", "gemini"] } });
+  expect(manifestEntry(installPermissions(single))).toMatchObject({ scope: { from: ["codex"], to: ["claude", "codex"] } });
   // A list that differs only in order is no change.
-  writeFileSync(singleFile, JSON.stringify({ ...JSON.parse(readFileSync(singleFile, "utf8")), scope: ["gemini", "codex"] }));
+  writeFileSync(singleFile, JSON.stringify({ ...JSON.parse(readFileSync(singleFile, "utf8")), scope: ["codex", "claude"] }));
   expect(manifestEntry(installPermissions(single))!.scope).toBeUndefined();
 });
 
@@ -327,24 +332,23 @@ test("the push gate checks the recorded scope, or an earlier manifest's harnesse
     writeFileSync(manifestFile, JSON.stringify({ ...earlier, agentToolVersion }));
     expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex"], changes: [{ status: "unchanged" }, { status: "unchanged" }, { status: "outdated" }] });
   }
-  // Reinstalling one harness keeps those harnesses; `all`, the default install, adds Gemini.
+  // Reinstalling one harness keeps those harnesses; `all`, the default install, sets scope to `all`.
   installPermissions(root, "claude", true);
   expect(JSON.parse(readFileSync(manifestFile, "utf8")).scope).toEqual(["claude", "codex"]);
-  expect(checkPermissions(root, "all").changes.find(item => item.path === ".gemini/policies/agent-tool.toml")?.status).toBe("missing");
   installPermissions(root, "all", true);
-  expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex", "gemini"] });
+  expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex"] });
   expect(checkInstalledPermissions(root)?.changes.every(item => item.status === "unchanged")).toBe(true);
   // `all` stays `all` when one harness is reinstalled.
-  installPermissions(root, "gemini", true);
+  installPermissions(root, "codex", true);
   expect(JSON.parse(readFileSync(manifestFile, "utf8")).scope).toBe("all");
-  // `all` covers harnesses it does not record, as when a release adds one, and so does a manifest recording none.
-  const { gemini: _gemini, ...withoutGemini } = JSON.parse(readFileSync(manifestFile, "utf8"));
-  writeFileSync(manifestFile, JSON.stringify(withoutGemini));
-  rmSync(path.join(root, ".gemini"), { recursive: true });
-  expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex", "gemini"], changes: [{ status: "unchanged" }, { status: "unchanged" }, { path: ".gemini/policies/agent-tool.toml", status: "missing" }, { status: "unchanged" }] });
+  // `all` covers harnesses it does not record, and so does a manifest recording none.
+  const { codex: _codex, ...withoutCodex } = JSON.parse(readFileSync(manifestFile, "utf8"));
+  writeFileSync(manifestFile, JSON.stringify(withoutCodex));
+  rmSync(path.join(root, ".codex"), { recursive: true });
+  expect(checkInstalledPermissions(root)).toMatchObject({ harnesses: ["claude", "codex"], changes: [{ status: "unchanged" }, { path: ".codex/rules/agent-tool.rules", status: "missing" }, { status: "unchanged" }] });
   const none = project();
   writeFileSync(path.join(none, ".agent-tool-permissions.json"), JSON.stringify({ schemaVersion: 1 }));
-  expect(checkInstalledPermissions(none)).toMatchObject({ harnesses: ["claude", "codex", "gemini"] });
+  expect(checkInstalledPermissions(none)).toMatchObject({ harnesses: ["claude", "codex"] });
   // An earlier manifest's other harnesses stand in for its scope, and a new install adds to them.
   const single = project();
   installPermissions(single, "claude", true);
@@ -352,64 +356,57 @@ test("the push gate checks the recorded scope, or an earlier manifest's harnesse
   const { scope: _single, ...singleEarlier } = JSON.parse(readFileSync(singleFile, "utf8"));
   writeFileSync(singleFile, JSON.stringify(singleEarlier));
   expect(checkInstalledPermissions(single)).toMatchObject({ harnesses: ["claude"] });
-  installPermissions(single, "gemini", true);
-  expect(JSON.parse(readFileSync(singleFile, "utf8")).scope).toEqual(["claude", "gemini"]);
+  installPermissions(single, "codex", true);
+  expect(JSON.parse(readFileSync(singleFile, "utf8")).scope).toEqual(["claude", "codex"]);
   const only = project();
-  installPermissions(only, "gemini", true);
-  expect(checkInstalledPermissions(only)).toMatchObject({ harnesses: ["gemini"], changes: [{ path: ".gemini/policies/agent-tool.toml", status: "unchanged" }, { status: "unchanged" }] });
+  installPermissions(only, "codex", true);
+  expect(checkInstalledPermissions(only)).toMatchObject({ harnesses: ["codex"], changes: [{ path: ".codex/rules/agent-tool.rules", status: "unchanged" }, { status: "unchanged" }] });
   // A bare `permissions check` follows the recorded scope, as the push gate does; a named harness is checked as named.
-  expect(checkPermissions(only)).toMatchObject({ harnesses: ["gemini"], changes: [{ status: "unchanged" }, { status: "unchanged" }] });
-  expect(checkPermissions(only, "all").harnesses).toEqual(["claude", "codex", "gemini"]);
-  expect(checkPermissions(project()).harnesses).toEqual(["claude", "codex", "gemini"]);
+  expect(checkPermissions(only)).toMatchObject({ harnesses: ["codex"], changes: [{ status: "unchanged" }, { status: "unchanged" }] });
+  expect(checkPermissions(only, "all").harnesses).toEqual(["claude", "codex"]);
+  expect(checkPermissions(project()).harnesses).toEqual(["claude", "codex"]);
   // A generated file left outside a listed scope is still loaded by its harness, so a scope check reports it.
   const narrowed = project();
-  installPermissions(narrowed, "codex", true);
-  mkdirSync(path.join(narrowed, ".gemini/policies"), { recursive: true });
-  writeFileSync(path.join(narrowed, ".gemini/policies/agent-tool.toml"), "stale\n");
-  const stray = { path: ".gemini/policies/agent-tool.toml", status: "unmanaged" as const, detail: "not recorded in the manifest, though gemini loads it; delete it, then run agent-tool permissions install --harness gemini --apply if gemini should keep rules" };
+  installPermissions(narrowed, "claude", true);
+  mkdirSync(path.join(narrowed, ".codex/rules"), { recursive: true });
+  writeFileSync(path.join(narrowed, ".codex/rules/agent-tool.rules"), "stale\n");
+  const stray = { path: ".codex/rules/agent-tool.rules", status: "unmanaged" as const, detail: "not recorded in the manifest, though codex loads it; delete it, then run agent-tool permissions install --harness codex --apply if codex should keep rules" };
   expect(checkPermissions(narrowed).changes).toContainEqual(stray);
   expect(checkInstalledPermissions(narrowed)!.changes).toContainEqual(stray);
   expect(checkPermissions(narrowed).changes.at(-1)!.path).toBe(".agent-tool-permissions.json");
   // A named harness is checked as named, and Claude's settings, which hold the user's own too, never count.
-  expect(checkPermissions(narrowed, "codex").changes).not.toContainEqual(stray);
-  mkdirSync(path.join(narrowed, ".claude"), { recursive: true });
-  writeFileSync(path.join(narrowed, ".claude/settings.json"), "{}\n");
-  expect(checkPermissions(narrowed).changes.filter(change => change.status === "unmanaged")).toEqual([stray]);
+  expect(checkPermissions(narrowed, "claude").changes).not.toContainEqual(stray);
+  const onlyCodex = project();
+  installPermissions(onlyCodex, "codex", true);
+  mkdirSync(path.join(onlyCodex, ".claude"), { recursive: true });
+  writeFileSync(path.join(onlyCodex, ".claude/settings.json"), "{}\n");
+  expect(checkPermissions(onlyCodex).changes.filter(change => change.status === "unmanaged")).toEqual([]);
   // A file the check cannot reach is an error, never absent (root reaches every file).
   if (process.getuid?.() !== 0) {
-    chmodSync(path.join(narrowed, ".gemini"), 0o000);
+    chmodSync(path.join(narrowed, ".codex"), 0o000);
     try {
       expect(() => checkPermissions(narrowed)).toThrow(/EACCES/);
     } finally {
-      chmodSync(path.join(narrowed, ".gemini"), 0o755);
+      chmodSync(path.join(narrowed, ".codex"), 0o755);
     }
   }
   // A scope list that omits a recorded harness, as an earlier release's install leaves after a rollback,
   // still covers it: its rules stay checked, and the next install records it in the scope.
   const both = project();
   installPermissions(both, "claude", true);
-  installPermissions(both, "gemini", true);
+  installPermissions(both, "codex", true);
   const bothFile = path.join(both, ".agent-tool-permissions.json");
   writeFileSync(bothFile, JSON.stringify({ ...JSON.parse(readFileSync(bothFile, "utf8")), scope: ["claude"] }));
-  expect(checkInstalledPermissions(both)).toMatchObject({ harnesses: ["claude", "gemini"] });
-  rmSync(path.join(both, ".gemini"), { recursive: true });
-  expect(checkInstalledPermissions(both)!.changes).toContainEqual({ path: ".gemini/policies/agent-tool.toml", status: "missing" });
-  installPermissions(both, "gemini", true);
+  expect(checkInstalledPermissions(both)).toMatchObject({ harnesses: ["claude", "codex"] });
+  rmSync(path.join(both, ".codex"), { recursive: true });
+  expect(checkInstalledPermissions(both)!.changes).toContainEqual({ path: ".codex/rules/agent-tool.rules", status: "missing" });
+  installPermissions(both, "codex", true);
   installPermissions(both, "claude", true);
-  expect(JSON.parse(readFileSync(bothFile, "utf8")).scope).toEqual(["claude", "gemini"]);
+  expect(JSON.parse(readFileSync(bothFile, "utf8")).scope).toEqual(["claude", "codex"]);
   // A hand-edited scope is read in harness order without repeats.
   const onlyFile = path.join(only, ".agent-tool-permissions.json");
-  writeFileSync(onlyFile, JSON.stringify({ ...JSON.parse(readFileSync(onlyFile, "utf8")), scope: ["gemini", "gemini"] }));
-  expect(checkInstalledPermissions(only)!.harnesses).toEqual(["gemini"]);
-  // Any other pair added up from single-harness installs is checked as recorded, never asking for the third.
-  for (const pair of [["claude", "gemini"], ["codex", "gemini"]] as const) {
-    const root = project();
-    for (const harness of pair) installPermissions(root, harness, true);
-    const check = checkInstalledPermissions(root)!;
-    expect(check.harnesses).toEqual([...pair]);
-    expect(check.changes.map(item => item.path)).not.toContain(pair[0] === "claude" ? ".codex/rules/agent-tool.rules" : ".claude/settings.json");
-    expect(check.changes.every(item => item.status === "unchanged")).toBe(true);
-  }
+  writeFileSync(onlyFile, JSON.stringify({ ...JSON.parse(readFileSync(onlyFile, "utf8")), scope: ["codex", "codex"] }));
+  expect(checkInstalledPermissions(only)!.harnesses).toEqual(["codex"]);
 });
 
 test("Codex migration removes managed prompts while preserving separate user rules", () => {
@@ -443,7 +440,7 @@ test("install records the agent-tool version, and check requires the running one
   const manifestFile = path.join(root, ".agent-tool-permissions.json");
   const manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
   // The version sits beside the schema, so an upgrade's manifest diff starts with it.
-  expect(Object.keys(manifest)).toEqual(["schemaVersion", "agentToolVersion", "scope", "claude", "codex", "gemini"]);
+  expect(Object.keys(manifest)).toEqual(["schemaVersion", "agentToolVersion", "scope", "claude", "codex"]);
   expect(manifest.scope).toBe("all");
   expect(manifest).toMatchObject({ schemaVersion: 1, agentToolVersion: metadata.version });
   expect(checkPermissions(root, "all").changes.at(-1)).toEqual({ path: ".agent-tool-permissions.json", status: "unchanged", recordedVersion: metadata.version, currentVersion: metadata.version });
@@ -453,7 +450,7 @@ test("install records the agent-tool version, and check requires the running one
   // even though every generated file is current.
   for (const recorded of ["0.0.1", undefined]) {
     writeFileSync(manifestFile, `${JSON.stringify({ ...manifest, agentToolVersion: recorded }, null, 2)}\n`);
-    for (const harness of ["all", "claude", "codex", "gemini"]) {
+    for (const harness of ["all", "claude", "codex"]) {
       const checks = checkPermissions(root, harness).changes;
       expect(checks.slice(0, -1).every(item => item.status === "unchanged")).toBe(true);
       expect(checks.at(-1)).toEqual({ path: ".agent-tool-permissions.json", status: "outdated", recordedVersion: recorded ?? null, currentVersion: metadata.version });
@@ -476,7 +473,7 @@ test("install records the agent-tool version, and check requires the running one
   // A harness a newer release added names that release instead of reading as corruption.
   expect(() => { writeFileSync(manifestFile, JSON.stringify({ ...manifest, scope: ["claude", "opencode"] })); checkPermissions(root, "all").changes; }).toThrow(/scope names "opencode", which this agent-tool release does not know; use the release that wrote it \(/);
   // Ownership entries that are present must be well formed, so a falsy one cannot drop its harness.
-  for (const invalid of [{ ...manifest, schemaVersion: 2 }, { ...manifest, scope: "some" }, { ...manifest, scope: [] }, { ...manifest, scope: [1] }, { ...manifest, scope: null }, { ...manifest, claude: false }, { ...manifest, codex: null }, { ...manifest, gemini: null }, { ...manifest, claude: { allow: "Bash(x)", ask: [] } }, { ...manifest, codex: { file: 1, sha256: manifest.codex.sha256 } }, { ...manifest, gemini: { file: manifest.gemini.file, sha256: "x" } }, [], null]) {
+  for (const invalid of [{ ...manifest, schemaVersion: 2 }, { ...manifest, scope: "some" }, { ...manifest, scope: [] }, { ...manifest, scope: [1] }, { ...manifest, scope: null }, { ...manifest, claude: false }, { ...manifest, codex: null }, { ...manifest, gemini: null }, { ...manifest, claude: { allow: "Bash(x)", ask: [] } }, { ...manifest, codex: { file: 1, sha256: manifest.codex.sha256 } }, { ...manifest, gemini: { file: ".gemini/policies/agent-tool.toml", sha256: "x" } }, [], null]) {
     writeFileSync(manifestFile, JSON.stringify(invalid));
     expect(() => checkPermissions(root, "all").changes).toThrow("Invalid managed permissions manifest.");
     expect(() => checkInstalledPermissions(root)).toThrow("Invalid managed permissions manifest.");
@@ -490,8 +487,9 @@ test("the CLI previews by default and rejects unknown harnesses", () => {
   const preview = spawnSync(process.execPath, [cli, "permissions", "install"], { cwd: root, encoding: "utf8" });
   expect(JSON.parse(preview.stdout)).toMatchObject({ applied: false });
   expect(spawnSync(process.execPath, [cli, "permissions", "check"], { cwd: root, encoding: "utf8" }).status).toBe(1);
-  expect(spawnSync(process.execPath, [cli, "permissions", "show", "--harness", "opencode"], { cwd: root, encoding: "utf8" }).stderr).toMatch(/Unknown permissions harness/);
-  expect(spawnSync(process.execPath, [cli, "permissions", "show", "--harness", "gemini"], { cwd: root, encoding: "utf8" }).stdout).toBe(geminiPolicy());
+  for (const unknown of ["opencode", "gemini"]) {
+    expect(spawnSync(process.execPath, [cli, "permissions", "show", "--harness", unknown], { cwd: root, encoding: "utf8" }).stderr).toMatch(/Unknown permissions harness/);
+  }
   // A stale recorded version fails the CLI check until the install records the running one.
   expect(spawnSync(process.execPath, [cli, "permissions", "install", "--apply"], { cwd: root, encoding: "utf8" }).status).toBe(0);
   const manifestFile = path.join(root, ".agent-tool-permissions.json");

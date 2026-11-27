@@ -85,41 +85,6 @@ apply the exact approved saved plan. Keep state and plans out of Git.
   measured repository's own `playwright` and never this one. Upgrade it with
   those tests passing on both CI runners, which provide Chrome; it has no
   install script, so it downloads no browsers.
-- The generated Gemini CLI policy follows Gemini CLI 0.71.1's policy engine:
-  - Workspace rules in `.gemini/policies/`, each a `commandRegex` anchored
-    after `"command":"` in the arguments' JSON, with priorities 0–999 and the
-    first match of a stable sort deciding.
-  - The `default`, `autoEdit`, `plan`, and `yolo` approval modes, with the
-    rules in `default` alone through each rule's `modes`, which Gemini has
-    enforced since the first release that loads project policies (0.31.0),
-    and plan mode's read-only deny in the default tier.
-  - A ReDoS guard that refuses a pattern in which a `(` has a quantifier
-    character before the next `)` and a later `)` is quantified, `(?:`
-    included, so the rules use capturing groups and quantify only a group
-    holding no quantifier.
-  - Bash on macOS and Linux, and PowerShell on Windows, whose `(…)`, `@(…)`,
-    and `@{…}`, and a `.cmd` shim's `%…%`, the rules exclude as well; the
-    conformance test runs the bash path only.
-  - For a command no rule matches as a whole: chains checked command by
-    command in some releases, and redirection and substitution asking in
-    `default` (in `autoEdit` too since 0.63.0,
-    google-gemini/gemini-cli#29506, which the rules do not rely on). The rules
-    admit only arguments free of shell syntax themselves, since 0.37.0 to
-    0.63.0 allow ``${X:-`…`}`` under an argument-blind rule.
-  - Gemini is not a dependency here, but CI runs
-    `src/permissions/gemini.conformance.test.ts` against the releases
-    `scripts/testing/gemini-conformance.ts` pins, verified by their npm
-    integrity: the supported floor, 0.37.0, and a current release.
-  - To update, move the current pin, and its integrity from
-    `npm view @google/gemini-cli@<version> dist.integrity`, to a new Gemini
-    release; raise the floor only together with `docs/permissions.md` and the
-    generated policy's header. When the test fails, recheck `geminiPolicy`
-    and the `geminiAllows` test model. To check another release locally, run
-    `AGENT_TOOL_GEMINI_BUNDLE=<bundle> bun test src/permissions/gemini.conformance.test.ts`,
-    where `<bundle>` is its `@google/gemini-cli/bundle` directory (for
-    Homebrew, under `$(brew --prefix gemini-cli)/libexec/lib/node_modules`).
-  - See the [policy engine](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/docs/reference/policy-engine.md)
-    and [TOML loader](https://github.com/google-gemini/gemini-cli/blob/v0.71.1/packages/core/src/policy/toml-loader.ts).
 
 ## Maintenance records
 
