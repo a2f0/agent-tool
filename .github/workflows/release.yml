@@ -12,7 +12,7 @@ jobs:
         with:
           version: 2026.11.8
           install_args: bun
-          # No cached tools in a release build (see ci.yml's gemini-conformance job).
+          # No workflow here restores an Actions cache (see ci.yml's gemini-conformance job).
           cache: false
       - run: bun install --frozen-lockfile
       - run: bun run typecheck && bun test

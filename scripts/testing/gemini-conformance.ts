@@ -52,10 +52,13 @@ async function conform({ version, integrity }: { version: string; integrity: str
       // The bundle is third-party code, so the test gets only what Bun needs, never CI's tokens.
       env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, AGENT_TOOL_GEMINI_BUNDLE: path.join(directory, "package", "bundle") },
       encoding: "utf8",
+      // A bundle that leaves work running cannot hold the step; the test itself allows two minutes.
+      timeout: 300_000,
     });
     const output = `${result.stdout}${result.stderr}`;
     process.stdout.write(output);
     // A skipped test passes too, so require that tests ran and none was skipped.
+    assert.ok(!result.error, `Gemini CLI ${version} conformance did not finish: ${result.error?.message}`);
     assert.ok(result.status === 0 && /^\s*[1-9]\d* pass$/m.test(output) && !/^\s*[1-9]\d* (?:skip|fail)$/m.test(output), `Gemini CLI ${version} conformance did not pass`);
   } finally {
     rmSync(directory, { recursive: true, force: true });
