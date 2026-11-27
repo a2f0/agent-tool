@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CATALOG, CLASSES, GEMINI_ARGUMENTS, GEMINI_MODES, INVOCATIONS, claudePermissions, codexRules, geminiPolicy, strictest, type PermissionClass } from "./catalog";
@@ -350,6 +350,15 @@ test("the push gate checks the recorded scope, or an earlier manifest's harnesse
   mkdirSync(path.join(narrowed, ".claude"), { recursive: true });
   writeFileSync(path.join(narrowed, ".claude/settings.json"), "{}\n");
   expect(checkPermissions(narrowed).changes.filter(change => change.status === "unmanaged")).toEqual([stray]);
+  // A file the check cannot reach is an error, never absent (root reaches every file).
+  if (process.getuid?.() !== 0) {
+    chmodSync(path.join(narrowed, ".gemini"), 0o000);
+    try {
+      expect(() => checkPermissions(narrowed)).toThrow(/EACCES/);
+    } finally {
+      chmodSync(path.join(narrowed, ".gemini"), 0o755);
+    }
+  }
   // A scope list that omits a recorded harness, as an earlier release's install leaves after a rollback,
   // still covers it: its rules stay checked, and the next install records it in the scope.
   const both = project();

@@ -245,7 +245,16 @@ export function installPermissions(rootDir: string, target?: string, apply = fal
  * Claude's settings file holds the user's own settings too, so only whole generated files count.
  */
 function outsideScope(root: string, checked: Harness[]): PermissionCheck[] {
-  const present = (file: string) => { try { lstatSync(file); return true; } catch { return false; } };
+  // Only a missing file is absent; any other error would hide a file the check could not read.
+  const present = (file: string) => {
+    try {
+      lstatSync(file);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+  };
   return (Object.keys(GENERATED) as FileHarness[])
     .filter(harness => !checked.includes(harness) && present(path.join(root, GENERATED[harness].relative)))
     .map(harness => ({ path: GENERATED[harness].relative, status: "unmanaged", detail: `outside the recorded scope; delete it, or run agent-tool permissions install --harness ${harness} --apply` }));
@@ -302,15 +311,15 @@ export function checkRecordedPermissions(rootDir: string): { changes: Permission
 }
 
 /**
- * The installs that regenerate a manifest's rules without widening its scope: the bare install,
- * which keeps the recorded scope. An inferred scope of Claude and Codex may come from an `all`
- * install, which should gain the harnesses `all` added, so the bare install comes first there,
- * then one install per recorded harness.
+ * The installs that regenerate a manifest's rules: the bare install, whose scope scopeTransition
+ * gives. It keeps a listed or `all` scope, and widens a manifest that records nothing, or one from
+ * before scopes that records Claude and Codex, to `all`, since such a pair came from an `all`
+ * install. That widening adds the harnesses `all` gained, so one install per recorded harness
+ * follows as the choice that keeps only them.
  */
 function installCommands(manifest: Manifest): string {
   const state = scopeState(manifest), all = "agent-tool permissions install --apply";
-  // A bare install keeps the recorded scope; only an earlier `all` install's harnesses offer a narrower choice.
-  if (state.status !== "inferred" || !EARLIER_ALL.every(harness => state.harnesses.includes(harness))) return all;
+  if (state.status !== "inferred" || scopeTransition(state, { type: "install", target: "recorded" }).status !== "all") return all;
   const each = state.harnesses.map(harness => `agent-tool permissions install --harness ${harness} --apply`).join(", then ");
   return `${all}, or to keep only the recorded harnesses, ${each}`;
 }
