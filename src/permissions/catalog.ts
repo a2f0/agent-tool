@@ -115,3 +115,80 @@ export function codexRules(project: CatalogEntry[] = []): string {
   }
   return `${lines.join("\n")}\n`;
 }
+
+/**
+ * Gemini CLI's approval modes the rules apply in: `default` alone. A workspace allow would
+ * outrank plan mode's read-only deny, YOLO allows every command already, and Gemini CLI before
+ * 0.63.0 lets an allowed command redirect anywhere unprompted in `autoEdit`, so `autoEdit` keeps
+ * the user's own rules. In `default`, Gemini 0.31.0's engine, the first to load the file, already
+ * asks for redirection (`shouldDowngradeForRedirection` skips only `autoEdit` and YOLO); CI
+ * checks the releases scripts/testing/gemini-conformance.ts pins, from the 0.37.0 floor.
+ */
+export const GEMINI_MODES = ["default"] as const;
+/**
+ * Gemini CLI accepts priorities 0 to 999 within a tier and lets the first matching rule of a
+ * stable sort by priority decide. Every priority stays inside the workspace tier, below user and
+ * admin policies; the lowest also lets a project's own workspace rule at any higher priority win.
+ */
+const GEMINI_PRIORITY = 0;
+
+const regex = (text: string) => text.replace(/[.^$|?*+()[\]{}\\]/g, "\\$&");
+/**
+ * What may follow a command name in its JSON encoding, through the closing quote: nothing, or a
+ * space and arguments free of shell syntax, for bash and for PowerShell, which Gemini runs on
+ * Windows. An argument may not hold a backtick, `$`, `;`, `&`, `|`, `<`, `>`, `(`, `)`, `{`, `}`,
+ * or `%`, or a JSON escape other than an escaped quote or backslash, so no raw newline or control
+ * character either. PowerShell evaluates `(…)`, `@(…)`, and the values in `@{…}` in an argument,
+ * and cmd.exe, which runs a `.cmd` shim, expands `%…%`; `@` alone only splats a variable, so
+ * `name@1.2.3` and `@scope/name` stay allowed. A command that holds
+ * any of these fails to match as a whole and falls back to Gemini's own checks, as Codex treats
+ * such a script as opaque; those checks alone miss nested substitution in some supported releases
+ * (docs/dependency-upgrades.md lists which).
+ *
+ * Gemini's ReDoS guard refuses a pattern in which a `(` has a quantifier character before the
+ * next `)` and any later `)` is quantified. So the one quantified group holds no quantifier, an
+ * empty alternative stands in for an outer `?`, and groups capture, since the `?` of a `(?:`
+ * would trip the guard.
+ */
+export const GEMINI_ARGUMENTS = '( (\\\\["\\\\]|[^`$"\\\\;&|<>(){}%])*|)"';
+
+/**
+ * Gemini CLI policy rules for `.gemini/policies/`: one allow rule per routine command,
+ * as a `commandRegex` matched against the command's JSON encoding through its closing quote.
+ * Gemini's own `commandPrefix` also ends at an escaped quote, which the shell joins into the
+ * same word (`agent-tool bun x vite"-node"` runs `vite-node`), so each regex ends the command
+ * name at a space or at the closing quote of the encoding, as Codex's token prefixes do, and
+ * then admits only arguments free of shell syntax (GEMINI_ARGUMENTS); a command whose `--apply`
+ * form asks gets no rule. Only allow rules are generated, as for Claude and Codex, so other
+ * commands keep the user's approval mode and policies, which outrank workspace rules. The rules
+ * name their one mode (GEMINI_MODES). One rule per command keeps each pattern far below Gemini's
+ * pattern size limits.
+ */
+export function geminiPolicy(project: CatalogEntry[] = []): string {
+  const lines = [
+    "# Managed by agent-tool; regenerate with `agent-tool permissions install --apply`.",
+    "# Only routine commands receive allow rules. Other commands keep the user's",
+    "# approval mode and policies, which outrank these workspace rules.",
+    "# Each command ends at a space or the end of the command, never a quote; its",
+    "# arguments hold no backtick, $, ;, &, |, <, >, (, ), {, }, %, or line break, so",
+    "# bash or PowerShell syntax falls back to Gemini's own checks; and a command",
+    "# whose --apply form asks gets no rule. The rules apply in the default",
+    "# approval mode only: plan mode stays read-only, autoEdit keeps the user's rules,",
+    "# and YOLO already allows every command. Requires Gemini CLI 0.37.0 or later.",
+  ];
+  // Capturing groups throughout: see GEMINI_ARGUMENTS for Gemini's ReDoS guard.
+  const invocations = `(${INVOCATIONS.map(regex).join("|")})`;
+  for (const value of Object.keys(CLASSES) as PermissionClass[]) {
+    if (CLASSES[value].decision !== "allow") continue;
+    const entries = [...CATALOG, ...project].filter(entry => strictest(entry) === value);
+    if (!entries.length) continue;
+    lines.push("", `# ${value}: ${CLASSES[value].description}`);
+    for (const entry of entries) {
+      // A TOML literal string keeps the pattern readable; command names never hold its quote.
+      const pattern = `${invocations} ${regex(entry.command)}${GEMINI_ARGUMENTS}`;
+      if (pattern.includes("'")) throw new Error(`Cannot write a Gemini rule for '${entry.command}'.`);
+      lines.push("[[rule]]", 'toolName = "run_shell_command"', `commandRegex = '${pattern}'`, 'decision = "allow"', `priority = ${GEMINI_PRIORITY}`, `modes = [${GEMINI_MODES.map(quote).join(", ")}]`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}

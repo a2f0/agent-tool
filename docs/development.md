@@ -36,8 +36,9 @@ receipts belong in the PR; private logs and generated artifacts remain local.
 
 Code that moves through named phases keeps them in one `status`-tagged union
 with a single pure transition function beside it, exported for tests:
-`groupTransition` for run-group reports and `galleryTransition` for the
-gallery's manifest load. Events that do not apply return the same state, and
+`groupTransition` for run-group reports, `galleryTransition` for the
+gallery's manifest load, and `scopeTransition` for the harnesses a permissions
+manifest's installs asked for. Events that do not apply return the same state, and
 asynchronous work carries a request number so only the current request can
 finish. Persisted and printed shapes keep their field order.
 
@@ -106,6 +107,16 @@ The package smoke installs an npm tarball into a temporary project. Compiled
 smoke runs all three review adapters through local stubs with Bun and Node absent
 from PATH; no live model calls are made. CI runs these checks on Linux/macOS,
 tests the minimum supported Bun runtime, and builds Debian packaging on Linux.
+A separate required `gemini-conformance` job runs
+`bun scripts/testing/gemini-conformance.ts`, which downloads the pinned Gemini
+CLI releases, the supported floor and a current one, verifies their npm
+integrity, and runs the Gemini conformance test against each. The job has no
+token permissions or persisted credentials and nothing runs after it, since
+the test imports Gemini's third-party bundle. The runner's sudo would let the
+bundle write an Actions cache entry, so no workflow here restores a cache:
+mise, setup-bun, and setup-node run with caching off, which
+`scripts/testing/workflows.test.ts` enforces. It needs the network, so it is
+not part of `verify.json`.
 Local source integration tests use disposable Git repositories, bare remotes,
 and API stubs to check guard behavior without mutating GitHub. Dependency-mode
 integration tests use real Bun installs against a loopback registry with real

@@ -509,7 +509,7 @@ test("the hooks, skills, and permissions guards use the shared drift checks", ()
   const version = f.run(["--version"]).stdout.trim();
   expect(JSON.parse(result.stdout).guards.slice(1, 3)).toEqual([
     expect.objectContaining({ name: "skills", ok: false, details: { harnesses: ["claude", "opencode"], changes: [{ path: ".agent-tool-skills.json", status: "outdated", recordedVersion: "0.0.1", currentVersion: version }] } }),
-    expect.objectContaining({ name: "permissions", ok: false, details: { harness: "codex", changes: [{ path: ".agent-tool-permissions.json", status: "outdated", recordedVersion: null, currentVersion: version }] } }),
+    expect.objectContaining({ name: "permissions", ok: false, details: { harnesses: ["codex"], changes: [{ path: ".agent-tool-permissions.json", status: "outdated", recordedVersion: null, currentVersion: version }] } }),
   ]);
   // A manifest that records no harness still has its version checked.
   writeFileSync(path.join(f.root, ".agent-tool-skills.json"), JSON.stringify({ schemaVersion: 1, agentToolVersion: "0.0.1", files: {} }));

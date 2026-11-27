@@ -32,8 +32,10 @@ function assertCurrentRules(root: string, command: string): void {
   const recorded = checkRecordedPermissions(root);
   // The manifest was there a moment ago; fail closed rather than treat its absence as current rules.
   assert(recorded, `${PERMISSIONS_MANIFEST} disappeared while checking the rules for '${command}'; rerun the command.`);
-  const stale = recorded.filter(item => item.status !== "unchanged" && item.path !== PERMISSIONS_MANIFEST);
-  assert(!stale.length, `Permission rules predate the current class of '${command}'; regenerate them with approval (agent-tool permissions install --apply) before running it.`);
+  const stale = recorded.changes.filter(item => item.status !== "unchanged" && item.path !== PERMISSIONS_MANIFEST);
+  // A generated file outside the recorded harnesses names its own fix, which no install performs alone.
+  const fixes = stale.filter(item => item.detail).map(item => ` ${item.path} is ${item.detail}.`).join("");
+  assert(!stale.length, `Permission rules predate the current class of '${command}'; regenerate them with approval (${recorded.install}) before running it.${fixes}`);
 }
 
 /** The package directory's or root's `node_modules/.bin/<name>`: an executable regular file inside the checkout. */

@@ -27,7 +27,8 @@ and `bun scripts/testing/smoke.ts dist/agent-tool`. The build regenerates
 embedded skills from `skills/*/SKILL.md`, `skills/*/references/*.md`, and
 `skills/*/agents/openai.yaml`; commit `src/skills/bundled.ts` with skill
 changes.
-CI also verifies Linux Debian packaging. Preserve the review snapshot,
+CI also verifies Linux Debian packaging and Gemini conformance
+([development guidance](docs/development.md#validation)). Preserve the review snapshot,
 read-only tool permissions, pinned-base checks, and exact-head merge behavior.
 
 When handling review feedback, reply in its original review thread with
@@ -72,7 +73,8 @@ leads. Reviews flag new implicit machines.
 
 Here the tag is `status`, with an exported pure transition beside the union
 (`groupTransition` in `src/commands/group.ts`, `galleryTransition` in
-`src/screenshots/gallery.ts`); see
-[development guidance](docs/development.md#state-machines). Machines cluster in
-run-group reports and the screenshot gallery; most CLI flows are pure
-classifiers whose booleans are the JSON contract.
+`src/screenshots/gallery.ts`, `scopeTransition` in `src/permissions/install.ts`);
+see [development guidance](docs/development.md#state-machines). Machines cluster
+in run-group reports, the screenshot gallery, and the permissions install
+scope; most CLI flows are pure classifiers whose booleans are the JSON
+contract.
