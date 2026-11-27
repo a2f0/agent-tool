@@ -15,10 +15,11 @@ const INTEGRITY = "sha512-FYDTjU+9BFPYKBcFS3vCjJol8pFyV0iHVigUNr2wZqk4vYNFgacGB5
 const root = path.resolve(import.meta.dir, "../..");
 const url = `https://registry.npmjs.org/@google/gemini-cli/-/gemini-cli-${VERSION}.tgz`;
 
-/** The tarball, with one retry for a failed or stalled download; each attempt has a minute. */
+/** The tarball, with two retries after 10 and 30 seconds for a failed or stalled download; each attempt has a minute. */
 async function download(): Promise<Uint8Array> {
   let failure = "";
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  for (const delay of [0, 10_000, 30_000]) {
+    if (delay) await Bun.sleep(delay);
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(60_000) });
       if (response.ok) return new Uint8Array(await response.arrayBuffer());

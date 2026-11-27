@@ -153,7 +153,7 @@ For repository workflow commands added alongside these interfaces, see
 | `bun add <name@version>... [--dev\|--optional\|--peer] [--exact] [--cwd dir]` | Add new dependencies; the one dependency verb that asks for approval |
 | `bun test\|x <executable> [--cwd dir] [--log] [-- args...]` | Run the test runner or an installed executable with the pinned Bun; `--log` captures output like `run` |
 | `permissions show\|check [--harness all\|claude\|codex\|gemini]` | Print, or check in CI, the harness permission rules generated from command classes; without `--harness`, `show` prints `all` and `check` checks the manifest's recorded scope, and the check also requires its recorded agent-tool version |
-| `permissions install [--harness all\|claude\|codex\|gemini] [--apply]` | Preview by default; write the managed rules into `.claude/settings.json`, `.codex/rules/`, and `.gemini/policies/` |
+| `permissions install [--harness all\|claude\|codex\|gemini] [--apply]` | Preview by default; write the managed rules into `.claude/settings.json`, `.codex/rules/`, and `.gemini/policies/`; without `--harness`, the harnesses a listed scope names, otherwise `all` |
 | `images list [target...]` | List the files each image target writes, without rendering |
 | `images build [target...] [--out dir]` | Render image targets from `assets/brand/*.svg`; `--out` redirects one target |
 | `screenshots build [target...] [--out dir] [--json]` | Stage guarded captures and a gallery manifest per the `screenshots` section; `--out` redirects one target |

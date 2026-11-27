@@ -90,7 +90,7 @@ Usage: agent-tool [--repo <directory>] [--config <file>] <command>
   bun test [--cwd <dir>] [--log] [-- args...]
   bun x <executable> [--cwd <dir>] [--log] [-- args...]  Installed executables only, never fetched
   permissions show [--harness <all|claude|codex|gemini>]
-  permissions install [--harness <all|claude|codex|gemini>] [--apply]
+  permissions install [--harness <all|claude|codex|gemini>] [--apply]  Without --harness, a listed scope, else all
   permissions check [--harness <all|claude|codex|gemini>]  Without --harness, the recorded scope
   images list [target...]               JSON files each image target writes
   images build [target...] [--out <dir>]  Render assets/brand/*.svg per agent-tool.json
@@ -244,13 +244,13 @@ export function main(argv = process.argv.slice(2)): number | Promise<number> {
       else throw new Error(`Unknown permissions ${action} argument '${flag}'.`);
     }
     if (action === "show") { writeSync(1, showPermissions(process.cwd(), target ?? "all")); return 0; }
-    // A bare check follows the recorded scope, as the push gate does; show and install default to all.
+    // Bare check and install follow the recorded scope, as the push gate does; show defaults to all.
     if (action === "check") {
       const { harnesses, changes } = checkPermissions(process.cwd(), target);
       const ok = changes.every(change => change.status === "unchanged");
       output({ ok, harnesses, changes }); return ok ? 0 : 1;
     }
-    output({ applied: apply, changes: installPermissions(process.cwd(), target ?? "all", apply) }); return 0;
+    output({ applied: apply, changes: installPermissions(process.cwd(), target, apply) }); return 0;
   }
   const root = gitRoot();
   process.chdir(root);

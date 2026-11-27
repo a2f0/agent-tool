@@ -114,15 +114,18 @@ test("the refusal advises regenerating only the recorded scope", () => {
   expect(JSON.parse(bare.stdout)).toMatchObject({ ok: true, harnesses: ["gemini"] });
   expect(check("--harness", "all").status).toBe(1);
   writeFileSync(path.join(gemini.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
-  // The advice regenerates only the recorded scope, never widening it to `all`.
-  expect(gemini.run(["x", "wrangler"]).stderr).toMatch(/Permission rules predate the current class of 'bun x wrangler'; regenerate them with approval \(agent-tool permissions install --harness gemini --apply\)/);
-  // A scope of several harnesses names an install for each.
+  // The advice regenerates only the recorded scope, which a bare install keeps, never widening it to `all`.
+  expect(gemini.run(["x", "wrangler"]).stderr).toMatch(/Permission rules predate the current class of 'bun x wrangler'; regenerate them with approval \(agent-tool permissions install --apply\)/);
+  const regenerated = spawnSync(process.execPath, [cli, "permissions", "install", "--apply"], { cwd: gemini.project, encoding: "utf8" });
+  expect(JSON.parse(regenerated.stdout).changes.map((change: { path: string }) => change.path)).toEqual([".gemini/policies/agent-tool.toml", ".agent-tool-permissions.json"]);
+  expect(JSON.parse(readFileSync(path.join(gemini.project, ".agent-tool-permissions.json"), "utf8")).scope).toEqual(["gemini"]);
+  // A scope of several harnesses gets the same advice.
   const pair = fixture();
   binary(pair.project, "wrangler");
   writeFileSync(path.join(pair.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "local" } } }));
   for (const harness of ["claude", "gemini"]) expect(spawnSync(process.execPath, [cli, "permissions", "install", "--harness", harness, "--apply"], { cwd: pair.project, encoding: "utf8" }).status).toBe(0);
   writeFileSync(path.join(pair.project, "agent-tool.json"), JSON.stringify({ schemaVersion: 1, permissions: { executables: { wrangler: "release" } } }));
-  expect(pair.run(["x", "wrangler"]).stderr).toContain("(agent-tool permissions install --harness claude --apply, then agent-tool permissions install --harness gemini --apply)");
+  expect(pair.run(["x", "wrangler"]).stderr).toContain("(agent-tool permissions install --apply)");
 }, 20_000);
 
 test("--cwd cannot reach another checkout, and options must precede --", () => {

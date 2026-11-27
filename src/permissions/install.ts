@@ -194,16 +194,22 @@ function scopeHarnesses(state: ScopeState): Harness[] {
   return state.status === "all" || state.status === "none" ? [...HARNESSES] : state.harnesses;
 }
 
-/** Each generated file's change, then the manifest's, which every new agent-tool release updates. */
-export function installPermissions(rootDir: string, target: string, apply = false): PermissionChange[] {
+/**
+ * Each generated file's change, then the manifest's, which every new agent-tool release updates.
+ * Without a target it installs the recorded scope: a list keeps the harnesses it names, and `all`,
+ * an earlier manifest's inferred harnesses, or none install `all`, so they gain new harnesses.
+ */
+export function installPermissions(rootDir: string, target?: string, apply = false): PermissionChange[] {
   const root = realpathSync(rootDir);
   const { raw: recorded, manifest } = readManifest(root);
   const project = projectCommands(root);
-  const targets = harnesses(target);
+  const state = scopeState(manifest);
+  const listed = target === undefined && state.status === "listed" ? state : undefined;
+  const targets = listed ? listed.harnesses : harnesses(target ?? "all");
   const changes = pending(root, targets, manifest, project);
   // Recording the version makes every upgrade change the manifest, so a committed sync is visible.
   const { schemaVersion: _schema, agentToolVersion: _version, scope: _scope, ...owned } = manifest;
-  const scope = scopeTransition(scopeState(manifest), { type: "install", target: harnessTarget(target) });
+  const scope = listed ?? scopeTransition(state, { type: "install", target: harnessTarget(target ?? "all") });
   const next: Manifest = { schemaVersion: 1, agentToolVersion: AGENT_TOOL_VERSION, scope: scope.status === "all" ? "all" : scope.harnesses, ...owned };
   for (const change of changes) {
     if (change.harness === "claude") next.claude = claudePermissions(project);
@@ -291,7 +297,8 @@ const EARLIER_ALL: readonly Harness[] = ["claude", "codex"];
  */
 function installCommands(manifest: Manifest): string {
   const state = scopeState(manifest), all = "agent-tool permissions install --apply";
-  if (state.status === "all" || state.status === "none") return all;
+  // A bare install keeps a listed scope, and installs `all` for the others.
+  if (state.status !== "inferred") return all;
   const each = state.harnesses.map(harness => `agent-tool permissions install --harness ${harness} --apply`).join(", then ");
   return state.status === "inferred" && EARLIER_ALL.every(harness => state.harnesses.includes(harness)) ? `${all}, or to keep only the recorded harnesses, ${each}` : each;
 }

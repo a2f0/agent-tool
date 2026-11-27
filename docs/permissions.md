@@ -243,8 +243,10 @@ agent-tool permissions check              # CI: the recorded scope
   forced prompts written by older versions. A locally edited rules file is
   refused rather than overwritten; other `.rules` files are left alone.
 - `.gemini/policies/agent-tool.toml` holds one Gemini CLI `allow` rule per
-  routine command for the `run_shell_command` tool, allowing the same commands
-  as the Codex rules. Each is a `commandRegex` naming the three invocations and
+  routine command for the `run_shell_command` tool, for the same routine
+  commands as the Codex rules. Their arguments may expand variables, as
+  Claude's `*` allows and Codex's opaque-script rule (below) does not. Each is
+  a `commandRegex` naming the three invocations and
   ending the command at a space or the end of the command. Gemini's own
   `commandPrefix` also ends at a quote, which the shell joins into the same
   word (`agent-tool bun x vite"-node"` runs `vite-node`), so the rules do not use
@@ -262,22 +264,23 @@ agent-tool permissions check              # CI: the recorded scope
   rather than overwritten; other files in `.gemini/policies/` are left alone.
 
 The manifest also records the `scope` installs asked for: `all`, which a later
-single-harness install keeps, or the harnesses single installs added up. The
-push gate checks that scope, so `all` covers each harness a newer release adds
-and fails until `install --apply` writes its rules. Manifests written before
-the scope field have none and are read as scoped to the harnesses they
-record. Such a manifest gains a harness `all` added only through an `all`
-install, which is the default; until an install, of `all` or of each recorded
-harness, `check`, which without `--harness` checks the recorded scope as the
-push gate does, reports the manifest `outdated`, and `check --harness all`
-also reports the harness `missing`. A scope check also reports a generated
-rules file outside the scope as `unmanaged`, since its harness still loads it. A
-single-harness install never narrows `all`: to keep a harness out, remove its
-generated rules and its manifest entry, set `scope` to the list of harnesses
-to keep, then install each of them. A scope
-list also covers every harness the manifest records, so a list that leaves one
-out, as an earlier release's install can after a rollback, still checks its
-rules, and the next install adds it to the list.
+single-harness install keeps, or the harnesses single installs added up.
+`install` and `check` without `--harness` follow that scope, as the push gate
+does: a list stays the harnesses it names, and `all` covers each harness a
+newer release adds, so the check fails until `install --apply` writes its
+rules; `--harness all` widens a list. Manifests written before the scope field
+have none and are read as scoped to the harnesses they record, and a bare
+install gives them `all`, so they gain the harnesses `all` added. Until an
+install, of `all` or of each recorded harness, `check` reports such a manifest
+`outdated`, and `check --harness all` also reports the new harness `missing`.
+A scope check also reports a generated rules file outside the scope as
+`unmanaged`, since its harness still loads it. A single-harness install never
+narrows `all`: to keep a harness out, remove its generated rules and its
+manifest entry, set `scope` to the list of harnesses to keep, then run
+`install --apply`. A scope list also covers every harness the manifest
+records, so a list that leaves one out, as an earlier release's install can
+after a rollback, still checks its rules, and the next install adds it to the
+list.
 
 The manifest also records, as `agentToolVersion`, the agent-tool release that
 wrote it, so every upgrade changes it even when no rule changed, and the
@@ -285,9 +288,7 @@ committed diff shows the regeneration ran. `check` fails until it does: its
 last entry is the manifest's, with `recordedVersion` and `currentVersion`, and
 is `outdated` when the manifest records another release or no usable one, as
 manifests from releases before the field do, until `install --apply` with the
-same `--harness` replaces it. `--harness` names one harness or `all`, so for
-a scope that names harnesses, run `install` once for each of them; a bare
-`check` covers the whole recorded scope.
+same `--harness`, or none, replaces it.
 `agent-tool bun x` still refuses an executable only while the rules themselves
 are stale, so a manifest that records another release refuses nothing more
 there. The skills manifest records the version the same way
